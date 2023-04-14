@@ -1,0 +1,79 @@
+image:
+  - Visual Studio 2017
+
+clone_folder: c:\projects\source
+
+build_script:
+- cmd: >-
+    cd c:\projects
+
+    git clone https://github.com/KjellKod/g3log.git 
+
+    cd g3log
+
+    mkdir build
+
+    cd build
+
+    cmake -DCMAKE_BUILD_TYPE=Release -DCHANGE_G3LOG_DEBUG_TO_G3LOG_DEBUG=ON -DCMAKE_PREFIX_PATH=c:\Libraries -DADD_FATAL_EXAMPLE=OFF -DCMAKE_INSTALL_PREFIX=c:\Libraries -DG3_SHARED_LIB=OFF -DG3_SHARED_RUNTIME=ON  ..
+
+    cmake --build . --target INSTALL --config Release
+    
+    mkdir ZLib
+
+    cd Zlib 
+    
+    curl http://zlib.net/zlib-1.2.13.tar.gz -o zlib.tar.gz
+
+    tar xvzf zlib.tar.gz
+
+    cd zlib-1.2.13/
+
+    mkdir build
+
+    cd build 
+
+    cmake -DCMAKE_PREFIX_PATH=c:\\Libraries -DCMAKE_INSTALL_PREFIX=c:\\Libraries ..
+
+    cmake --build . --target INSTALL --config Release
+
+    set PATH=c:\\Libraries\\bin;%PATH%
+
+    cd c:\projects\source\
+
+    mkdir build
+
+    cd build 
+
+    cmake -DCMAKE_BUILD_TYPE=Release -DCHOICE_BUILD_STATIC=ON -DCMAKE_PREFIX_PATH=c:\Libraries -DCMAKE_INSTALL_PREFIX=c:\Libraries  ..
+
+    cmake --build . --target INSTALL --config Release
+
+    tree /A /F c:\g3log
+
+    cpack -G "NSIS;ZIP"
+
+    cpack -C Release
+
+    ctest -V
+    
+    cd examples
+    
+    cd Release
+    
+    ls -a
+  
+    [ -f example_coloredcout.exe ] && example_coloredcout.exe || true
+    
+    [ -f example_logrotate_and_filter.exe ] && example_logrotate_and_filter.exe || true
+    
+
+# Us this for validation after changes: https://ci.appveyor.com/tools/validate-yaml
+
+# Lazy safe, using this for running it local
+# cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=Release DCHANGE_G3LOG_DEBUG_TO_G3LOG_DEBUG=ON -DCMAKE_PREFIX_PATH=c:\Local -DADD_FATAL_EXAMPLE=OFF -DCMAKE_INSTALL_PREFIX=c:\Local -DG3_SHARED_LIB=OFF -DG3_SHARED_RUNTIME=ON ..
+
+
+# Lazy safe, using this for running it local
+# cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=Release -DCHOICE_BUILD_STATIC=ON -DCHOICE_SINK_LOGROTATE=OFF -DCHOICE_SINK_SYSLOG=OFF -DCMAKE_PREFIX_PATH=c:\Local -DCMAKE_INSTALL_PREFIX=c:\Local  ..
+
