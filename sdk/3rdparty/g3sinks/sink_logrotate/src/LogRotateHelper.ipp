@@ -27,7 +27,7 @@
 #include <ctime>
 #include <iostream>
 #include <sstream>
-#include <filesystem>
+#include <boost/filesystem.hpp>
 
 #include "g3sinks/LogRotateUtility.h"
 
@@ -189,7 +189,7 @@ std::string LogRotateHelper::changeLogFile(const std::string& directory, const s
    auto prospect_path = sanityFixPath(directory);
    auto prospect_log = createPathToFile(prospect_path, file_name);
 
-   namespace fs = std::filesystem;
+   namespace fs = boost::filesystem;
    fs::path log_dir_path = fs::path(prospect_path);
    if (!fs::exists(log_dir_path)) {
       fs::create_directories(log_dir_path);
@@ -219,7 +219,7 @@ std::string LogRotateHelper::changeLogFile(const std::string& directory, const s
  */
 bool LogRotateHelper::rotateLog() {
    std::ofstream& is(filestream());
-   namespace fs = std::filesystem;
+   namespace fs = boost::filesystem;
    fs::path log_file_path = fs::path(log_file_with_path_);
    if (!fs::exists(log_file_path)) {
       return false;
@@ -238,7 +238,7 @@ bool LogRotateHelper::rotateLog() {
          return false;
       }
       is.close();
-      std::error_code ec_file;
+      boost::system::error_code ec_file;
       if (false == fs::remove(log_file_with_path_, ec_file)) {
          fileWriteWithoutRotate("Failed to remove old log: " + log_file_with_path_ + ". Error: "
                                 + ec_file.message());

@@ -7,16 +7,7 @@
 # http://unlicense.org
 # ============================================================================*/
 
-if(${CMAKE_SYSTEM_NAME} MATCHES "Linux" OR ${CMAKE_SYSTEM_NAME} MATCHES
-                                           "Darwin")
-  if(NOT CPACK_PACKAGING_INSTALL_PREFIX)
-    if(NOT CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-      set(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
-    else()
-      set(CPACK_PACKAGING_INSTALL_PREFIX /usr/local)
-    endif()
-  endif()
-endif()
+set(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)

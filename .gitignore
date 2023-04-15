@@ -35,3 +35,4 @@
 .vscode
 build
 _install
+!dist/*.a !dist/*.so !dist/*.dll !dist/*.dylib !dist/*.lib !dist/*.exe !dist/*.out !dist/*.app

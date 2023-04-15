@@ -6,17 +6,7 @@
 # For more information see g3log/LICENSE or refer refer to http://unlicense.org
 # ============================================================================*/
 
-IF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-   IF(NOT CPACK_PACKAGING_INSTALL_PREFIX)
-      IF(NOT CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-         SET(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
-         # set(CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_PREFIX})
-      ELSE()
-         SET(CPACK_PACKAGING_INSTALL_PREFIX /usr/local)
-      ENDIF()
-   ENDIF()
-   # message("Install rpath location: ${CMAKE_INSTALL_RPATH}") 
-ENDIF()
+SET(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
 
 INCLUDE(CMakePackageConfigHelpers)
 INCLUDE(GNUInstallDirs)

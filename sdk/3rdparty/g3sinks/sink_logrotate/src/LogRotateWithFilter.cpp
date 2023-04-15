@@ -11,12 +11,12 @@
 #include "g3sinks/LogRotateWithFilter.h"
 #include <memory>
 #include <algorithm>
-#include <iostream> // to remove
+#include <boost/make_unique.hpp> // to remove
 
 // helper function to create an logging sink with filter
 std::unique_ptr<LogRotateWithFilter> LogRotateWithFilter::CreateLogRotateWithFilter(std::string filename, std::string directory, std::vector<LEVELS> filter) {
-   auto logRotatePtr = std::make_unique<LogRotate>(filename, directory);
-   return std::make_unique<LogRotateWithFilter>(std::move(logRotatePtr), filter);
+   auto logRotatePtr = boost::make_unique<LogRotate>(filename, directory);
+   return boost::make_unique<LogRotateWithFilter>(std::move(logRotatePtr), filter);
 }
 
 

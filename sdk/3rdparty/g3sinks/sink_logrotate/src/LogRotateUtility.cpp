@@ -13,7 +13,7 @@
 #include "g3sinks/LogRotateUtility.h"
 
 #include <algorithm>
-#include <filesystem>
+#include <boost/filesystem.hpp>
 #include <fstream>
 #include <g3log/time.hpp>
 #include <iomanip>
@@ -23,10 +23,10 @@
 #include <sstream>
 #include <string>
 
-namespace fs = std::filesystem;
+namespace fs = boost::filesystem;
 namespace LogRotateUtility {
 
-#if (defined(WIN32) || defined(_WIN32) || defined(__WIN32__)) && !defined(__MINGW32__)
+#if (defined(WIN32) || defined(_WIN32) || defined(__WIN32__)) //&& !defined(__MINGW32__)
    // http://stackoverflow.com/questions/321849/strptime-equivalent-on-windows
    char* strptime(const char* s, const char* f, struct tm* tm) {
       // Isn't the C++ standard lib nice? std::get_time is defined such that its
@@ -156,7 +156,7 @@ namespace LogRotateUtility {
                break;
             }
             --logs_to_delete;  // decrement the number of files to delete, even if the file could not be deleted
-            std::error_code ec_file;
+            boost::system::error_code ec_file;
             auto filename_with_path = p.second;
             if (false == fs::remove(filename_with_path, ec_file)) {
                std::cerr << " Unable to delete " << filename_with_path << " " << ec_file.message() << std::endl;

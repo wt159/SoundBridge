@@ -27,6 +27,7 @@ include_directories(${LOGROTATE_SRC})
 # Build Library 
 target_link_libraries(
   g3logrotate
+  PUBLIC  Boost::filesystem
   PUBLIC  ${G3LOG_LIBRARY}
   PRIVATE ${ZLIB_LIBRARY}
   )
