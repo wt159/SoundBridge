@@ -46,13 +46,13 @@ project(g3log CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_LIST_DIR}/_install)
-
-if(NOT CMAKE_BUILD_TYPE AND NOT (MSVC_IDE OR XCODE))
-  set(CMAKE_BUILD_TYPE
-      Release
-      CACHE STRING "Build type, one of: Release, Debug" FORCE)
-endif()
+set(CMAKE_INSTALL_PREFIX ${3RDPARTY_INSTALL_DIR})
+message(STATUS "CMAKE_INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
+# if(NOT CMAKE_BUILD_TYPE AND NOT (MSVC_IDE OR XCODE))
+#   set(CMAKE_BUILD_TYPE
+#       Release
+#       CACHE STRING "Build type, one of: Release, Debug" FORCE)
+# endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Configuration types: ${CMAKE_CONFIGURATION_TYPES}")

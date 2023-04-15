@@ -2,7 +2,8 @@ project(logrotate)
 
 
 # zlib
-find_package( ZLIB REQUIRED )
+# find_package( ZLIB REQUIRED )
+set(ZLIB_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR}/../zlib)
 include_directories( ${ZLIB_INCLUDE_DIRS} )
 message("zlib found: ${ZLIB_FOUND} ")
 
