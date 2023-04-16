@@ -11,8 +11,27 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 include(${CMAKE_CURRENT_LIST_DIR}/../../Option.cmake)
 message(STATUS "3RDPARTY_DIR: ${3RDPARTY_DIR}")
 
+if(CMAKE_TARGET_SYSTEM_NAME STREQUAL "windows")
+    set(BUILD_SCRIPT_NAME "windows_build")
+else()
+    set(BUILD_SCRIPT_NAME "linux_build")
+endif()
+# boost
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/boost_generated_files.txt
+    COMMAND ${3RDPARTY_DIR}/boost_1_81_0/${BUILD_SCRIPT_NAME}.bat ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME}
+    DEPENDS ${3RDPARTY_DIR}/boost_1_81_0/${BUILD_SCRIPT_NAME}.bat
+)
+add_custom_target(
+    generate_boost_files ALL
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/boost_generated_files.txt
+)
+
 add_subdirectory(${3RDPARTY_DIR}/g3log)
 
 add_subdirectory(${3RDPARTY_DIR}/zlib)
 
 add_subdirectory(${3RDPARTY_DIR}/g3sinks)
+
+#ffmpeg
+# execute_process(COMMAND start my_script.bat arg1 arg2)
