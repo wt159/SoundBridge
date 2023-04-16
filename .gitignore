@@ -40,6 +40,30 @@
 *.out
 *.app
 
+# 特定目录下的特定文件
+sdk/3rdparty/ffmpeg-4.4.4/config.h
+sdk/3rdparty/ffmpeg-4.4.4/ffbuild/.config
+sdk/3rdparty/ffmpeg-4.4.4/ffbuild/config.mak
+sdk/3rdparty/ffmpeg-4.4.4/ffbuild/config.sh
+sdk/3rdparty/ffmpeg-4.4.4/libavcodec/bsf_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavcodec/codec_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavcodec/parser_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavdevice/indev_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavdevice/outdev_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavfilter/filter_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavformat/demuxer_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavformat/muxer_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavformat/protocol_list.c
+sdk/3rdparty/ffmpeg-4.4.4/libavutil/avconfig.h
+sdk/3rdparty/ffmpeg-4.4.4/libavutil/ffversion.h
+
+# 特定目录不忽略
+!sdk/3rdparty/dist/windows_amd64_gcc/bin/*.dll
+!sdk/3rdparty/dist/windows_amd64_gcc/bin/*.lib
+!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.def
+!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.dll
+!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.a
+
 # folders
 .vscode
 build
