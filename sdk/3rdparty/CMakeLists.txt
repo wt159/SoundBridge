@@ -12,11 +12,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../Option.cmake)
 message(STATUS "3RDPARTY_DIR: ${3RDPARTY_DIR}")
 
 # boost
+set(BOOST_ROOT ${3RDPARTY_DIR}/boost_1_81_0)
 if(CMAKE_TARGET_SYSTEM_NAME STREQUAL "windows")
-    set(BOOST_BUILD_SCRIPT_DEP "${3RDPARTY_DIR}/boost_1_81_0/windows_build.bat")
+    set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/windows_build.bat")
     set(BOOST_BUILD_SCRIPT "${BOOST_BUILD_SCRIPT_DEP}")
 else()
-    set(BOOST_BUILD_SCRIPT_DEP "${3RDPARTY_DIR}/boost_1_81_0/linux_build.sh")
+    set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/linux_build.sh")
     set(BOOST_BUILD_SCRIPT "sh ${BOOST_BUILD_SCRIPT_DEP}")
 endif()
 add_custom_command(
