@@ -27,6 +27,21 @@ add_custom_target(
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/boost_generated_files.txt
 )
 
+# ffmpeg
+# 执行bash命令检查是否安装
+execute_process(
+    COMMAND bash -c "echo 'Bash is installed.'"
+    RESULT_VARIABLE BASH_RESULT
+    OUTPUT_QUIET
+)
+# 判断返回值
+if(BASH_RESULT EQUAL 0)
+    message("Bash is installed.")
+else()
+    # windows下没有bash，需要安装git软件, 然后把git安装目录下的bin目录添加到环境变量path中
+    message(FATAL_ERROR "Bash is not installed. Please install bash and try again.")
+endif()
+
 add_subdirectory(${3RDPARTY_DIR}/g3log)
 
 add_subdirectory(${3RDPARTY_DIR}/zlib)
