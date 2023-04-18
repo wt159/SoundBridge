@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 
 set system_name=%1
 set system_process=%2
@@ -8,6 +8,21 @@ set prefix=../dist/%system_name%_%system_process%_%toolchain%
 set build_dir=../build
 set boost_dir=%cd%\..\boost_1_81_0
 
+set cores=0
+for /f "skip=2" %%c in ('wmic cpu get NumberOfCores') do (
+    set /a cores+=1
+)
+:end_cores
+set processors=0
+for /f "skip=1" %%p in ('wmic cpu get NumberOfLogicalProcessors') do (
+    set /a processors=%%p
+    goto end_processors
+)
+:end_processors
+set /a max_threads=%cores% * %processors%
+echo boost_build: cores is %cores%
+echo boost_build: processors is %processors%
+echo boost_build: max_threads is %max_threads%
 echo boost_build: system_name is %system_name%
 echo boost_build: system_process is %system_process%
 echo boost_build: toolchain is %toolchain%
@@ -39,7 +54,7 @@ if exist %boost_dir%\b2.exe (
 
 echo boost_build: b2
 @REM --build-type=complete variant=release threading=multi link=shared runtime-link=shared
-.\b2.exe -j 12 ^
+.\b2.exe -j %max_threads% ^
     --build-dir=%build_dir% --prefix=%prefix% ^
     --without-atomic ^
     --without-chrono ^
