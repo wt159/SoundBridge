@@ -17,7 +17,7 @@ else
 fi
 
 root_dir=$current_dir/../ffmpeg-4.4.4
-prefix_dir=$current_dir/../dist/$system_name"_"$system_process"_"$toolchain
+prefix_dir=$root_dir/../dist/$system_name"_"$system_process"_"$toolchain
 echo "[$system_name]安装目录为：$prefix_dir"
 
 cd $root_dir

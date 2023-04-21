@@ -7,6 +7,14 @@ set toolchain=%3
 set prefix=../dist/%system_name%_%system_process%_%toolchain%
 set build_dir=../build
 set boost_dir=%cd%\..\boost_1_81_0
+cd %boost_dir%
+
+echo boost_build: system_name is %system_name%
+echo boost_build: system_process is %system_process%
+echo boost_build: toolchain is %toolchain%
+echo boost_build: prefix is %prefix%
+echo boost_build: build_dir is %build_dir%
+echo boost_build: boost_dir is %boost_dir%
 
 set cores=0
 for /f "skip=2" %%c in ('wmic cpu get NumberOfCores') do (
@@ -23,28 +31,22 @@ set /a max_threads=%cores% * %processors%
 echo boost_build: cores is %cores%
 echo boost_build: processors is %processors%
 echo boost_build: max_threads is %max_threads%
-echo boost_build: system_name is %system_name%
-echo boost_build: system_process is %system_process%
-echo boost_build: toolchain is %toolchain%
-echo boost_build: prefix is %prefix%
-echo boost_build: build_dir is %build_dir%
-echo boost_build: boost_dir is %boost_dir%
-echo boost_build: cd boost_dir
-cd %boost_dir%
 
 if exist %build_dir% (
     echo build directory already exists
 ) else (
-    mkdir %build_dir%
+    echo build directory not exists
+    mkdir "%build_dir%"
 )
 
 if exist %prefix% (
     echo dist directory already exists
 ) else (
-    mkdir %prefix%
+    echo dist directory not exists
+    mkdir "%prefix%"
 )
 
-if exist %boost_dir%\b2.exe (
+if exist %boost_dir%/b2.exe (
     echo boost_build: b2 already exists
 ) else (
     echo boost_build: b2 does not exist
@@ -54,7 +56,7 @@ if exist %boost_dir%\b2.exe (
 
 echo boost_build: b2
 @REM --build-type=complete variant=release threading=multi link=shared runtime-link=shared
-.\b2.exe -j %max_threads% ^
+b2.exe -j %max_threads% ^
     --build-dir=%build_dir% --prefix=%prefix% ^
     --without-atomic ^
     --without-chrono ^
