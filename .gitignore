@@ -58,12 +58,18 @@ sdk/3rdparty/ffmpeg-4.4.4/libavutil/avconfig.h
 sdk/3rdparty/ffmpeg-4.4.4/libavutil/ffversion.h
 
 # 特定目录不忽略
-!sdk/3rdparty/dist/windows_amd64_gcc/bin/*.dll
-!sdk/3rdparty/dist/windows_amd64_gcc/bin/*.lib
-!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.def
-!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.dll
-!sdk/3rdparty/dist/windows_amd64_gcc/lib/*.a
+!sdk/3rdparty/dist/windows_x86_64_gcc/bin/*.dll
+!sdk/3rdparty/dist/windows_x86_64_gcc/bin/*.lib
+!sdk/3rdparty/dist/windows_x86_64_gcc/lib/*.def
+!sdk/3rdparty/dist/windows_x86_64_gcc/lib/*.dll
+!sdk/3rdparty/dist/windows_x86_64_gcc/lib/*.a
+!sdk/3rdparty/dist/linux_x86_64_gcc/bin/*.so
+!sdk/3rdparty/dist/linux_x86_64_gcc/bin/*.lib
+!sdk/3rdparty/dist/linux_x86_64_gcc/lib/*.def
+!sdk/3rdparty/dist/linux_x86_64_gcc/lib/*.so
+!sdk/3rdparty/dist/linux_x86_64_gcc/lib/*.a
 
 # folders
 .vscode
 build
+sdk/3rdparty/ffmpeg-4.4.4
