@@ -1,8 +1,8 @@
-prefix=D:/flushbonad/github/SoundBridge_MusicPlayer/sdk/3rdparty/dist/windows_amd64_gcc
-exec_prefix=D:/flushbonad/github/SoundBridge_MusicPlayer/sdk/3rdparty/dist/windows_amd64_gcc
-libdir=D:/flushbonad/github/SoundBridge_MusicPlayer/sdk/3rdparty/dist/windows_amd64_gcc/lib
-sharedlibdir=D:/flushbonad/github/SoundBridge_MusicPlayer/sdk/3rdparty/dist/windows_amd64_gcc/lib
-includedir=D:/flushbonad/github/SoundBridge_MusicPlayer/sdk/3rdparty/dist/windows_amd64_gcc/include
+prefix=D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_amd64_gcc
+exec_prefix=D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_amd64_gcc
+libdir=D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_amd64_gcc/lib
+sharedlibdir=D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_amd64_gcc/lib
+includedir=D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_amd64_gcc/include
 
 Name: zlib
 Description: zlib compression library

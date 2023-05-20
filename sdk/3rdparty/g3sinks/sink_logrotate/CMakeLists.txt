@@ -62,10 +62,12 @@ if ( CHOICE_INSTALL_G3SINKS )
                 g3logrotateTargets
             ARCHIVE DESTINATION lib
             LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
             INCLUDES DESTINATION include)
     
     install(EXPORT g3logrotateTargets
       NAMESPACE G3::
+      FILE g3sinks-config.cmake
       DESTINATION lib/cmake/g3sinks
       )
     

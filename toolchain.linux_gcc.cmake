@@ -1,6 +1,6 @@
 # toolchain.windows_mingw.cmake
 # 1. mkdir build && cd build
-# 2. cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\toolchain.windows_mingw.cmake -G "MinGW Makefiles"
+# 2. cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\toolchain.linux_gcc.cmake
 set(CMAKE_TARGET_SYSTEM_NAME linux)
 set(CMAKE_TARGET_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_TARGET_TOOLCHAIN_NAME gcc)
