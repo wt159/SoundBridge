@@ -4,7 +4,8 @@ setlocal enabledelayedexpansion
 set system_name=%1
 set system_process=%2
 set toolchain=%3
-set prefix=../dist/%system_name%_%system_process%_%toolchain%
+set install_dir=%4
+set prefix=../dist/%install_dir%
 set build_dir=../build
 set boost_dir=%cd%\..\boost_1_81_0
 cd %boost_dir%

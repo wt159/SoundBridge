@@ -3,6 +3,7 @@
 system_name=$1
 system_process=$2
 toolchain=$3
+install_dir=$4
 
 if [ "$system_name" == "windows" ];
 then
@@ -17,7 +18,7 @@ else
 fi
 
 root_dir=$current_dir/../ffmpeg-4.4.4
-prefix_dir=$root_dir/../dist/$system_name"_"$system_process"_"$toolchain
+prefix_dir=$root_dir/../dist/$install_dir
 echo "[$system_name]安装目录为：$prefix_dir"
 
 cd $root_dir

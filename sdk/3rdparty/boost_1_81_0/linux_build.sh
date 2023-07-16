@@ -3,7 +3,8 @@
 system_name=$1
 system_process=$2
 toolchain=$3
-prefix=../dist/${system_name}_${system_process}_${toolchain}
+install_dir=$4
+prefix=../dist/${install_dir}
 build_dir=../build
 boost_dir=$(cd ../boost_1_81_0 && pwd)
 

@@ -1,0 +1,10 @@
+# boost
+set(BUILD_BOOST_OPTION OFF)
+# ffmpeg
+set(BUILD_FFMPEG_OPTION OFF)
+# g3log
+set(BUILD_G3LOG_OPTION OFF)
+# g3sinks
+set(BUILD_G3SINKS_OPTION OFF)
+# zlib
+set(BUILD_ZLIB_OPTION ON)

@@ -5,13 +5,13 @@ project(zlib C)
 
 set(VERSION "1.2.13")
 
-set(CMAKE_INSTALL_PREFIX ${3RDPARTY_INSTALL_DIR})
-message("cmake install prefix : ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "zlib cmake install prefix : ${CMAKE_INSTALL_PREFIX}")
 set(INSTALL_BIN_DIR "${CMAKE_INSTALL_PREFIX}/bin" CACHE PATH "Installation directory for executables")
 set(INSTALL_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib" CACHE PATH "Installation directory for libraries")
 set(INSTALL_INC_DIR "${CMAKE_INSTALL_PREFIX}/include" CACHE PATH "Installation directory for headers")
 set(INSTALL_MAN_DIR "${CMAKE_INSTALL_PREFIX}/share/man" CACHE PATH "Installation directory for manual pages")
 set(INSTALL_PKGCONFIG_DIR "${CMAKE_INSTALL_PREFIX}/share/pkgconfig" CACHE PATH "Installation directory for pkgconfig (.pc) files")
+message(STATUS "zlib cmake install bin dir : ${INSTALL_BIN_DIR}")
 
 include(CheckTypeSize)
 include(CheckFunctionExists)
@@ -181,15 +181,19 @@ if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL )
         RUNTIME DESTINATION "${INSTALL_BIN_DIR}"
         ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
         LIBRARY DESTINATION "${INSTALL_LIB_DIR}" )
+    message(STATUS "zlib Installing TARGETS zlib zlibstatic")
 endif()
 if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL )
     install(FILES ${ZLIB_PUBLIC_HDRS} DESTINATION "${INSTALL_INC_DIR}")
+    message(STATUS "zlib Installing FILES ${ZLIB_PUBLIC_HDRS}")
 endif()
 if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
     install(FILES zlib.3 DESTINATION "${INSTALL_MAN_DIR}/man3")
+    message(STATUS "zlib Installing FILES zlib.3")
 endif()
 if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
     install(FILES ${ZLIB_PC} DESTINATION "${INSTALL_PKGCONFIG_DIR}")
+    message(STATUS "zlib Installing FILES ${ZLIB_PC}")
 endif()
 
 #============================================================================
