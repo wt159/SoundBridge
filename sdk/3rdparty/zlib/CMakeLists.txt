@@ -176,21 +176,22 @@ elseif(BUILD_SHARED_LIBS AND WIN32)
     set_target_properties(zlib PROPERTIES SUFFIX "1.dll")
 endif()
 
-if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL )
-    install(TARGETS zlib zlibstatic
-        RUNTIME DESTINATION "${INSTALL_BIN_DIR}"
-        ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
-        LIBRARY DESTINATION "${INSTALL_LIB_DIR}" )
-    message(STATUS "zlib Installing TARGETS zlib zlibstatic")
-endif()
-if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL )
-    install(FILES ${ZLIB_PUBLIC_HDRS} DESTINATION "${INSTALL_INC_DIR}")
-    message(STATUS "zlib Installing FILES ${ZLIB_PUBLIC_HDRS}")
-endif()
-if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
-    install(FILES zlib.3 DESTINATION "${INSTALL_MAN_DIR}/man3")
-    message(STATUS "zlib Installing FILES zlib.3")
-endif()
+# if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL )
+#     install(TARGETS zlib zlibstatic
+#         RUNTIME DESTINATION "${INSTALL_BIN_DIR}"
+#         ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
+#         LIBRARY DESTINATION "${INSTALL_LIB_DIR}" )
+#     message(STATUS "zlib Installing TARGETS zlib zlibstatic")
+# endif()
+# if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL )
+#     install(FILES ${ZLIB_PUBLIC_HDRS} DESTINATION "${INSTALL_INC_DIR}")
+#     message(STATUS "zlib Installing FILES ${ZLIB_PUBLIC_HDRS}")
+# endif()
+# if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
+#     install(FILES zlib.3 DESTINATION "${INSTALL_MAN_DIR}/man3")
+#     message(STATUS "zlib Installing FILES zlib.3")
+# endif()
+include(install.cmake)
 if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
     install(FILES ${ZLIB_PC} DESTINATION "${INSTALL_PKGCONFIG_DIR}")
     message(STATUS "zlib Installing FILES ${ZLIB_PC}")

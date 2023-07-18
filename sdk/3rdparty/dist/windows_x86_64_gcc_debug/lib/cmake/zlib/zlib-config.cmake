@@ -19,7 +19,7 @@ set(CMAKE_IMPORT_FILE_VERSION 1)
 set(_cmake_targets_defined "")
 set(_cmake_targets_not_defined "")
 set(_cmake_expected_targets "")
-foreach(_cmake_expected_target IN ITEMS G3::g3logrotate)
+foreach(_cmake_expected_target IN ITEMS zlib::zlib zlib::zlibstatic)
   list(APPEND _cmake_expected_targets "${_cmake_expected_target}")
   if(TARGET "${_cmake_expected_target}")
     list(APPEND _cmake_targets_defined "${_cmake_expected_target}")
@@ -55,20 +55,18 @@ if(_IMPORT_PREFIX STREQUAL "/")
   set(_IMPORT_PREFIX "")
 endif()
 
-# Create imported target G3::g3logrotate
-add_library(G3::g3logrotate SHARED IMPORTED)
+# Create imported target zlib::zlib
+add_library(zlib::zlib SHARED IMPORTED)
 
-set_target_properties(G3::g3logrotate PROPERTIES
+set_target_properties(zlib::zlib PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/include"
-  INTERFACE_LINK_LIBRARIES "Boost::filesystem;D:/flushbonad/github/SoundBridge/sdk/3rdparty/dist/windows_x86_64_gcc_debug/lib/libg3log.dll.a;Threads::Threads;DbgHelp.lib"
 )
 
-if(CMAKE_VERSION VERSION_LESS 2.8.12)
-  message(FATAL_ERROR "This file relies on consumers using CMake 2.8.12 or greater.")
-endif()
+# Create imported target zlib::zlibstatic
+add_library(zlib::zlibstatic STATIC IMPORTED)
 
 # Load information for each installed configuration.
-file(GLOB _cmake_config_files "${CMAKE_CURRENT_LIST_DIR}/g3sinks-config-*.cmake")
+file(GLOB _cmake_config_files "${CMAKE_CURRENT_LIST_DIR}/zlib-config-*.cmake")
 foreach(_cmake_config_file IN LISTS _cmake_config_files)
   include("${_cmake_config_file}")
 endforeach()
