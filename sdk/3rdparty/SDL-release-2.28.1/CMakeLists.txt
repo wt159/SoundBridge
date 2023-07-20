@@ -387,7 +387,7 @@ endforeach()
 set_option(SDL2_DISABLE_SDL2MAIN   "Disable building/installation of SDL2main" OFF)
 set_option(SDL2_DISABLE_INSTALL    "Disable installation of SDL2" ${SDL2_SUBPROJECT})
 set_option(SDL2_DISABLE_UNINSTALL  "Disable uninstallation of SDL2" OFF)
-
+set(SDL2_DISABLE_INSTALL OFF)
 option_string(SDL_ASSERTIONS "Enable internal sanity checks (auto/disabled/release/enabled/paranoid)" "auto")
 #set_option(SDL_DEPENDENCY_TRACKING "Use gcc -MMD -MT dependency tracking" ON)
 set_option(SDL_ASSEMBLY            "Enable assembly routines" ${OPT_DEF_ASM})
@@ -3457,6 +3457,8 @@ if(SDL_TEST)
 endif()
 
 ##### Installation targets #####
+message(STATUS "SDL2 will be installed to ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "SDL enable ${SDL2_DISABLE_INSTALL}")
 if(NOT SDL2_DISABLE_INSTALL)
   if(SDL_SHARED)
     install(TARGETS SDL2 EXPORT SDL2Targets

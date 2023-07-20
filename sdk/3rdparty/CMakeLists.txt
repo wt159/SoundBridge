@@ -21,8 +21,17 @@ else()
     # return()
 endif()
 
+# option
+message(STATUS "Options:")
+message(STATUS "  BUILD_OPTION_BOOST:     ${BUILD_OPTION_BOOST}")
+message(STATUS "  BUILD_OPTION_FFMPEG:    ${BUILD_OPTION_FFMPEG}")
+message(STATUS "  BUILD_OPTION_G3LOG:     ${BUILD_OPTION_G3LOG}")
+message(STATUS "  BUILD_OPTION_G3SINKS:   ${BUILD_OPTION_G3SINKS}")
+message(STATUS "  BUILD_OPTION_ZLIB:      ${BUILD_OPTION_ZLIB}")
+message(STATUS "  BUILD_OPTION_SDL2:      ${BUILD_OPTION_SDL2}")
+
 # boost
-if(BUILD_BOOST_OPTION STREQUAL "ON")
+if(BUILD_OPTION_BOOST STREQUAL "ON")
     set(BOOST_ROOT ${3RDPARTY_DIR}/boost_1_81_0)
     if(CMAKE_TARGET_SYSTEM_NAME STREQUAL "windows")
         set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/windows_build.bat")
@@ -38,13 +47,11 @@ if(BUILD_BOOST_OPTION STREQUAL "ON")
             COMMAND_ECHO STDOUT
         )
     endif()
-else()
-    message(STATUS "BUILD_BOOST_OPTION: ${BUILD_BOOST_OPTION}")
 endif()
 
 
 # ffmpeg
-if(BUILD_FFMPEG_OPTION STREQUAL "ON")
+if(BUILD_OPTION_FFMPEG STREQUAL "ON")
     # 执行bash命令检查是否安装
     execute_process(
         COMMAND bash -c "echo 'Bash is installed.'"
@@ -69,25 +76,22 @@ if(BUILD_FFMPEG_OPTION STREQUAL "ON")
         generate_ffmpeg_files ALL
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
     )
-else()
-    message(STATUS "BUILD_FFMPEG_OPTION: ${BUILD_FFMPEG_OPTION}")
 endif()
 
 # g3log
-if(BUILD_G3LOG_OPTION STREQUAL "ON")
+if(BUILD_OPTION_G3LOG STREQUAL "ON")
     add_subdirectory(${3RDPARTY_DIR}/g3log)
-else()
-    message(STATUS "BUILD_G3LOG_OPTION: ${BUILD_G3LOG_OPTION}")
 endif()
 # zlib
-if(BUILD_ZLIB_OPTION STREQUAL "ON")
+if(BUILD_OPTION_ZLIB STREQUAL "ON")
     add_subdirectory(${3RDPARTY_DIR}/zlib)
-else()
-    message(STATUS "BUILD_ZLIB_OPTION: ${BUILD_ZLIB_OPTION}")
 endif()
 # g3sinks
-if(BUILD_G3SINKS_OPTION STREQUAL "ON")
+if(BUILD_OPTION_G3SINKS STREQUAL "ON")
     add_subdirectory(${3RDPARTY_DIR}/g3sinks)
-else()
-    message(STATUS "BUILD_G3SINKS_OPTION: ${BUILD_G3SINKS_OPTION}")
+endif()
+
+# SDL
+if(BUILD_OPTION_SDL2 STREQUAL "ON")
+    add_subdirectory(${3RDPARTY_DIR}/SDL-release-2.28.1)
 endif()
