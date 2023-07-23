@@ -3,8 +3,9 @@
 #include <g3log/logworker.hpp>
 #include <g3sinks/LogRotate.h>
 #include <string>
+#include <NonCopyable.hpp>
 
-class LogWrapper
+class LogWrapper : public NonCopyable
 {
 private:
     std::string m_logDir;
@@ -19,10 +20,6 @@ public:
     static void getInstanceInitialize(std::string& logDir, std::string& logFileName, int singleFileSizeInBytes, int maxFileCount);
 public:
     LogWrapper() = delete;
-    LogWrapper(LogWrapper &&) = delete;
-    LogWrapper(const LogWrapper &) = delete;
-    LogWrapper &operator=(LogWrapper &&) = delete;
-    LogWrapper &operator=(const LogWrapper &) = delete;
     ~LogWrapper();
 private:
     LogWrapper(std::string& logDir, std::string& logFileName, int singleFileSizeInBytes, int maxFileCount);

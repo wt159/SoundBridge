@@ -9,6 +9,7 @@ set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${3RDPARTY_DIST_DIR})
 
 # 指定cosmos路径
 include_directories(${SDK_ROOT_DIR}/cosmos)
+include_directories(${SDK_ROOT_DIR}/log)
 
 set(LOG_WRAPPER_DIR ${SDK_ROOT_DIR}/log)
 add_subdirectory(${LOG_WRAPPER_DIR})
