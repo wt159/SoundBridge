@@ -57,4 +57,5 @@ struct AudioSpec
     AudioFormat format;
     int channels;
     int bits_per_sample;
+    int bytes_frame_num;
 };
