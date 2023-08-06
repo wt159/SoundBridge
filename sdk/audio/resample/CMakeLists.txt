@@ -10,7 +10,4 @@ link_directories(${3RDPARTY_DIST_DIR}/bin)
 
 add_library(AudioResample SHARED AudioResample.cpp AudioResample.h)
 
-add_executable(AudioResampleTest test.cpp)
-
 target_link_libraries(AudioResample swresample avutil LogWrapper)
-target_link_libraries(AudioResampleTest -static LogWrapper AudioResample)
