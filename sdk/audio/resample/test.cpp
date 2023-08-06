@@ -89,7 +89,7 @@ void TestCode()
     AudioSpec out;
     out.sample_rate = 48000;
     out.channels = 1;
-    out.format = AudioFormatFloat32;
+    out.format = AudioFormatFLT32;
     out.bytes_frame_num = in.bytes_frame_num * out.sample_rate / in.sample_rate;
     out.bits_per_sample = 32;
     AudioResampleTest test(inFile, in, outFile, out);

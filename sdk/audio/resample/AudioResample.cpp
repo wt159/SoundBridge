@@ -166,12 +166,12 @@ void AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResamp
     case AudioFormatS32BE:
         out.sampleFmt = AV_SAMPLE_FMT_S32;
         break;
-    case AudioFormatFloat32:
-    case AudioFormatFloat32BE:
+    case AudioFormatFLT32:
+    case AudioFormatFLT32BE:
         out.sampleFmt = AV_SAMPLE_FMT_FLT;
         break;
-    case AudioFormatFloat64:
-    case AudioFormatFloat64BE:
+    case AudioFormatDBL64:
+    case AudioFormatDBL64BE:
         out.sampleFmt = AV_SAMPLE_FMT_DBL;
         break;
     default:

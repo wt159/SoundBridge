@@ -89,10 +89,10 @@ int AudioDevice::Impl::open(AudioSpec &spec)
     case AudioFormatS32BE:
         m_spec.format = AUDIO_S32MSB;
         break;
-    case AudioFormatFloat32:
+    case AudioFormatFLT32:
         m_spec.format = AUDIO_F32;
         break;
-    case AudioFormatFloat32BE:
+    case AudioFormatFLT32BE:
         m_spec.format = AUDIO_F32MSB;
         break;
     default:
