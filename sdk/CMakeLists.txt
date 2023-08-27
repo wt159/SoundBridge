@@ -16,4 +16,6 @@ add_subdirectory(${LOG_WRAPPER_DIR})
 
 add_subdirectory(${SDK_ROOT_DIR}/audio)
 
+add_subdirectory(${SDK_ROOT_DIR}/file)
+
 add_subdirectory(${SDK_ROOT_DIR}/test)
