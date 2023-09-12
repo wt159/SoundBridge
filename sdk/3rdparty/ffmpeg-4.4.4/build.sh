@@ -23,11 +23,18 @@ echo "[$system_name]安装目录为：$prefix_dir"
 
 cd $root_dir
 echo "start config"
-./configure --pkg-config-flags=""\
+./configure --pkg-config-flags="" \
     --prefix=$prefix_dir \
-    --enable-shared --enable-gpl --enable-version3 \
-    --enable-nonfree --disable-libx264 --disable-libx265 \
-    --disable-libvpx --disable-libopus --disable-libmp3lame \
+    --enable-shared \
+    --enable-gpl \
+    --enable-version3 \
+    --enable-nonfree \
+    --disable-postproc \
+    --disable-debug \
+    --disable-doc \
+    --disable-ffmpeg \
+    --disable-ffplay \
+    --disable-ffprobe \
     --disable-x86asm
 
 echo "start make"

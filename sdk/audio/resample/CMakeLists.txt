@@ -8,6 +8,6 @@ include_directories(${3RDPARTY_DIST_DIR}/include)
 link_directories(${3RDPARTY_DIST_DIR}/lib)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
 
-add_library(AudioResample SHARED AudioResample.cpp AudioResample.h)
+add_library(AudioResample AudioResample.cpp AudioResample.h)
 
 target_link_libraries(AudioResample swresample avutil LogWrapper)

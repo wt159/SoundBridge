@@ -21,7 +21,7 @@ enum AudioFormat
     AudioFormatDBL64BE,
 };
 
-int getAudioFormatSize(AudioFormat format)
+inline int getAudioFormatSize(AudioFormat format)
 {
     switch (format)
     {

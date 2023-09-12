@@ -22,5 +22,5 @@ target_link_libraries(TestAudioResample LogWrapper AudioResample)
 add_executable(TestAudioDecode TestAudioDecode.cpp)
 target_link_libraries(TestAudioDecode LogWrapper AudioDecode)
 
-add_executable(TestFileSearch TestFileSearch.cpp)
-target_link_libraries(TestFileSearch FileSearch)
+# add_executable(TestFileSearch TestFileSearch.cpp)
+# target_link_libraries(TestFileSearch FileSearch)

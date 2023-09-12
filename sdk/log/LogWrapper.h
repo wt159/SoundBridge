@@ -26,8 +26,8 @@ private:
     void init();
 };
 
-#define LOG_INFO(tag, ...) LOGF(INFO, tag" " __VA_ARGS__)
-#define LOG_DEBUG(tag, ...) LOGF(DEBUG, tag" " __VA_ARGS__)
-#define LOG_WARNING(tag, ...) LOGF(WARNING, tag" " __VA_ARGS__)
-#define LOG_ERROR(tag, ...) LOGF(WARNING, tag" " __VA_ARGS__)
-#define LOG_FATAL(tag, ...) LOGF(FATAL, tag" " __VA_ARGS__)
+#define LOG_INFO(tag, ...) LOGF(INFO, tag": " __VA_ARGS__)
+#define LOG_DEBUG(tag, ...) LOGF(DEBUG, tag": " __VA_ARGS__)
+#define LOG_WARNING(tag, ...) LOGF(WARNING, tag": " __VA_ARGS__)
+#define LOG_ERROR(tag, ...) LOGF(WARNING, tag": " __VA_ARGS__)
+#define LOG_FATAL(tag, ...) LOGF(FATAL, tag": " __VA_ARGS__)
