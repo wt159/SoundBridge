@@ -10,9 +10,11 @@ FileSource::FileSource(const char *filename)
     , mOffset(0)
     , mLength(-1)
     , mName("<null>")
+    , mExtensionName("<null>")
 {
     if (filename) {
         mName = std::string("FileSource(") + std::string(filename) + std::string(")");
+        mExtensionName = getExtensionName(filename);
     }
 
     LOG_DEBUG(LOG_TAG, "%s", filename);
@@ -81,4 +83,13 @@ status_t FileSource::getSize(off64_t *size)
     *size = mLength;
 
     return OK;
+}
+
+std::string FileSource::getExtensionName(const std::string &filename)
+{
+    size_t pos = filename.rfind('.');
+    if (pos != std::string::npos && pos < filename.length() - 1) {
+        return filename.substr(pos + 1);
+    }
+    return std::string();
 }

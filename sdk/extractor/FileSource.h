@@ -23,9 +23,13 @@ public:
     virtual std::string toString() { return mName; }
 
 private:
+    std::string getExtensionName(const std::string &filename);
+
+private:
     std::ifstream mFile;
     int64_t mOffset;
     int64_t mLength;
     std::mutex mLock;
     std::string mName;
+    std::string mExtensionName;
 };
