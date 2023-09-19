@@ -6,17 +6,17 @@
 #include <sstream>
 #define _USE_TEMPLATE_ 1
 
-static const char* weekdays[]
+static const char *weekdays[]
     = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 class Timer {
 public:
-    using clock_t = std::chrono::high_resolution_clock;
+    using clock_t       = std::chrono::high_resolution_clock;
     using millisecond_t = std::chrono::milliseconds;
-    using nanosecond_t = std::chrono::nanoseconds;
+    using nanosecond_t  = std::chrono::nanoseconds;
     using microsecond_t = std::chrono::microseconds;
-    using second_t = std::chrono::seconds;
-    using minute_t = std::chrono::minutes;
-    using hour_t = std::chrono::hours;
+    using second_t      = std::chrono::seconds;
+    using minute_t      = std::chrono::minutes;
+    using hour_t        = std::chrono::hours;
     struct Date {
         int year;
         int month;
@@ -60,26 +60,32 @@ public:
     }
 
     std::time_t getStartTimestamp() const { return std::chrono::system_clock::to_time_t(m_begin); }
-    std::time_t getCurrentTimestamp() const
+    static std::time_t getCurrentTimestamp()
     {
         return std::chrono::system_clock::to_time_t(clock_t::now());
     }
-    Date getCurrentLocalTime() const
+    static Date getCurrentLocalTime()
     {
         std::chrono::time_point<clock_t> cur = clock_t::now();
-        std::time_t now = std::chrono::system_clock::to_time_t(cur);
-        struct tm* localTime = std::localtime(&now);
+        std::time_t now                      = std::chrono::system_clock::to_time_t(cur);
+        struct tm *localTime                 = std::localtime(&now);
         Date date;
-        date.year = localTime->tm_year + 1900;
-        date.month = localTime->tm_mon + 1;
+        date.year    = localTime->tm_year + 1900;
+        date.month   = localTime->tm_mon + 1;
         date.weekday = localTime->tm_wday;
-        date.day = localTime->tm_mday;
-        date.hour = localTime->tm_hour;
-        date.minute = localTime->tm_min;
-        date.second = localTime->tm_sec;
+        date.day     = localTime->tm_mday;
+        date.hour    = localTime->tm_hour;
+        date.minute  = localTime->tm_min;
+        date.second  = localTime->tm_sec;
         date.millisecond
             = std::chrono::duration_cast<millisecond_t>(cur.time_since_epoch()).count() % 1000;
         return date;
+    }
+
+    template <typename TimeUnit = millisecond_t> static size_t getCurrentTimePoint()
+    {
+        std::chrono::time_point<clock_t> cur = clock_t::now();
+        std::chrono::duration_cast<TimeUnit>(cur.time_since_epoch()).count();
     }
 
 private:
