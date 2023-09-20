@@ -47,14 +47,14 @@ public:
     ~WorkQueue() { stop(); }
 
     template <typename F, typename... Arg>
-    TaskID startTimerTask(bool isRepeat, int intervalTimeMs, F f, Arg... args)
+    TaskID startTimerTask(bool isRepeat, int intervalTimeMs, F &&f, Arg &&...args)
     {
         if (!m_running.load()) {
             return TaskID_Error;
         }
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
-        task->func           = std::bind(f, args...);
+        task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
         task->intervalTimeMs = intervalTimeMs;
         task->runTimePointUs
             = Timer::getCurrentTimePoint<Timer::microsecond_t>() + task->intervalTimeMs * 1000;
@@ -71,12 +71,6 @@ public:
         return task->id;
     }
 
-    template <typename T, typename F, typename... Arg>
-    TaskID startTimerTaskWithObj(bool isRepeat, int intervalTimeMs, T *obj, F f, Arg... args)
-    {
-        return startTimerTask(isRepeat, intervalTimeMs, std::bind(f, obj, args...));
-    }
-
     void stopTimerTask(TaskID id)
     {
         // FIXME: Available uses atomic variables, so does it need to be locked here?
@@ -89,14 +83,14 @@ public:
         m_taskCV.notify_one();
     }
 
-    template <typename F, typename... Arg> void asyncRunTask(F f, Arg... args)
+    template <typename F, typename... Arg> void asyncRunTask(F &&f, Arg &&...args)
     {
         if (!m_running.load()) {
             return;
         }
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
-        task->func           = std::bind(f, args...);
+        task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
         task->intervalTimeMs = 0;
         task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
         task->id             = (size_t)task.get();
@@ -112,20 +106,14 @@ public:
         return;
     }
 
-    template <typename T, typename F, typename... Arg>
-    void asyncRunTaskWithObj(T *obj, F f, Arg... args)
-    {
-        asyncRunTask(std::bind(f, obj, args...));
-    }
-
-    template <typename F, typename... Arg> void syncRunTask(F f, Arg... args)
+    template <typename F, typename... Arg> void syncRunTask(F &&f, Arg &&...args)
     {
         if (!m_running.load()) {
             return;
         }
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
-        task->func           = std::bind(f, args...);
+        task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
         task->intervalTimeMs = 0;
         task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
         task->id             = (size_t)task.get();
@@ -143,12 +131,6 @@ public:
         return;
     }
 
-    template <typename T, typename F, typename... Arg>
-    void syncRunTaskWithObj(T *obj, F f, Arg... args)
-    {
-        syncRunTask(std::bind(f, obj, args...));
-    }
-
 protected:
     void start()
     {
@@ -158,6 +140,7 @@ protected:
     void stop()
     {
         m_running.store(false);
+        m_taskCV.notify_one();
         if (m_thread.joinable()) {
             m_thread.join();
         }
@@ -176,32 +159,38 @@ protected:
                 }
 
                 task = m_taskQueue.top();
-                if (task->available.load()) {
-                    auto nowTimeUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
+                if (!task->available.load()) {
+                    m_taskQueue.pop();
+                    m_taskMap.erase(task->id);
+                    continue;
+                } else {
+                    size_t nowTimeUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
                     if (nowTimeUs < task->runTimePointUs) {
-                        auto state = m_taskCV.wait_for(
+                        std::cv_status state = m_taskCV.wait_for(
                             lock, Timer::microsecond_t((task->runTimePointUs - nowTimeUs)));
                         if (state == std::cv_status::no_timeout) {
                             continue;
                         }
                     }
                 }
-                m_taskQueue.pop();
-                m_taskMap.erase(task->id);
-            }
-
-            if (task->available.load()) {
-                task->func();
-                if (task->isSync.load()) {
-                    task->promise.set_value(true);
-                }
-                if (task->isRepeat) {
+                if (!task->isRepeat.load()) {
+                    m_taskQueue.pop();
+                    m_taskMap.erase(task->id);
+                } else {
                     task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>()
                         + task->intervalTimeMs * 1000;
-                    std::lock_guard<std::mutex> lock(m_taskMtx);
+                    m_taskQueue.pop();
                     m_taskQueue.push(task);
-                    m_taskMap[task->id] = task;
                 }
+            }
+
+            if (!m_running.load()) {
+                break;
+            }
+
+            task->func();
+            if (task->isSync.load()) {
+                task->promise.set_value(true);
             }
         }
         return;
