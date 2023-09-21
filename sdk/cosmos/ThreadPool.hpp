@@ -91,14 +91,13 @@ public:
         return true;
     }
 
-    template <typename F, typename... ARG> bool runTask(F f, ARG ...args)
+    template <typename F, typename... ARG> bool runTask(F &&f, ARG &&...args)
     {
-        if (!m_available.load() || !m_running.load() || m_shutdown.load()
-            || m_shutdownNow.load()) {
+        if (!m_available.load() || !m_running.load() || m_shutdown.load() || m_shutdownNow.load()) {
             return false;
         }
 
-        Task task = std::bind(f, args...);
+        Task task = std::bind(std::forward<F>(f), std::forward<ARG>(args)...);
 
         m_queue.Put(task);
         m_coreThreadCond.notify_one();
@@ -106,14 +105,13 @@ public:
     }
 
     template <typename T, typename F, typename... ARG>
-    bool runTaskWithObj(T *obj, F f, ARG ...args)
+    bool runTaskWithObj(T *obj, F &&f, ARG &&...args)
     {
-        if (!m_available.load() || !m_running.load() || m_shutdown.load()
-            || m_shutdownNow.load()) {
+        if (!m_available.load() || !m_running.load() || m_shutdown.load() || m_shutdownNow.load()) {
             return false;
         }
 
-        Task task = std::bind(std::mem_fn(f), obj, args...);
+        Task task = std::bind(std::forward<F>(f), obj, std::forward<ARG>(args)...);
 
         m_queue.Put(task);
         m_coreThreadCond.notify_one();
