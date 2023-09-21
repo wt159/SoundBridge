@@ -24,7 +24,7 @@ private:
         TaskID id;
         std::function<void()> func;
         size_t runTimePointUs;
-        size_t intervalTimeMs;
+        size_t intervalTimeUs;
         std::atomic<bool> isRepeat;
         std::atomic<bool> available;
         std::atomic<bool> isSync;
@@ -55,9 +55,9 @@ public:
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
         task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
-        task->intervalTimeMs = intervalTimeMs;
+        task->intervalTimeUs = intervalTimeMs * 1000;
         task->runTimePointUs
-            = Timer::getCurrentTimePoint<Timer::microsecond_t>() + task->intervalTimeMs * 1000;
+            = Timer::getCurrentTimePoint<Timer::microsecond_t>() + task->intervalTimeUs;
         task->id = (size_t)task.get();
         task->available.store(true);
         task->isRepeat.store(isRepeat);
@@ -73,7 +73,6 @@ public:
 
     void stopTimerTask(TaskID id)
     {
-        // FIXME: Available uses atomic variables, so does it need to be locked here?
         std::lock_guard<std::mutex> lock(m_taskMtx);
         auto iter = m_taskMap.find(id);
         if (iter == m_taskMap.end()) {
@@ -91,7 +90,7 @@ public:
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
         task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
-        task->intervalTimeMs = 0;
+        task->intervalTimeUs = 0;
         task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
         task->id             = (size_t)task.get();
         task->available.store(true);
@@ -114,7 +113,7 @@ public:
 
         TaskWrapperPtr task  = std::make_shared<TaskWrapper>();
         task->func           = std::bind(std::forward<F>(f), std::forward<Arg>(args)...);
-        task->intervalTimeMs = 0;
+        task->intervalTimeUs = 0;
         task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
         task->id             = (size_t)task.get();
         task->available.store(true);
@@ -165,9 +164,10 @@ protected:
                     continue;
                 } else {
                     size_t nowTimeUs = Timer::getCurrentTimePoint<Timer::microsecond_t>();
-                    if (nowTimeUs < task->runTimePointUs) {
-                        std::cv_status state = m_taskCV.wait_for(
-                            lock, Timer::microsecond_t((task->runTimePointUs - nowTimeUs)));
+                    ssize_t difftime = task->runTimePointUs - nowTimeUs;
+                    if (difftime >= 0) {
+                        std::cv_status state
+                            = m_taskCV.wait_for(lock, Timer::microsecond_t(difftime));
                         if (state == std::cv_status::no_timeout) {
                             continue;
                         }
@@ -177,8 +177,7 @@ protected:
                     m_taskQueue.pop();
                     m_taskMap.erase(task->id);
                 } else {
-                    task->runTimePointUs = Timer::getCurrentTimePoint<Timer::microsecond_t>()
-                        + task->intervalTimeMs * 1000;
+                    task->runTimePointUs += task->intervalTimeUs;
                     m_taskQueue.pop();
                     m_taskQueue.push(task);
                 }
