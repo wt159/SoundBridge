@@ -1,30 +1,30 @@
 #pragma once
 
-#include "ExtractorApi.h"
 #include "ByteUtils.hpp"
+#include "ExtractorApi.h"
 
 /* adds some convience methods */
 class DataSourceHelper {
 public:
-    explicit DataSourceHelper(CDataSource *csource) { mSource = csource; }
+    explicit DataSourceHelper(CDataSource *csource) { m_source = csource; }
 
-    explicit DataSourceHelper(DataSourceHelper *source) { mSource = source->mSource; }
+    explicit DataSourceHelper(DataSourceHelper *source) { m_source = source->m_source; }
 
     virtual ~DataSourceHelper() { }
 
     virtual ssize_t readAt(off64_t offset, void *data, size_t size)
     {
-        return mSource->readAt(mSource->handle, offset, data, size);
+        return m_source->readAt(m_source->handle, offset, data, size);
     }
 
-    virtual status_t getSize(off64_t *size) { return mSource->getSize(mSource->handle, size); }
+    virtual status_t getSize(off64_t *size) { return m_source->getSize(m_source->handle, size); }
 
     bool getUri(char *uriString, size_t bufferSize)
     {
-        return mSource->getUri(mSource->handle, uriString, bufferSize);
+        return m_source->getUri(m_source->handle, uriString, bufferSize);
     }
 
-    virtual uint32_t flags() { return mSource->flags(mSource->handle); }
+    virtual uint32_t flags() { return m_source->flags(m_source->handle); }
 
     // Convenience methods:
     bool getUInt16(off64_t offset, uint16_t *x)
@@ -131,7 +131,7 @@ public:
     }
 
 protected:
-    CDataSource *mSource;
+    CDataSource *m_source;
 };
 
 class ExtractorHelper {
@@ -150,9 +150,9 @@ public:
 
     enum Flags {
         CAN_SEEK_BACKWARD = 1, // the "seek 10secs back button"
-        CAN_SEEK_FORWARD = 2, // the "seek 10secs forward button"
-        CAN_PAUSE = 4,
-        CAN_SEEK = 8, // the "seek bar"
+        CAN_SEEK_FORWARD  = 2, // the "seek 10secs forward button"
+        CAN_PAUSE         = 4,
+        CAN_SEEK          = 8, // the "seek bar"
     };
 
     // If subclasses do _not_ override this, the default is

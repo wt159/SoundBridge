@@ -30,23 +30,23 @@ static uint16_t U16_LE_AT(const uint8_t *ptr)
 }
 
 WAVExtractor::WAVExtractor(DataSourceHelper *source)
-    : mDataSource(source)
-    , mValidFormat(false)
+    : m_dataSource(source)
+    , m_validFormat(false)
 {
-    mInitCheck = init();
+    m_initCheck = init();
 }
 
 WAVExtractor::~WAVExtractor() { }
 
 size_t WAVExtractor::countTracks()
 {
-    return mInitCheck == OK ? 1 : 0;
+    return m_initCheck == OK ? 1 : 0;
 }
 
 status_t WAVExtractor::init()
 {
     uint8_t header[12];
-    if (mDataSource->readAt(0, header, sizeof(header)) < (ssize_t)sizeof(header)) {
+    if (m_dataSource->readAt(0, header, sizeof(header)) < (ssize_t)sizeof(header)) {
         return NO_INIT;
     }
 
@@ -60,7 +60,7 @@ status_t WAVExtractor::init()
     size_t remainingSize = totalSize;
     while (remainingSize >= 8) {
         uint8_t chunkHeader[8];
-        if (mDataSource->readAt(offset, chunkHeader, 8) < 8) {
+        if (m_dataSource->readAt(offset, chunkHeader, 8) < 8) {
             return NO_INIT;
         }
 
@@ -79,122 +79,122 @@ status_t WAVExtractor::init()
             }
 
             uint8_t formatSpec[40];
-            if (mDataSource->readAt(offset, formatSpec, 2) < 2) {
+            if (m_dataSource->readAt(offset, formatSpec, 2) < 2) {
                 return NO_INIT;
             }
 
-            mWaveFormat = U16_LE_AT(formatSpec);
-            if (mWaveFormat != WAVE_FORMAT_PCM && mWaveFormat != WAVE_FORMAT_IEEE_FLOAT
-                && mWaveFormat != WAVE_FORMAT_ALAW && mWaveFormat != WAVE_FORMAT_MULAW
-                && mWaveFormat != WAVE_FORMAT_MSGSM && mWaveFormat != WAVE_FORMAT_EXTENSIBLE) {
+            m_waveFormat = U16_LE_AT(formatSpec);
+            if (m_waveFormat != WAVE_FORMAT_PCM && m_waveFormat != WAVE_FORMAT_IEEE_FLOAT
+                && m_waveFormat != WAVE_FORMAT_ALAW && m_waveFormat != WAVE_FORMAT_MULAW
+                && m_waveFormat != WAVE_FORMAT_MSGSM && m_waveFormat != WAVE_FORMAT_EXTENSIBLE) {
                 return ERROR_UNSUPPORTED;
             }
 
             uint8_t fmtSize = 16;
-            if (mWaveFormat == WAVE_FORMAT_EXTENSIBLE) {
+            if (m_waveFormat == WAVE_FORMAT_EXTENSIBLE) {
                 fmtSize = 40;
             }
-            if (mDataSource->readAt(offset, formatSpec, fmtSize) < fmtSize) {
+            if (m_dataSource->readAt(offset, formatSpec, fmtSize) < fmtSize) {
                 return NO_INIT;
             }
 
-            mNumChannels = U16_LE_AT(&formatSpec[2]);
-            if (mNumChannels < 1 || mNumChannels > 8) {
-                LOG_ERROR(LOG_TAG, "Unsupported number of channels (%d)", mNumChannels);
+            m_numChannels = U16_LE_AT(&formatSpec[2]);
+            if (m_numChannels < 1 || m_numChannels > 8) {
+                LOG_ERROR(LOG_TAG, "Unsupported number of channels (%d)", m_numChannels);
                 return ERROR_UNSUPPORTED;
             }
 
-            if (mWaveFormat != WAVE_FORMAT_EXTENSIBLE) {
-                if (mNumChannels != 1 && mNumChannels != 2) {
+            if (m_waveFormat != WAVE_FORMAT_EXTENSIBLE) {
+                if (m_numChannels != 1 && m_numChannels != 2) {
                     LOG_WARNING(LOG_TAG,
                         "More than 2 channels (%d) in non-WAVE_EXT, unknown channel mask",
-                        mNumChannels);
+                        m_numChannels);
                 }
             }
 
-            mSampleRate = U32_LE_AT(&formatSpec[4]);
+            m_sampleRate = U32_LE_AT(&formatSpec[4]);
 
-            if (mSampleRate == 0) {
+            if (m_sampleRate == 0) {
                 return ERROR_MALFORMED;
             }
 
-            mBitsPerSample = U16_LE_AT(&formatSpec[14]);
+            m_bitsPerSample = U16_LE_AT(&formatSpec[14]);
 
-            if (mWaveFormat == WAVE_FORMAT_EXTENSIBLE) {
+            if (m_waveFormat == WAVE_FORMAT_EXTENSIBLE) {
                 uint16_t validBitsPerSample = U16_LE_AT(&formatSpec[18]);
-                if (validBitsPerSample != mBitsPerSample) {
+                if (validBitsPerSample != m_bitsPerSample) {
                     if (validBitsPerSample != 0) {
                         LOG_ERROR(LOG_TAG, "validBits(%d) != bitsPerSample(%d) are not supported",
-                            validBitsPerSample, mBitsPerSample);
+                            validBitsPerSample, m_bitsPerSample);
                         return ERROR_UNSUPPORTED;
                     } else {
                         LOG_WARNING(LOG_TAG, "WAVE_EXT has 0 valid bits per sample, ignoring");
                     }
                 }
 
-                mChannelMask = U32_LE_AT(&formatSpec[20]);
-                LOG_DEBUG(LOG_TAG, "numChannels=%d channelMask=0x%x", mNumChannels, mChannelMask);
-                if ((mChannelMask >> 18) != 0) {
-                    LOG_ERROR(LOG_TAG, "invalid channel mask 0x%x", mChannelMask);
+                m_channelMask = U32_LE_AT(&formatSpec[20]);
+                LOG_DEBUG(LOG_TAG, "numChannels=%d channelMask=0x%x", m_numChannels, m_channelMask);
+                if ((m_channelMask >> 18) != 0) {
+                    LOG_ERROR(LOG_TAG, "invalid channel mask 0x%x", m_channelMask);
                     return ERROR_MALFORMED;
                 }
 
-                if ((mChannelMask != CHANNEL_MASK_USE_CHANNEL_ORDER)
-                    && (mChannelMask != mNumChannels)) {
+                if ((m_channelMask != CHANNEL_MASK_USE_CHANNEL_ORDER)
+                    && (m_channelMask != m_numChannels)) {
                     LOG_ERROR(LOG_TAG, "invalid number of channels (%d) in channel mask (0x%x)",
-                        mChannelMask, mChannelMask);
+                        m_channelMask, m_channelMask);
                     return ERROR_MALFORMED;
                 }
 
-                mWaveFormat = U16_LE_AT(&formatSpec[24]);
+                m_waveFormat = U16_LE_AT(&formatSpec[24]);
                 if (memcmp(&formatSpec[26], WAVEEXT_SUBFORMAT, 14)
                     && memcmp(&formatSpec[26], AMBISONIC_SUBFORMAT, 14)) {
                     LOG_ERROR(LOG_TAG, "unsupported GUID");
                     return ERROR_UNSUPPORTED;
                 }
-            } else if (mWaveFormat == WAVE_FORMAT_PCM) {
-                if (mBitsPerSample != 8 && mBitsPerSample != 16 && mBitsPerSample != 24
-                    && mBitsPerSample != 32) {
+            } else if (m_waveFormat == WAVE_FORMAT_PCM) {
+                if (m_bitsPerSample != 8 && m_bitsPerSample != 16 && m_bitsPerSample != 24
+                    && m_bitsPerSample != 32) {
                     return ERROR_UNSUPPORTED;
                 }
-            } else if (mWaveFormat == WAVE_FORMAT_IEEE_FLOAT) {
-                if (mBitsPerSample != 32) { // TODO we don't support double
+            } else if (m_waveFormat == WAVE_FORMAT_IEEE_FLOAT) {
+                if (m_bitsPerSample != 32) { // TODO we don't support double
                     return ERROR_UNSUPPORTED;
                 }
-            } else if (mWaveFormat == WAVE_FORMAT_MSGSM) {
-                if (mBitsPerSample != 0) {
+            } else if (m_waveFormat == WAVE_FORMAT_MSGSM) {
+                if (m_bitsPerSample != 0) {
                     return ERROR_UNSUPPORTED;
                 }
-            } else if (mWaveFormat == WAVE_FORMAT_MULAW || mWaveFormat == WAVE_FORMAT_ALAW) {
-                if (mBitsPerSample != 8) {
+            } else if (m_waveFormat == WAVE_FORMAT_MULAW || m_waveFormat == WAVE_FORMAT_ALAW) {
+                if (m_bitsPerSample != 8) {
                     return ERROR_UNSUPPORTED;
                 }
             } else {
                 return ERROR_UNSUPPORTED;
             }
 
-            mValidFormat = true;
+            m_validFormat = true;
         } else if (!memcmp(chunkHeader, "data", 4)) {
-            if (mValidFormat) {
-                mDataOffset = offset;
-                mDataSize   = chunkSize;
+            if (m_validFormat) {
+                m_dataOffset = offset;
+                m_dataSize   = chunkSize;
 
-                if (mWaveFormat == WAVE_FORMAT_MSGSM) {
+                if (m_waveFormat == WAVE_FORMAT_MSGSM) {
                     // 65 bytes decode to 320 8kHz samples
-                    mDurationUs = 1000000LL * (mDataSize / 65 * 320) / 8000;
+                    m_durationUs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
                 } else {
-                    size_t bytesPerSample = mBitsPerSample >> 3;
+                    size_t bytesPerSample = m_bitsPerSample >> 3;
 
-                    if (!bytesPerSample || !mNumChannels)
+                    if (!bytesPerSample || !m_numChannels)
                         return ERROR_MALFORMED;
 
-                    size_t num_samples = mDataSize / (mNumChannels * bytesPerSample);
+                    size_t num_samples = m_dataSize / (m_numChannels * bytesPerSample);
 
-                    if (!mSampleRate)
+                    if (!m_sampleRate)
                         return ERROR_MALFORMED;
 
-                    mDurationUs = 1000000LL * num_samples / mSampleRate;
-                    LOG_INFO(LOG_TAG, "durationUs = %lld", mDurationUs);
+                    m_durationUs = 1000000LL * num_samples / m_sampleRate;
+                    LOG_INFO(LOG_TAG, "durationUs = %lld", m_durationUs);
                 }
                 return OK;
             }

@@ -17,15 +17,15 @@ private:
     status_t init();
 
 private:
-    DataSourceHelper *mDataSource;
-    status_t mInitCheck;
-    bool mValidFormat;
-    uint16_t mWaveFormat;
-    uint16_t mNumChannels;
-    uint32_t mChannelMask;
-    uint32_t mSampleRate;
-    uint16_t mBitsPerSample;
-    int64_t mDurationUs;
-    off64_t mDataOffset;
-    size_t mDataSize;
+    DataSourceHelper *m_dataSource;
+    status_t m_initCheck;
+    bool m_validFormat;
+    uint16_t m_waveFormat;
+    uint16_t m_numChannels;
+    uint32_t m_channelMask;
+    uint32_t m_sampleRate;
+    uint16_t m_bitsPerSample;
+    int64_t m_durationUs;
+    off64_t m_dataOffset;
+    size_t m_dataSize;
 };

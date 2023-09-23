@@ -117,7 +117,7 @@ public:
             if (getUInt32(offset, &tmp)) {
                 *x = tmp;
                 return true;
-            }
+            }  
         }
         return false;
     }
@@ -148,7 +148,7 @@ private:
 class DataSource : public DataSourceBase {
 public:
     DataSource()
-        : mWrapper(NULL)
+        : m_wrapper(NULL)
     {
     }
 
@@ -173,30 +173,30 @@ public:
 
     CDataSource *wrap()
     {
-        if (mWrapper) {
-            return mWrapper;
+        if (m_wrapper) {
+            return m_wrapper;
         }
-        mWrapper = new CDataSource();
-        mWrapper->handle = this;
+        m_wrapper = new CDataSource();
+        m_wrapper->handle = this;
 
-        mWrapper->readAt = [](void *handle, off64_t offset, void *data, size_t size) -> ssize_t {
+        m_wrapper->readAt = [](void *handle, off64_t offset, void *data, size_t size) -> ssize_t {
             return ((DataSource *)handle)->readAt(offset, data, size);
         };
-        mWrapper->getSize = [](void *handle, off64_t *size) -> status_t {
+        m_wrapper->getSize = [](void *handle, off64_t *size) -> status_t {
             return ((DataSource *)handle)->getSize(size);
         };
-        mWrapper->flags = [](void *handle) -> uint32_t { return ((DataSource *)handle)->flags(); };
-        mWrapper->getUri = [](void *handle, char *uriString, size_t bufferSize) -> bool {
+        m_wrapper->flags = [](void *handle) -> uint32_t { return ((DataSource *)handle)->flags(); };
+        m_wrapper->getUri = [](void *handle, char *uriString, size_t bufferSize) -> bool {
             return ((DataSource *)handle)->getUri(uriString, bufferSize);
         };
-        return mWrapper;
+        return m_wrapper;
     }
 
 protected:
-    virtual ~DataSource() { delete mWrapper; }
+    virtual ~DataSource() { delete m_wrapper; }
 
 private:
-    CDataSource *mWrapper;
+    CDataSource *m_wrapper;
     DataSource(const DataSource &);
     DataSource &operator=(const DataSource &);
 };

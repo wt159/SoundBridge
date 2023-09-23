@@ -20,16 +20,16 @@ public:
 
     virtual uint32_t flags() { return kIsLocalFileSource; }
 
-    virtual std::string toString() { return mName; }
+    virtual std::string toString() { return m_name; }
 
 private:
     std::string getExtensionName(const std::string &filename);
 
 private:
-    std::ifstream mFile;
-    int64_t mOffset;
-    int64_t mLength;
-    std::mutex mLock;
-    std::string mName;
-    std::string mExtensionName;
+    std::ifstream m_file;
+    int64_t m_offset;
+    int64_t m_length;
+    std::mutex m_lock;
+    std::string m_name;
+    std::string m_extensionName;
 };

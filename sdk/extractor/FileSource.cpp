@@ -6,22 +6,22 @@
 #define LOG_TAG "FileSource"
 
 FileSource::FileSource(const char *filename)
-    : mFile(filename, std::ios::binary)
-    , mOffset(0)
-    , mLength(-1)
-    , mName("<null>")
-    , mExtensionName("<null>")
+    : m_file(filename, std::ios::binary)
+    , m_offset(0)
+    , m_length(-1)
+    , m_name("<null>")
+    , m_extensionName("<null>")
 {
     if (filename) {
-        mName = std::string("FileSource(") + std::string(filename) + std::string(")");
-        mExtensionName = getExtensionName(filename);
+        m_name = std::string("FileSource(") + std::string(filename) + std::string(")");
+        m_extensionName = getExtensionName(filename);
     }
 
     LOG_DEBUG(LOG_TAG, "%s", filename);
-    if (mFile.is_open()) {
-        mFile.seekg(0, std::ios::end);
-        mLength = mFile.tellg();
-        mFile.seekg(0, std::ios::beg);
+    if (m_file.is_open()) {
+        m_file.seekg(0, std::ios::end);
+        m_length = m_file.tellg();
+        m_file.seekg(0, std::ios::beg);
     } else {
         LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename);
     }
@@ -29,42 +29,42 @@ FileSource::FileSource(const char *filename)
 
 FileSource::~FileSource()
 {
-    if (mFile.is_open()) {
-        mFile.close();
+    if (m_file.is_open()) {
+        m_file.close();
     }
 }
 
 status_t FileSource::initCheck() const
 {
-    return mFile.is_open() ? OK : NO_INIT;
+    return m_file.is_open() ? OK : NO_INIT;
 }
 
 ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
 {
-    if (!mFile.is_open()) {
+    if (!m_file.is_open()) {
         return NO_INIT;
     }
-    std::lock_guard<std::mutex> lock(mLock);
+    std::lock_guard<std::mutex> lock(m_lock);
 
-    if (mLength >= 0) {
-        if (offset >= mLength) {
+    if (m_length >= 0) {
+        if (offset >= m_length) {
             return 0; // read beyond EOF
         }
-        uint64_t numAvailable = mLength - offset;
+        uint64_t numAvailable = m_length - offset;
         if ((uint64_t)size > numAvailable) {
             size = numAvailable;
         }
     }
 
-    mFile.seekg(offset + mOffset);
-    if (mFile.fail()) {
-        LOG_ERROR(LOG_TAG, "seek to %lld failed", (long long)(offset + mOffset));
+    m_file.seekg(offset + m_offset);
+    if (m_file.fail()) {
+        LOG_ERROR(LOG_TAG, "seek to %lld failed", (long long)(offset + m_offset));
         return UNKNOWN_ERROR;
     }
 
-    mFile.read((char *)data, size);
+    m_file.read((char *)data, size);
 
-    if (!mFile.good()) {
+    if (!m_file.good()) {
         LOG_ERROR(LOG_TAG, "read file failed");
         return FAILED_TRANSACTION;
     }
@@ -74,13 +74,13 @@ ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
 
 status_t FileSource::getSize(off64_t *size)
 {
-    std::lock_guard<std::mutex> lock(mLock);
+    std::lock_guard<std::mutex> lock(m_lock);
 
-    if (!mFile.is_open()) {
+    if (!m_file.is_open()) {
         return NO_INIT;
     }
 
-    *size = mLength;
+    *size = m_length;
 
     return OK;
 }
