@@ -8,7 +8,7 @@ AlignConsecutiveAssignments:
   Enabled:         true
   AcrossEmptyLines: false
   AcrossComments:  false
-  AlignCompound:   false
+  AlignCompound:   true
   PadOperators:    true
 AlignConsecutiveBitFields:
   Enabled:         false
@@ -24,8 +24,8 @@ AlignConsecutiveDeclarations:
   PadOperators:    false
 AlignConsecutiveMacros:
   Enabled:         true
-  AcrossEmptyLines: false
-  AcrossComments:  false
+  AcrossEmptyLines: true
+  AcrossComments:  true
   AlignCompound:   false
   PadOperators:    false
 AlignEscapedNewlines: Right
