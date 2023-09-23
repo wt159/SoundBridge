@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.2)
 
 project(SoundBridge)
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_VERBOSE_MAKEFILE OFF)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
 set(ROOT_DIR ${CMAKE_CURRENT_LIST_DIR})
 message(STATUS "CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
