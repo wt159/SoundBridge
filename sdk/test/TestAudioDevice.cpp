@@ -93,10 +93,10 @@ private:
         std::cout << "Bits per Sample: " << header.bitsPerSample << " bits" << std::endl;
         std::cout << "Subchunk2 ID: " << std::string(header.subchunk2ID, 4) << std::endl;
         std::cout << "Subchunk2 Size: " << header.subchunk2Size << " bytes" << std::endl;
-        m_spec.sample_rate = header.sampleRate;
-        m_spec.channels = header.numChannels;
+        m_spec.sampleRate = header.sampleRate;
+        m_spec.numChannel = header.numChannels;
         m_spec.format = AudioFormatS16;
-        m_spec.bits_per_sample = header.bitsPerSample;
+        m_spec.bitsPerSample = header.bitsPerSample;
         m_bufferPos = 0;
         m_bufferSize = m_fileSize - sizeof(header);
         std::cout << "\nfile size: " << m_fileSize << std::endl;
@@ -106,7 +106,7 @@ private:
         return 0;
     }
     
-    void onAudioData(void *data, int len)
+    void getAudioData(void *data, int len)
     {
         // std::cout << "onAudioData: " << len << std::endl;
         if(m_bufferPos >= m_bufferSize) {

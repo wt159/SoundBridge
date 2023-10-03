@@ -74,21 +74,21 @@ public:
             LOG_INFO(LOG_TAG, "decode failed");
         }
         delete[] inData;
-        LOG_INFO(LOG_TAG, "%d %d %d", m_spec.sample_rate, m_spec.channels, m_spec.format);
+        LOG_INFO(LOG_TAG, "%d %d %d", m_spec.sampleRate, m_spec.numChannel, m_spec.format);
     }
     void onAudioDecodeCallback(AudioDecodeSpec &out)
     {
         LOG_INFO(LOG_TAG, "callback: chan:%d samples:%d frame_size:%d lineSize:%d num:%lu",
-            out.spec.channels, out.spec.bytes_frame_num, out.spec.bytes_per_sample, out.lineSize[0],
+            out.spec.numChannel, out.spec.samples, out.spec.bytesPerSample, out.lineSize[0],
             ++m_num);
 #if 0
         m_outFile.write(
-            (char *)out.lineData[0], out.spec.bytes_frame_num * out.spec.bytes_per_sample);
+            (char *)out.lineData[0], out.spec.samples * out.spec.bytesPerSample);
 #else
-        for (int i = 0; i < out.spec.bytes_frame_num; i++) {
-            for (int ch = 0; ch < out.spec.channels; ch++) {
-                m_outFile.write((char *)out.lineData[ch] + out.spec.bytes_per_sample * i,
-                    out.spec.bytes_per_sample);
+        for (int i = 0; i < out.spec.samples; i++) {
+            for (int ch = 0; ch < out.spec.numChannel; ch++) {
+                m_outFile.write((char *)out.lineData[ch] + out.spec.bytesPerSample * i,
+                    out.spec.bytesPerSample);
             }
         }
 #endif

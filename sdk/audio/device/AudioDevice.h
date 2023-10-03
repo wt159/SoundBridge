@@ -8,7 +8,7 @@
 class AudioDataCallback {
 public:
     virtual ~AudioDataCallback() = default;
-    virtual void onAudioData(void *data, int len) = 0;
+    virtual void getAudioData(void *data, int len) = 0;
 };
 class AudioDevice : public NonCopyable {
 public:
@@ -19,6 +19,7 @@ public:
     AudioDevice(AudioDataCallback *callback);
     ~AudioDevice();
     std::vector<AudDevPair> getDeviceList();
+    int getDeviceSpec(AudioSpec &spec);
     int selectDevice(uint64_t id);
     int open(AudioSpec &spec);
     int close();

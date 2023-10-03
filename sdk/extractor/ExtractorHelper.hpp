@@ -1,7 +1,9 @@
 #pragma once
 
-#include "ByteUtils.hpp"
+#include "AudioCommon.hpp"
+#include "ByteUtils.h"
 #include "ExtractorApi.h"
+#include <unordered_map>
 
 /* adds some convience methods */
 class DataSourceHelper {
@@ -134,40 +136,36 @@ protected:
     CDataSource *m_source;
 };
 
+enum standardExtractors {
+    WAV_EXTRACTOR,
+    MP3_EXTRACTOR,
+    AAC_EXTRACTOR,
+    FLAC_EXTRACTOR,
+    OGG_EXTRACTOR,
+    AIFF_EXTRACTOR,
+    ASF_EXTRACTOR,
+    M4A_EXTRACTOR,
+    OPUS_EXTRACTOR,
+    UNKNOWN_EXTRACTOR
+};
+
+static const std::unordered_map<std::string, standardExtractors> defaultExtractorMap = {
+    { ".wav", WAV_EXTRACTOR },
+    /* { ".mp3", MP3_EXTRACTOR }, { ".aac", AAC_EXTRACTOR },
+{ ".flac", FLAC_EXTRACTOR }, { ".ogg", OGG_EXTRACTOR }, { ".aiff", AIFF_EXTRACTOR },
+{ ".asf", ASF_EXTRACTOR },   { ".m4a", M4A_EXTRACTOR }, { ".opus", OPUS_EXTRACTOR } */
+};
+
 class ExtractorHelper {
 public:
     virtual ~ExtractorHelper() { }
-    // virtual size_t countTracks() = 0;
-    // virtual MediaTrackHelper *getTrack(size_t index) = 0;
-
-    enum GetTrackMetaDataFlags { kIncludeExtensiveMetaData = 1 };
-    // virtual media_status_t getTrackMetaData(AMediaFormat *meta, size_t index, uint32_t flags = 0)
-    //     = 0;
-
-    // Return container specific meta-data. The default implementation
-    // returns an empty metadata object.
-    // virtual media_status_t getMetaData(AMediaFormat *meta) = 0;
-
-    enum Flags {
-        CAN_SEEK_BACKWARD = 1, // the "seek 10secs back button"
-        CAN_SEEK_FORWARD  = 2, // the "seek 10secs forward button"
-        CAN_PAUSE         = 4,
-        CAN_SEEK          = 8, // the "seek bar"
-    };
-
-    // If subclasses do _not_ override this, the default is
-    // CAN_SEEK_BACKWARD | CAN_SEEK_FORWARD | CAN_SEEK | CAN_PAUSE
-    // virtual uint32_t flags() const
-    // {
-    //     return CAN_SEEK_BACKWARD | CAN_SEEK_FORWARD | CAN_SEEK | CAN_PAUSE;
-    // };
-
-    // virtual media_status_t setMediaCas(const uint8_t * /*casToken*/, size_t /*size*/)
-    // {
-    //     return AMEDIA_ERROR_INVALID_OPERATION;
-    // }
 
     virtual const char *name() { return "<unspecified>"; }
+
+    virtual uint64_t getDurationMs()                                      = 0;
+    virtual off64_t getDataSize()                                         = 0;
+    virtual AudioSpec getAudioSpec()                                      = 0;
+    virtual void readAudioRawData(off64_t offset, size_t size, void *buf) = 0;
 
 protected:
     ExtractorHelper() { }

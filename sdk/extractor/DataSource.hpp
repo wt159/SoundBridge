@@ -1,17 +1,17 @@
 #pragma once
 
-#include "ByteUtils.hpp"
+#include "ByteUtils.h"
 #include "ExtractorApi.h"
 #include <string>
 
 class DataSourceBase {
 public:
     enum Flags {
-        kWantsPrefetching = 1,
+        kWantsPrefetching      = 1,
         kStreamedFromLocalHost = 2,
-        kIsCachingDataSource = 4,
-        kIsHTTPBasedSource = 8,
-        kIsLocalFileSource = 16,
+        kIsCachingDataSource   = 4,
+        kIsHTTPBasedSource     = 8,
+        kIsLocalFileSource     = 16,
     };
 
     DataSourceBase() { }
@@ -117,7 +117,7 @@ public:
             if (getUInt32(offset, &tmp)) {
                 *x = tmp;
                 return true;
-            }  
+            }
         }
         return false;
     }
@@ -147,13 +147,9 @@ private:
 
 class DataSource : public DataSourceBase {
 public:
-    DataSource()
-        : m_wrapper(NULL)
-    {
-    }
+    DataSource() { }
 
-    // returns a pointer to IDataSource if it is wrapped.
-    // virtual sp<IDataSource> getIDataSource() const { return nullptr; }
+    virtual ~DataSource() { }
 
     virtual std::string toString() { return std::string("<unspecified>"); }
 
@@ -169,34 +165,7 @@ public:
         return ret >= 0 && static_cast<size_t>(ret) < bufferSize;
     }
 
-    virtual std::string getMIMEType() const { return std::string("application/octet-stream"); }
-
-    CDataSource *wrap()
-    {
-        if (m_wrapper) {
-            return m_wrapper;
-        }
-        m_wrapper = new CDataSource();
-        m_wrapper->handle = this;
-
-        m_wrapper->readAt = [](void *handle, off64_t offset, void *data, size_t size) -> ssize_t {
-            return ((DataSource *)handle)->readAt(offset, data, size);
-        };
-        m_wrapper->getSize = [](void *handle, off64_t *size) -> status_t {
-            return ((DataSource *)handle)->getSize(size);
-        };
-        m_wrapper->flags = [](void *handle) -> uint32_t { return ((DataSource *)handle)->flags(); };
-        m_wrapper->getUri = [](void *handle, char *uriString, size_t bufferSize) -> bool {
-            return ((DataSource *)handle)->getUri(uriString, bufferSize);
-        };
-        return m_wrapper;
-    }
-
-protected:
-    virtual ~DataSource() { delete m_wrapper; }
-
 private:
-    CDataSource *m_wrapper;
     DataSource(const DataSource &);
     DataSource &operator=(const DataSource &);
 };

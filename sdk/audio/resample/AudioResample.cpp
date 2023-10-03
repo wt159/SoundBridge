@@ -99,10 +99,10 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
         LOG_ERROR(LOG_TAG, "swr_init failed: %s", m_error);
         return;
     }
-    m_inData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_in.channels);
-    m_outData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_out.channels);
-    av_samples_alloc(m_inData, &m_inSpec.lineSize, m_in.channels, m_in.bytes_frame_num, m_inSpec.sampleFmt, m_isAlign);
-    av_samples_alloc(m_outData, &m_outSpec.lineSize, m_out.channels, m_out.bytes_frame_num, m_outSpec.sampleFmt, m_isAlign);
+    m_inData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_in.numChannel);
+    m_outData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_out.numChannel);
+    av_samples_alloc(m_inData, &m_inSpec.lineSize, m_in.numChannel, m_in.samples, m_inSpec.sampleFmt, m_isAlign);
+    av_samples_alloc(m_outData, &m_outSpec.lineSize, m_out.numChannel, m_out.samples, m_outSpec.sampleFmt, m_isAlign);
     m_isInit = true;
     LOG_INFO(LOG_TAG, "exit");
 }
@@ -134,7 +134,7 @@ int AudioResample::Impl::resample(void *in, int inLen, void *out, int *outLen)
         LOG_ERROR(LOG_TAG, "swr_convert failed: %s", m_error);
         return ret;
     }
-    int outSize = av_samples_get_buffer_size(nullptr, m_out.channels, ret, m_outSpec.sampleFmt, m_isAlign);
+    int outSize = av_samples_get_buffer_size(nullptr, m_out.numChannel, ret, m_outSpec.sampleFmt, m_isAlign);
     if(outSize <= 0) {
         LOG_FATAL(LOG_TAG, "av_samples_get_buffer_size failed, outSize: %d", outSize);
         return -4;
@@ -146,10 +146,10 @@ int AudioResample::Impl::resample(void *in, int inLen, void *out, int *outLen)
 
 void AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out)
 {
-    out.channelLayout = av_get_default_channel_layout(in.channels);
-    out.channelNum = in.channels;
-    out.sampleRate = in.sample_rate;
-    out.samples = in.bytes_frame_num;
+    out.channelLayout = av_get_default_channel_layout(in.numChannel);
+    out.channelNum = in.numChannel;
+    out.sampleRate = in.sampleRate;
+    out.samples = in.samples;
     switch (in.format)
     {
     case AudioFormatU8:
@@ -179,7 +179,7 @@ void AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResamp
         LOG_ERROR(LOG_TAG, "unsupport format: %d", in.format);
         break;
     }
-    out.bytesPerSample = in.channels * av_get_bytes_per_sample(out.sampleFmt);
+    out.bytesPerSample = in.numChannel * av_get_bytes_per_sample(out.sampleFmt);
 }
 
 void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize) {

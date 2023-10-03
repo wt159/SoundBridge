@@ -3,7 +3,7 @@
 #include "WAVExtractor.h"
 #include <cstring>
 
-#define LOG_TAG "WAVExtractor"
+#define LOG_TAG                        "WAVExtractor"
 
 #define CHANNEL_MASK_USE_CHANNEL_ORDER 0
 
@@ -29,19 +29,20 @@ static uint16_t U16_LE_AT(const uint8_t *ptr)
     return ptr[1] << 8 | ptr[0];
 }
 
-WAVExtractor::WAVExtractor(DataSourceHelper *source)
+WAVExtractor::WAVExtractor(DataSourceBase *source)
     : m_dataSource(source)
+    , m_decode(nullptr)
     , m_validFormat(false)
 {
     m_initCheck = init();
 }
 
-WAVExtractor::~WAVExtractor() { }
-
-size_t WAVExtractor::countTracks()
+void WAVExtractor::readAudioRawData(off64_t offset, size_t size, void *buf)
 {
-    return m_initCheck == OK ? 1 : 0;
+    m_dataSource->readAt(m_dataOffset + offset, buf, size);
 }
+
+WAVExtractor::~WAVExtractor() { }
 
 status_t WAVExtractor::init()
 {
@@ -65,7 +66,7 @@ status_t WAVExtractor::init()
         }
 
         remainingSize -= 8;
-        offset += 8;
+        offset        += 8;
 
         uint32_t chunkSize = U32_LE_AT(&chunkHeader[4]);
 
@@ -98,7 +99,7 @@ status_t WAVExtractor::init()
                 return NO_INIT;
             }
 
-            m_numChannels = U16_LE_AT(&formatSpec[2]);
+            m_audioSpec.numChannel = m_numChannels = U16_LE_AT(&formatSpec[2]);
             if (m_numChannels < 1 || m_numChannels > 8) {
                 LOG_ERROR(LOG_TAG, "Unsupported number of channels (%d)", m_numChannels);
                 return ERROR_UNSUPPORTED;
@@ -107,25 +108,26 @@ status_t WAVExtractor::init()
             if (m_waveFormat != WAVE_FORMAT_EXTENSIBLE) {
                 if (m_numChannels != 1 && m_numChannels != 2) {
                     LOG_WARNING(LOG_TAG,
-                        "More than 2 channels (%d) in non-WAVE_EXT, unknown channel mask",
-                        m_numChannels);
+                                "More than 2 channels (%d) in non-WAVE_EXT, unknown channel mask",
+                                m_numChannels);
                 }
             }
 
-            m_sampleRate = U32_LE_AT(&formatSpec[4]);
+            m_audioSpec.sampleRate = m_sampleRate = U32_LE_AT(&formatSpec[4]);
 
             if (m_sampleRate == 0) {
                 return ERROR_MALFORMED;
             }
 
-            m_bitsPerSample = U16_LE_AT(&formatSpec[14]);
-
+            m_audioSpec.bitsPerSample = m_bitsPerSample = U16_LE_AT(&formatSpec[14]);
+            m_audioSpec.bytesPerSample                  = m_bitsPerSample >> 3;
+            m_audioSpec.format = getAudioFormatByBits(m_audioSpec.bitsPerSample);
             if (m_waveFormat == WAVE_FORMAT_EXTENSIBLE) {
                 uint16_t validBitsPerSample = U16_LE_AT(&formatSpec[18]);
                 if (validBitsPerSample != m_bitsPerSample) {
                     if (validBitsPerSample != 0) {
                         LOG_ERROR(LOG_TAG, "validBits(%d) != bitsPerSample(%d) are not supported",
-                            validBitsPerSample, m_bitsPerSample);
+                                  validBitsPerSample, m_bitsPerSample);
                         return ERROR_UNSUPPORTED;
                     } else {
                         LOG_WARNING(LOG_TAG, "WAVE_EXT has 0 valid bits per sample, ignoring");
@@ -142,7 +144,7 @@ status_t WAVExtractor::init()
                 if ((m_channelMask != CHANNEL_MASK_USE_CHANNEL_ORDER)
                     && (m_channelMask != m_numChannels)) {
                     LOG_ERROR(LOG_TAG, "invalid number of channels (%d) in channel mask (0x%x)",
-                        m_channelMask, m_channelMask);
+                              m_channelMask, m_channelMask);
                     return ERROR_MALFORMED;
                 }
 
@@ -178,23 +180,24 @@ status_t WAVExtractor::init()
             if (m_validFormat) {
                 m_dataOffset = offset;
                 m_dataSize   = chunkSize;
+                LOG_INFO(LOG_TAG, "dataOffset=%lld, dataSize=%zu", m_dataOffset, m_dataSize);
 
                 if (m_waveFormat == WAVE_FORMAT_MSGSM) {
                     // 65 bytes decode to 320 8kHz samples
-                    m_durationUs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
+                    m_durationMs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
                 } else {
                     size_t bytesPerSample = m_bitsPerSample >> 3;
 
                     if (!bytesPerSample || !m_numChannels)
                         return ERROR_MALFORMED;
 
-                    size_t num_samples = m_dataSize / (m_numChannels * bytesPerSample);
-
+                    size_t num_samples  = m_dataSize / (m_numChannels * bytesPerSample);
+                    m_audioSpec.samples = num_samples;
                     if (!m_sampleRate)
                         return ERROR_MALFORMED;
 
-                    m_durationUs = 1000000LL * num_samples / m_sampleRate;
-                    LOG_INFO(LOG_TAG, "durationUs = %lld", m_durationUs);
+                    m_durationMs = 1000LL * num_samples / m_sampleRate;
+                    LOG_INFO(LOG_TAG, "durationMs = %llu", m_durationMs);
                 }
                 return OK;
             }

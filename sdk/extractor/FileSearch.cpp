@@ -7,27 +7,24 @@
 
 namespace fs = boost::filesystem;
 
-std::unordered_map<std::string, std::string> recursiveFileSearch(
-    const std::string &rootDir, std::vector<std::string> &incFileExtensionVec)
+std::vector<std::string> recursiveFileSearch(
+    const std::string &rootDir, std::unordered_map<std::string, standardExtractors> extractorMap)
 {
-    std::unordered_map<std::string, std::string> nameAndPathMap;
+    std::vector<std::string> fileVec;
     fs::path rootPath(rootDir);
-    std::unordered_map<std::string, bool> incFileExtensionMap;
-    for (auto &incFileExtension : incFileExtensionVec) {
-        incFileExtensionMap[incFileExtension] = true;
-    }
 
     if (!fs::exists(rootPath) || !fs::is_directory(rootPath)) {
         LOG_FATAL(LOG_TAG, "Invalid directory: %s", rootDir.c_str());
-        return nameAndPathMap;
+        return fileVec;
     }
 
     fs::recursive_directory_iterator iter(rootPath);
     fs::recursive_directory_iterator end;
 
     while (iter != end) {
-        if (fs::is_regular_file(*iter) && incFileExtensionMap[iter->path().extension().string()]) {
-            nameAndPathMap[iter->path().filename().string()] = iter->path().string();
+        std::string extensionName = iter->path().extension().string();
+        if (fs::is_regular_file(*iter) && extractorMap.find(extensionName) != extractorMap.end()) {
+            fileVec.push_back(iter->path().string());
             LOG_DEBUG(LOG_TAG, "file name:%s", iter->path().filename().string().c_str());
         }
 
@@ -38,5 +35,5 @@ std::unordered_map<std::string, std::string> recursiveFileSearch(
             LOG_ERROR(LOG_TAG, "Error accessing file: %s", ec.message().c_str());
         }
     }
-    return nameAndPathMap;
+    return fileVec;
 }

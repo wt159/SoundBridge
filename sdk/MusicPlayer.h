@@ -30,20 +30,21 @@ enum class MusicPlaybackMode {
 };
 
 class MusicPlayerListener {
-    virtual ~MusicPlayerListener() = default;
+public:
+    virtual ~MusicPlayerListener()                           = default;
     virtual void onMusicPlayerStateChanged(MusicPlayerState) = 0;
-    virtual void onMusicPlayerListCurrentIndexChanged(int) = 0;
-    virtual void onMusicPlayerDurationChanged(uint64_t) = 0;
-    virtual void onMusicPlayerPositionChanged(uint64_t) = 0;
+    virtual void onMusicPlayerListCurrentIndexChanged(int)   = 0;
+    virtual void onMusicPlayerDurationChanged(uint64_t)      = 0;
+    virtual void onMusicPlayerPositionChanged(uint64_t)      = 0;
 };
 
 class MusicPlayer {
 public:
-    MusicPlayer() = delete;
-    MusicPlayer(MusicPlayer &) = delete;
-    MusicPlayer(MusicPlayer &&) = delete;
+    MusicPlayer()                               = delete;
+    MusicPlayer(MusicPlayer &)                  = delete;
+    MusicPlayer(MusicPlayer &&)                 = delete;
     MusicPlayer &operator=(const MusicPlayer &) = delete;
-    MusicPlayer &operator=(MusicPlayer &&) = delete;
+    MusicPlayer &operator=(MusicPlayer &&)      = delete;
 
 public:
     MusicPlayer(MusicPlayerListener *listener);
@@ -64,7 +65,7 @@ public:
     int getMusicCount();
 
 private:
-    class MusicPlayerImpl;
-    std::unique_ptr<MusicPlayerImpl> m_impl;
+    class Impl;
+    std::unique_ptr<Impl> m_impl;
 };
-} // namespace wtp_sdk
+} // namespace sdk

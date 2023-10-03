@@ -85,7 +85,7 @@ public:
     template <typename TimeUnit = millisecond_t> static size_t getCurrentTimePoint()
     {
         std::chrono::time_point<clock_t> cur = clock_t::now();
-        std::chrono::duration_cast<TimeUnit>(cur.time_since_epoch()).count();
+        return std::chrono::duration_cast<TimeUnit>(cur.time_since_epoch()).count();
     }
 
 private:

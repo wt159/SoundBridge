@@ -1,7 +1,10 @@
 #include "AudioDevice.h"
+#include "LogWrapper.h"
 #include <SDL.h>
 #include <iostream>
 #include <map>
+
+#define LOG_TAG "AudioDevice"
 class AudioDevice::Impl {
 private:
     using AudioDevSpec = std::pair<std::string, SDL_AudioSpec>;
@@ -18,6 +21,9 @@ private:
 public:
     Impl(AudioDataCallback *callback);
     ~Impl();
+    int getDeviceList(std::vector<AudDevPair> &devList);
+    int selectDevice(uint64_t id);
+    int getAudioSpec(AudioSpec &spec);
     int open(AudioSpec &spec);
     void close();
     void start();
@@ -50,7 +56,7 @@ AudioDevice::Impl::Impl(AudioDataCallback *callback)
 
     SDL_Init(SDL_INIT_AUDIO);
 
-    m_spec.samples = 512;
+    m_spec.samples  = 1024;
     m_spec.callback = audioCallback;
     m_spec.userdata = this;
 }
@@ -60,10 +66,64 @@ AudioDevice::Impl::~Impl()
     SDL_Quit();
 }
 
+int AudioDevice::Impl::getDeviceList(std::vector<AudDevPair> &devList)
+{
+    // TODO: 待实现
+    return 0;
+}
+
+int AudioDevice::Impl::selectDevice(uint64_t id)
+{
+    // TODO: 待实现
+    return 0;
+}
+
+int AudioDevice::Impl::getAudioSpec(AudioSpec &spec)
+{
+    spec.sampleRate = m_spec.freq;
+    spec.numChannel = m_spec.channels;
+    switch (m_spec.format) {
+    case AUDIO_U8:
+        spec.format = AudioFormatU8;
+        break;
+    case AUDIO_S8:
+        spec.format = AudioFormatS8;
+        break;
+    case AUDIO_U16:
+        spec.format = AudioFormatU16;
+        break;
+    case AUDIO_U16MSB:
+        spec.format = AudioFormatU16BE;
+        break;
+    case AUDIO_S16:
+        spec.format = AudioFormatS16;
+        break;
+    case AUDIO_S16MSB:
+        spec.format = AudioFormatS16BE;
+        break;
+    case AUDIO_S32:
+        spec.format = AudioFormatS32;
+        break;
+    case AUDIO_S32MSB:
+        spec.format = AudioFormatS32BE;
+        break;
+    case AUDIO_F32:
+        spec.format = AudioFormatFLT32;
+        break;
+    case AUDIO_F32MSB:
+        spec.format = AudioFormatFLT32BE;
+        break;
+    default:
+        LOG_FATAL(LOG_TAG, "Audio format not supported");
+        break;
+    }
+    return 0;
+}
+
 int AudioDevice::Impl::open(AudioSpec &spec)
 {
-    m_spec.freq = spec.sample_rate;
-    m_spec.channels = spec.channels;
+    m_spec.freq     = spec.sampleRate;
+    m_spec.channels = spec.numChannel;
     switch (spec.format) {
     case AudioFormatU8:
         m_spec.format = AUDIO_U8;
@@ -96,12 +156,12 @@ int AudioDevice::Impl::open(AudioSpec &spec)
         m_spec.format = AUDIO_F32MSB;
         break;
     default:
-        std::cout << "Audio format not supported" << std::endl;
+        LOG_FATAL(LOG_TAG, "Audio format not supported");
         break;
     }
     int ret = SDL_OpenAudio(&m_spec, nullptr);
     if (ret != 0) {
-        std::cout << "SDL_OpenAudio failed: " << SDL_GetError() << std::endl;
+        LOG_ERROR(LOG_TAG, "SDL_OpenAudio failed: %s", SDL_GetError());
         return -1;
     }
     m_isOpen = true;
@@ -134,34 +194,38 @@ void AudioDevice::Impl::stop()
 
 void AudioDevice::Impl::printInfo()
 {
-    std::cout << "SDL version: " << (int)m_version.major << "." << (int)m_version.minor << "."
-              << (int)m_version.patch << std::endl;
-    std::cout << "Audio device number: " << m_deviceNum << std::endl;
+    LOG_INFO(LOG_TAG, "SDL version: %d.%d.%d", (int)m_version.major, (int)m_version.minor,
+             (int)m_version.patch);
+    LOG_INFO(LOG_TAG, "Audio device number: %d", m_deviceNum);
     for (auto &dev : m_devSpecList) {
-        std::cout << "Device ID: " << dev.first << std::endl;
-        std::cout << "Device name: " << dev.second.first << std::endl;
-        std::cout << "Device spec: " << std::endl;
-        std::cout << "  freq: " << dev.second.second.freq << std::endl;
-        std::cout << "  format: " << dev.second.second.format << std::endl;
-        std::cout << "  channels: " << (int)dev.second.second.channels << std::endl;
-        std::cout << "  silence: " << (int)dev.second.second.silence << std::endl;
-        std::cout << "  samples: " << dev.second.second.samples << std::endl;
-        std::cout << "  size: " << dev.second.second.size << std::endl;
-        std::cout << "  callback: " << (void *)dev.second.second.callback << std::endl;
-        std::cout << "  userdata: " << (void *)dev.second.second.userdata << std::endl;
+        LOG_INFO(LOG_TAG, "----------------------------------------");
+        LOG_INFO(LOG_TAG, "Device ID: %d", dev.first);
+        LOG_INFO(LOG_TAG, "Device name: %s", dev.second.first.data());
+        LOG_INFO(LOG_TAG, "Device spec: ");
+        LOG_INFO(LOG_TAG, "  freq: %d", dev.second.second.freq);
+        LOG_INFO(LOG_TAG, "  format: %d", dev.second.second.format);
+        LOG_INFO(LOG_TAG, "  channels: %d", (int)dev.second.second.channels);
+        LOG_INFO(LOG_TAG, "  silence: %d", (int)dev.second.second.silence);
+        LOG_INFO(LOG_TAG, "  samples: %d", dev.second.second.samples);
+        LOG_INFO(LOG_TAG, "  size: %d", dev.second.second.size);
+        LOG_INFO(LOG_TAG, "  callback: %p", (void *)dev.second.second.callback);
+        LOG_INFO(LOG_TAG, "  userdata: %p", (void *)dev.second.second.userdata);
+        LOG_INFO(LOG_TAG, "----------------------------------------");
     }
-    std::cout << "Audio driver number: " << m_driverNum << std::endl;
-    std::cout << "   id  name" << std::endl;
+    LOG_INFO(LOG_TAG, "----------------------------------------");
+    LOG_INFO(LOG_TAG, "Audio Driver number: %d", m_driverNum);
     for (auto &driver : m_driverList) {
-        std::cout << "  [" << driver.first << "] ";
-        std::cout << " [" << driver.second << "]" << std::endl;
+        LOG_INFO(LOG_TAG, "----------------------------------------");
+        LOG_INFO(LOG_TAG, "Driver ID: %d", driver.first);
+        LOG_INFO(LOG_TAG, "Driver name: %s", driver.second.data());
+        LOG_INFO(LOG_TAG, "----------------------------------------");
     }
 }
 
 void AudioDevice::Impl::audioCallback(void *userdata, Uint8 *stream, int len)
 {
     AudioDevice::Impl *impl = (AudioDevice::Impl *)userdata;
-    impl->m_callback->onAudioData(stream, len);
+    impl->m_callback->getAudioData(stream, len);
 }
 
 AudioDevice::AudioDevice(AudioDataCallback *callback)
@@ -173,7 +237,19 @@ AudioDevice::~AudioDevice() { }
 
 std::vector<AudioDevice::AudDevPair> AudioDevice::getDeviceList()
 {
-    return std::vector<AudDevPair>();
+    std::vector<AudDevPair> devList;
+    m_impl->getDeviceList(devList);
+    return devList;
+}
+
+int AudioDevice::getDeviceSpec(AudioSpec &spec)
+{
+    return m_impl->getAudioSpec(spec);
+}
+
+int AudioDevice::selectDevice(uint64_t id)
+{
+    return m_impl->selectDevice(id);
 }
 
 int AudioDevice::open(AudioSpec &spec)

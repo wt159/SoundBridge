@@ -242,11 +242,11 @@ int AudioDecode::Impl::decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame
         }
         out.lineData = frame->data;
         out.lineSize = frame->linesize;
-        out.spec.channels = frame->channels;
-        out.spec.sample_rate = frame->sample_rate;
-        out.spec.bytes_frame_num = frame->nb_samples;
-        out.spec.bits_per_sample = av_get_bits_per_sample(m_avCodecID);
-        out.spec.bytes_per_sample = av_get_bytes_per_sample(m_ctx->sample_fmt);
+        out.spec.numChannel = frame->channels;
+        out.spec.sampleRate = frame->sample_rate;
+        out.spec.samples = frame->nb_samples;
+        out.spec.bitsPerSample = av_get_bits_per_sample(m_avCodecID);
+        out.spec.bytesPerSample = av_get_bytes_per_sample(m_ctx->sample_fmt);
         m_callback->onAudioDecodeCallback(out);
     }
 end:

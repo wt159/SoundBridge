@@ -21,6 +21,25 @@ enum AudioFormat
     AudioFormatDBL64BE,
 };
 
+inline AudioFormat getAudioFormatByBits(int bits)
+{
+    switch (bits)
+    {
+    case 8:
+        return AudioFormatU8;
+    case 16:
+        return AudioFormatS16;
+    case 24:
+        return AudioFormatS24;
+    case 32:
+        return AudioFormatS32;
+    case 64:
+        return AudioFormatDBL64;
+    default:
+        return AudioFormatUnknown;
+    }
+}
+
 inline int getAudioFormatSize(AudioFormat format)
 {
     switch (format)
@@ -53,12 +72,12 @@ inline int getAudioFormatSize(AudioFormat format)
 
 struct AudioSpec
 {
-    int sample_rate;
+    int sampleRate;
     AudioFormat format;
-    int channels;
-    int bits_per_sample;
-    int bytes_frame_num;
-    int bytes_per_sample;
+    int numChannel;
+    int bitsPerSample;
+    int samples;
+    int bytesPerSample;
 };
 
 

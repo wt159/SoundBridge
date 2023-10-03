@@ -4,6 +4,7 @@ project(Extractor)
 
 include_directories(${3RDPARTY_DIST_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/wav)
 
 find_package(Boost_filesystem REQUIRED)
 

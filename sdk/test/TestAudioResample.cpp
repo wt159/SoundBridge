@@ -34,8 +34,8 @@ public:
         int outFileSize = 0;
         int inLen = 0;
         int outLen = 0;
-        int inDataSize = m_in.bytes_frame_num * m_in.channels * m_in.bits_per_sample / 8;
-        int outDataSize = m_out.bytes_frame_num * m_out.channels * m_out.bits_per_sample / 8;
+        int inDataSize = m_in.samples * m_in.numChannel * m_in.bitsPerSample / 8;
+        int outDataSize = m_out.samples * m_out.numChannel * m_out.bitsPerSample / 8;
         LOG_INFO(LOG_TAG, "inDataSize: %d, outDataSize: %d", inDataSize, outDataSize);
         if(!m_inFile.is_open() || !m_outFile.is_open()) {
             LOG_ERROR(LOG_TAG, "open file failed");
@@ -80,18 +80,18 @@ void TestCode()
 {
     std::string inFile = "./1-44100_s16le_2.pcm";
     AudioSpec in;
-    in.sample_rate = 44100;
-    in.channels = 2;
+    in.sampleRate = 44100;
+    in.numChannel = 2;
     in.format = AudioFormatS16;
-    in.bytes_frame_num = 1024;
-    in.bits_per_sample = 16;
+    in.samples = 1024;
+    in.bitsPerSample = 16;
     std::string outFile = "./2-48000_f32le_1.pcm";
     AudioSpec out;
-    out.sample_rate = 48000;
-    out.channels = 1;
+    out.sampleRate = 48000;
+    out.numChannel = 1;
     out.format = AudioFormatFLT32;
-    out.bytes_frame_num = in.bytes_frame_num * out.sample_rate / in.sample_rate;
-    out.bits_per_sample = 32;
+    out.samples = in.samples * out.sampleRate / in.sampleRate;
+    out.bitsPerSample = 32;
     AudioResampleTest test(inFile, in, outFile, out);
     test.run();
 }

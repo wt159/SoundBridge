@@ -1,5 +1,4 @@
-#pragma once
-
+#include "ByteUtils.h"
 #include <stdint.h>
 
 namespace sdk_utils {
