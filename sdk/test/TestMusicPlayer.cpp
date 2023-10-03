@@ -19,7 +19,8 @@ private:
 public:
     TestMusicPlayer()
     {
-        m_player        = std::make_shared<MusicPlayer>(this);
+        std::string directory      = "./log";
+        m_player        = std::make_shared<MusicPlayer>(this, directory);
         std::string dir = "../../../music";
         m_player->addMusicDir(dir);
     }
@@ -65,14 +66,6 @@ void TestCode()
 
 int main()
 {
-    std::string rotateFileLog  = "music_player_test";
-    std::string directory      = "./log";
-    constexpr int k10MBInBytes = 10 * 1024 * 1024;
-    constexpr int k20InCounts  = 20;
-    printf("LogWrapper::getInstanceInitialize\n");
-    LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
-    LOG_INFO(LOG_TAG, "Log init success");
-
     TestCode();
 
     return 0;

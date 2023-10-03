@@ -180,7 +180,8 @@ status_t WAVExtractor::init()
             if (m_validFormat) {
                 m_dataOffset = offset;
                 m_dataSize   = chunkSize;
-                LOG_INFO(LOG_TAG, "dataOffset=%lld, dataSize=%zu", m_dataOffset, m_dataSize);
+                LOG_INFO(LOG_TAG, "dataOffset=%lu, dataSize=%lu",
+                         (long unsigned)m_dataOffset, ( long unsigned)m_dataSize);
 
                 if (m_waveFormat == WAVE_FORMAT_MSGSM) {
                     // 65 bytes decode to 320 8kHz samples

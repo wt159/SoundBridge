@@ -8,6 +8,8 @@ set(CMAKE_TARGET_BUILD_TYPE Debug)
 string(TOLOWER "${CMAKE_BUILD_TYPE}" CMAKE_TARGET_BUILD_TYPE)
 
 # 设置C和C++编译器路径
+set(QT_PATH "F:/Qt/Qt5.14.2/5.14.2/mingw73_64" CACHE PATH "Qt path")
+set(QT_LIB_PATH "${QT_PATH}/lib" CACHE PATH "Qt lib path")
 set(CMAKE_C_COMPILER "F:/Qt/Qt5.14.2/Tools/mingw730_64/bin/gcc.exe")
 set(CMAKE_CXX_COMPILER "F:/Qt/Qt5.14.2/Tools/mingw730_64/bin/g++.exe")
 

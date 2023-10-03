@@ -47,7 +47,7 @@ public:
     MusicPlayer &operator=(MusicPlayer &&)      = delete;
 
 public:
-    MusicPlayer(MusicPlayerListener *listener);
+    MusicPlayer(MusicPlayerListener *listener, std::string &log_dir);
     ~MusicPlayer();
 
     // player

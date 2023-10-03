@@ -12,7 +12,7 @@ namespace sdk {
 
 class MusicPlayer::Impl : public AudioDataCallback, public MusicPlayListCallback {
 public:
-    Impl(MusicPlayerListener *listener);
+    Impl(MusicPlayerListener *listener, std::string &logDir);
     ~Impl() = default;
     // player
     void addMusicDir(const std::string &dir);
@@ -41,7 +41,7 @@ private:
     MusicPropertiesPtr m_curMusicProperties;
 };
 
-MusicPlayer::Impl::Impl(MusicPlayerListener *lister)
+MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     : m_audioDev(this)
     , m_musicList(this)
     , m_listener(lister)
@@ -49,6 +49,12 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister)
     , m_workQueue()
 {
     LOG_INFO(LOG_TAG, "Impl construct");
+    std::string rotateFileLog  = "music_player";
+    std::string directory      = logDir;
+    constexpr int k10MBInBytes = 10 * 1024 * 1024;
+    constexpr int k20InCounts  = 20;
+    LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
+    LOG_INFO(LOG_TAG, "Log init success");
 }
 
 void MusicPlayer::Impl::addMusicDir(const std::string &dir)
@@ -193,8 +199,8 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     });
 }
 
-MusicPlayer::MusicPlayer(MusicPlayerListener *listener)
-    : m_impl(new Impl(listener))
+MusicPlayer::MusicPlayer(MusicPlayerListener *listener, std::string &logDir)
+    : m_impl(new Impl(listener, logDir))
 {
 }
 
