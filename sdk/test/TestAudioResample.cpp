@@ -32,8 +32,8 @@ public:
         int ret = 0;
         int inFileSize = 0;
         int outFileSize = 0;
-        int inLen = 0;
-        int outLen = 0;
+        size_t inLen = 0;
+        size_t outLen = 0;
         int inDataSize = m_in.samples * m_in.numChannel * m_in.bitsPerSample / 8;
         int outDataSize = m_out.samples * m_out.numChannel * m_out.bitsPerSample / 8;
         LOG_INFO(LOG_TAG, "inDataSize: %d, outDataSize: %d", inDataSize, outDataSize);
@@ -48,7 +48,8 @@ public:
         char *inData = new char[inDataSize];
         char *outData = new char[outDataSize + 10];
         while(1) {
-            inLen = m_inFile.read(inData, inDataSize).gcount();
+            m_inFile.read(inData, inDataSize);
+            inLen = m_inFile.gcount();
             if(inLen <= 0) {
                 LOG_ERROR(LOG_TAG, "read file failed");
                 break;
@@ -96,6 +97,26 @@ void TestCode()
     test.run();
 }
 
+void TestCode2()
+{
+    std::string inFile = "./3-16000_s16le_1.pcm";
+    AudioSpec in;
+    in.sampleRate = 16000;
+    in.numChannel = 1;
+    in.format = AudioFormatS16;
+    in.samples = 1024;
+    in.bitsPerSample = 16;
+    std::string outFile = "./4-44100_s16le_2.pcm";
+    AudioSpec out;
+    out.sampleRate = 44100;
+    out.numChannel = 2;
+    out.format = AudioFormatS16;
+    out.samples = in.samples * out.sampleRate / in.sampleRate;
+    out.bitsPerSample = 16;
+    AudioResampleTest test(inFile, in, outFile, out);
+    test.run();
+}
+
 int main()
 {
     std::string rotateFileLog = "audio_resample_test";
@@ -107,6 +128,8 @@ int main()
     LOG_INFO(LOG_TAG, "Log init success");
 
     TestCode();
+
+    TestCode2();
 
     std::cout << "test end\n";
     return 0;

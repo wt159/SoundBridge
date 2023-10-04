@@ -29,32 +29,50 @@ public:
     int getMusicCount();
 
 protected:
+    void _addMusic(const std::string &musicPath);
+    void _play();
+    void _pause();
+    void _stop();
+    void _setPosition(uint64_t pos);
+    void _next();
+    void _previous();
+    void _setCurrentIndex(int index);
+
+protected:
     virtual void getAudioData(void *data, int len);
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property);
 
 private:
-    AudioDevice m_audioDev;
-    MusicPlayList m_musicList;
+    void updatePlayState(MusicPlayerState state);
+
+private:
+    WorkQueue m_workQueue;
+    std::shared_ptr<AudioDevice> m_audioDev;
+    AudioSpec m_audioSupportSpec;
+    std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
     MusicPlayerState m_state;
-    WorkQueue m_workQueue;
     MusicPropertiesPtr m_curMusicProperties;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
-    : m_audioDev(this)
-    , m_musicList(this)
+    : m_workQueue()
+    , m_audioDev(nullptr)
+    , m_musicList(nullptr)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
-    , m_workQueue()
 {
-    LOG_INFO(LOG_TAG, "Impl construct");
     std::string rotateFileLog  = "music_player";
     std::string directory      = logDir;
     constexpr int k10MBInBytes = 10 * 1024 * 1024;
     constexpr int k20InCounts  = 20;
     LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
     LOG_INFO(LOG_TAG, "Log init success");
+
+    m_audioDev         = std::make_shared<AudioDevice>(this);
+    m_audioSupportSpec = m_audioDev->getOutputSpec();
+    m_musicList        = std::make_shared<MusicPlayList>(this, &m_workQueue, m_audioSupportSpec);
+    LOG_INFO(LOG_TAG, "Impl construct");
 }
 
 void MusicPlayer::Impl::addMusicDir(const std::string &dir)
@@ -62,37 +80,29 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
     LOG_INFO(LOG_TAG, "addMusicDir : %s", dir.data());
     std::vector<std::string> musicList = recursiveFileSearch(dir);
     for (auto &path : musicList) {
-        m_musicList.addMusic(path);
+        m_musicList->addMusic(path);
     }
 }
 
 void MusicPlayer::Impl::play()
 {
     LOG_INFO(LOG_TAG, "play");
-    if (m_curMusicProperties == nullptr)
-        return;
-    m_audioDev.open(m_curMusicProperties->signalProperties.spec);
-    m_audioDev.start();
-    m_state = MusicPlayerState::PlayingState;
+
+    m_workQueue.asyncRunTask([this]() { _play(); });
 }
 
 void MusicPlayer::Impl::pause()
 {
     LOG_INFO(LOG_TAG, "pause");
-    if (m_curMusicProperties == nullptr)
-        return;
-    m_audioDev.stop();
-    m_state = MusicPlayerState::PausedState;
+
+    m_workQueue.asyncRunTask([this]() { _pause(); });
 }
 
 void MusicPlayer::Impl::stop()
 {
     LOG_INFO(LOG_TAG, "stop");
-    if (m_curMusicProperties == nullptr)
-        return;
-    m_audioDev.stop();
-    m_audioDev.close();
-    m_state = MusicPlayerState::StoppedState;
+
+    m_workQueue.asyncRunTask([this]() { _stop(); });
 }
 
 MusicPlayerState MusicPlayer::Impl::state()
@@ -103,46 +113,106 @@ MusicPlayerState MusicPlayer::Impl::state()
 void MusicPlayer::Impl::setPosition(uint64_t pos)
 {
     LOG_INFO(LOG_TAG, "setPosition : %llu", pos);
-    if (m_curMusicProperties && pos >= 0
-        && pos <= m_curMusicProperties->signalProperties.durationMs) {
-        m_curMusicProperties->signalProperties.curPositionMs = pos;
-        m_curMusicProperties->signalProperties.curDataOffset = pos
-            * m_curMusicProperties->signalProperties.spec.sampleRate
-            * m_curMusicProperties->signalProperties.spec.bytesPerSample
-            * m_curMusicProperties->signalProperties.spec.numChannel / 1000;
-    }
+    m_workQueue.asyncRunTask([this, pos]() { _setPosition(pos); });
 }
 
 void MusicPlayer::Impl::next()
 {
-    if (m_curMusicProperties == nullptr)
-        return;
-    stop();
-    m_musicList.next();
-    play();
+    m_workQueue.asyncRunTask([this]() { _next(); });
 }
 
 void MusicPlayer::Impl::previous()
 {
-    if (m_curMusicProperties == nullptr)
-        return;
-    stop();
-    m_musicList.pervious();
-    play();
+    m_workQueue.asyncRunTask([this]() { _previous(); });
 }
 
 void MusicPlayer::Impl::setCurrentIndex(int index)
 {
-    if (m_curMusicProperties == nullptr)
-        return;
-    stop();
-    m_musicList.setCurrentIndex(index);
-    play();
+    m_workQueue.asyncRunTask([this, index]() { _setCurrentIndex(index); });
 }
 
 int MusicPlayer::Impl::getMusicCount()
 {
-    return m_musicList.getMusicCount();
+    return m_musicList->getMusicCount();
+}
+
+void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
+
+void MusicPlayer::Impl::_play()
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_audioDev->open(m_curMusicProperties->signalProperties.spec);
+    m_audioDev->start();
+    updatePlayState(MusicPlayerState::PlayingState);
+}
+
+void MusicPlayer::Impl::_pause()
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_audioDev->stop();
+    updatePlayState(MusicPlayerState::PausedState);
+}
+
+void MusicPlayer::Impl::_stop()
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_audioDev->stop();
+    m_audioDev->close();
+    updatePlayState(MusicPlayerState::StoppedState);
+}
+
+void MusicPlayer::Impl::_setPosition(uint64_t pos)
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties && pos >= 0
+        && pos <= m_curMusicProperties->signalProperties.durationMs) {
+        AudioSpec &spec                                      = m_audioSupportSpec;
+        m_curMusicProperties->signalProperties.curPositionMs = pos;
+        m_curMusicProperties->signalProperties.curDataOffset
+            = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
+    }
+}
+
+void MusicPlayer::Impl::_next()
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_musicList->next();
+}
+
+void MusicPlayer::Impl::_previous()
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_musicList->pervious();
+}
+
+void MusicPlayer::Impl::_setCurrentIndex(int index)
+{
+    LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_curMusicProperties == nullptr) {
+        LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        return;
+    }
+    m_musicList->setCurrentIndex(index);
 }
 
 void MusicPlayer::Impl::getAudioData(void *data, int len)
@@ -150,24 +220,20 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
     if (m_curMusicProperties) {
         SignalProperties &signalProperties = m_curMusicProperties->signalProperties;
         m_curMusicProperties->rawBuffer->getData(signalProperties.curDataOffset, len, (char *)data);
-        AudioSpec &spec                 = signalProperties.spec;
+        AudioSpec &spec                 = m_audioSupportSpec;
         signalProperties.curDataOffset += len;
         signalProperties.curPositionMs
             += 1000LL * len / (spec.bytesPerSample * spec.numChannel) / spec.sampleRate;
         uint64_t curPositionMs = signalProperties.curPositionMs;
         m_workQueue.asyncRunTask(
             [this, curPositionMs]() { m_listener->onMusicPlayerPositionChanged(curPositionMs); });
-        // LOG_DEBUG(LOG_TAG, "curDataOffset : %lld, len:%", signalProperties.curDataOffset.load());
+        // LOG_DEBUG(LOG_TAG, "curDataOffset : %lld, len:%d", signalProperties.curDataOffset.load(),
+        //           len);
         if (signalProperties.curDataOffset >= signalProperties.dataSize) {
-            // m_musicList.next();
             signalProperties.curDataOffset = 0;
             signalProperties.curPositionMs = 0;
-            stop();
-        }
-
-        if (m_state == MusicPlayerState::StoppedState) {
-            m_state = MusicPlayerState::PlayingState;
-            m_listener->onMusicPlayerStateChanged(m_state);
+            updatePlayState(MusicPlayerState::StoppedState);
+            next();
         }
     }
 }
@@ -175,28 +241,18 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
     LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d", property->index);
-    if (m_curMusicProperties
-        && (m_curMusicProperties->signalProperties.spec.sampleRate
-                != property->signalProperties.spec.sampleRate
-            || m_curMusicProperties->signalProperties.spec.numChannel
-                != property->signalProperties.spec.numChannel
-            || m_curMusicProperties->signalProperties.spec.bytesPerSample
-                != property->signalProperties.spec.bytesPerSample)) {
-        LOG_DEBUG(LOG_TAG, "sampleRate : %d, numChannel : %d, bytesPerSample : %d",
-                  property->signalProperties.spec.sampleRate,
-                  property->signalProperties.spec.numChannel,
-                  property->signalProperties.spec.bytesPerSample);
-        stop();
-        m_curMusicProperties = property;
-        play();
-    } else {
-        m_curMusicProperties = property;
-    }
+    m_curMusicProperties = property;
     m_workQueue.asyncRunTask([this, property]() {
         m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
         m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
         m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
     });
+}
+
+void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
+{
+    m_state = state;
+    m_listener->onMusicPlayerStateChanged(m_state);
 }
 
 MusicPlayer::MusicPlayer(MusicPlayerListener *listener, std::string &logDir)

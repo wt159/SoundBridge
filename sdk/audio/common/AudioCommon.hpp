@@ -1,7 +1,6 @@
 #pragma once
 
-enum AudioFormat
-{
+enum AudioFormat {
     AudioFormatUnknown = -1,
     AudioFormatS8,
     AudioFormatU8,
@@ -23,8 +22,7 @@ enum AudioFormat
 
 inline AudioFormat getAudioFormatByBits(int bits)
 {
-    switch (bits)
-    {
+    switch (bits) {
     case 8:
         return AudioFormatU8;
     case 16:
@@ -42,8 +40,7 @@ inline AudioFormat getAudioFormatByBits(int bits)
 
 inline int getAudioFormatSize(AudioFormat format)
 {
-    switch (format)
-    {
+    switch (format) {
     case AudioFormatS8:
     case AudioFormatU8:
         return 1;
@@ -70,20 +67,34 @@ inline int getAudioFormatSize(AudioFormat format)
     }
 }
 
-struct AudioSpec
-{
+struct AudioSpec {
     int sampleRate;
     AudioFormat format;
     int numChannel;
     int bitsPerSample;
     int samples;
     int bytesPerSample;
-};
 
+    AudioSpec()
+        : sampleRate(0)
+        , format(AudioFormatUnknown)
+        , numChannel(0)
+        , bitsPerSample(0)
+        , samples(0)
+        , bytesPerSample(0)
+    {
+    }
+
+    bool operator==(const AudioSpec &other) const
+    {
+        return sampleRate == other.sampleRate && format == other.format
+            && numChannel == other.numChannel;
+    }
+};
 
 enum AudioCodecID {
     AUDIO_CODEC_ID_NONE = -1,
-    AUDIO_CODEC_ID_MP2 = 0x15000,
+    AUDIO_CODEC_ID_MP2  = 0x15000,
     AUDIO_CODEC_ID_MP3,
     AUDIO_CODEC_ID_AAC,
     AUDIO_CODEC_ID_AC3,

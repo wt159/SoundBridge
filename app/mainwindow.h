@@ -74,6 +74,7 @@ private:
 
     std::string appDir;
     std::string logDir;
+    MusicPlayerState m_state;
 
 protected:
     /* 音乐布局函数 */

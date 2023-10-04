@@ -14,6 +14,7 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , m_state(MusicPlayerState::StoppedState)
 {
     /* 布局初始化 */
     musicLayout();
@@ -313,6 +314,7 @@ void MainWindow::btn_previous_clicked()
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
+    qDebug() << "listWidgetCliked" << endl;
     musicPlayer->stop();
     musicPlayer->setCurrentIndex(listWidget->row(item));
     musicPlayer->play();
@@ -412,6 +414,7 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 {
+    qDebug() << "duration" << duration << endl;
     durationSlider->setRange(0, duration / 1000);
     int second  = duration / 1000;
     int minute  = second / 60;
@@ -436,6 +439,7 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 
 void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 {
+    qDebug() << "position" << position << endl;
     if (!durationSlider->isSliderDown())
         durationSlider->setValue(position / 1000);
 

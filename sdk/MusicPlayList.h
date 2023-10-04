@@ -91,14 +91,14 @@ private:
     MusicPlayListCallback *m_callback;
     std::atomic<size_t> m_curIndex;
     std::atomic<size_t> m_selectIndex;
-    WorkQueue m_workQueue;
+    WorkQueue *m_workQueue;
+    AudioSpec m_devSpec;
     MusicPropertiesPtr m_selectMusicProperties;
     std::vector<MusicPropertiesPtr> m_musicListProperties;
 
 public:
     MusicPlayList() = delete;
-    MusicPlayList(MusicPlayListCallback *callback);
-    MusicPlayList(MusicPlayListCallback *callback, std::vector<std::string> &musicList);
+    MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, AudioSpec &devSpec);
     ~MusicPlayList();
 
     void addMusic(const std::string &musicPath);

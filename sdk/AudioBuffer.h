@@ -14,6 +14,7 @@ public:
     AudioBuffer(size_t size);
     AudioBuffer(char *buffer, size_t size);
     ~AudioBuffer();
+    size_t size() const { return m_size; }
     void setData(off64_t offset, size_t len, char *buffer);
     void getData(off64_t offset, size_t len, char *buffer);
 };

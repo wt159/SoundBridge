@@ -23,7 +23,7 @@ public:
      * @date 2023-07-30
      * @copyright Copyright (c) 2023
      */
-    int resample(void *in, int inLen, void *out, int *outLen);
+    int resample(void *in, size_t inLen, void *out, size_t *outLen);
 private:
     class Impl;
     std::unique_ptr<Impl> m_impl;

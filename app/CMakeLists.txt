@@ -8,7 +8,8 @@ set(CMAKE_AUTOMOC ON)   # moc转换支持
 set(CMAKE_AUTOUIC ON)   # ui转换支持
 set(CMAKE_AUTORCC ON)   # 资源文件转换支持
 
-# set(QT_MESSAGELOGCONTEXT TRUE) # Qt消息日志打开
+set(QT_MESSAGELOGCONTEXT TRUE) # Qt消息日志打开
+add_definitions(-DQT_MESSAGELOGCONTEXT) # Qt消息日志打开
 # add_compile_definitions(-DQT_MESSAGELOGCONTEXT)
 
 set(APP_SOURCES
@@ -25,7 +26,6 @@ include_directories(${QT_LIB_PATH}/../include/QtMultimedia)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../sdk)
 link_directories(${3RDPARTY_DIST_DIR}/lib)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
-message(STATUS "3RDPARTY_DIST_DIR: ${3RDPARTY_DIST_DIR}")
 
 set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${QT_LIB_PATH})
 find_package(Qt5 COMPONENTS Widgets REQUIRED)

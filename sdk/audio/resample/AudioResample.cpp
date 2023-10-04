@@ -35,7 +35,7 @@ public:
     Impl();
     ~Impl();
     void init(AudioSpec &in, AudioSpec &out);
-    int resample(void *in, int inLen, void *out, int *outLen);
+    int resample(void *in, size_t inLen, void *out, size_t *outLen);
 
 private:
     void AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out);
@@ -80,9 +80,33 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
         LOG_WARNING(LOG_TAG, "already init");
         return;
     }
+    LOG_INFO(LOG_TAG, "av log level: %d", av_log_get_level());
+    av_log_set_level(AV_LOG_TRACE);
+    LOG_INFO(LOG_TAG, "av log level: %d", av_log_get_level());
+    av_log_set_callback([](void *avcl, int level, const char *fmt, va_list vl) {
+        char line[1024];
+        vsnprintf(line, sizeof(line), fmt, vl);
+        switch (level) {
+        case AV_LOG_INFO:
+            LOG_INFO(LOG_TAG, "%s", line);
+            break;
+        case AV_LOG_WARNING:
+            LOG_WARNING(LOG_TAG, "%s", line);
+            break;
+        case AV_LOG_ERROR:
+            LOG_ERROR(LOG_TAG, "%s", line);
+            break;
+        case AV_LOG_FATAL:
+            LOG_FATAL(LOG_TAG, "%s", line);
+            break;
+        default:
+            break;
+        }
+    });
     m_in = in;
     m_out = out;
     AudioSpec2AudioResampleSpec(m_in, m_inSpec);
+    m_out.samples = m_inSpec.samples * m_out.sampleRate / m_inSpec.sampleRate;
     AudioSpec2AudioResampleSpec(m_out, m_outSpec);
     printAudioSpec(m_inSpec);
     printAudioSpec(m_outSpec);
@@ -101,13 +125,25 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
     }
     m_inData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_in.numChannel);
     m_outData = (uint8_t **)av_malloc(sizeof(uint8_t *) * m_out.numChannel);
-    av_samples_alloc(m_inData, &m_inSpec.lineSize, m_in.numChannel, m_in.samples, m_inSpec.sampleFmt, m_isAlign);
-    av_samples_alloc(m_outData, &m_outSpec.lineSize, m_out.numChannel, m_out.samples, m_outSpec.sampleFmt, m_isAlign);
+    ret = av_samples_alloc(m_inData, &m_inSpec.lineSize, m_in.numChannel, m_inSpec.samples, m_inSpec.sampleFmt, m_isAlign);
+    if(ret <= 0) {
+        getAVErrText(ret, m_error, sizeof(m_error));
+        LOG_ERROR(LOG_TAG, "in av_samples_alloc failed: %s", m_error);
+        return;
+    }
+    LOG_INFO(LOG_TAG, "ret: %d, m_inSpec.lineSize: %d", ret, m_inSpec.lineSize);
+    ret = av_samples_alloc(m_outData, &m_outSpec.lineSize, m_out.numChannel, m_outSpec.samples, m_outSpec.sampleFmt, m_isAlign);
+    if(ret <= 0) {
+        getAVErrText(ret, m_error, sizeof(m_error));
+        LOG_ERROR(LOG_TAG, "out av_samples_alloc failed: %s", m_error);
+        return;
+    }
+    LOG_INFO(LOG_TAG, "ret: %d, m_outSpec.lineSize: %d", ret, m_outSpec.lineSize);
     m_isInit = true;
     LOG_INFO(LOG_TAG, "exit");
 }
 
-int AudioResample::Impl::resample(void *in, int inLen, void *out, int *outLen)
+int AudioResample::Impl::resample(void *in, size_t inLen, void *out, size_t *outLen)
 {
     if(inLen <= 0 || outLen <= 0) {
         LOG_WARNING(LOG_TAG, "inLen or outLen is invalid");
@@ -117,10 +153,10 @@ int AudioResample::Impl::resample(void *in, int inLen, void *out, int *outLen)
         LOG_WARNING(LOG_TAG, "not init");
         return -1;
     }
-    if(inLen > m_inSpec.lineSize) {
+    if(inLen > (size_t)m_inSpec.lineSize) {
         LOG_WARNING(LOG_TAG, "inLen is too large, inLen: %d, lineSize: %d", inLen, m_inSpec.lineSize);
         return -3;
-    } else if(inLen < m_inSpec.lineSize) {
+    } else if(inLen < (size_t)m_inSpec.lineSize) {
         m_inSpec.samples = inLen / m_inSpec.bytesPerSample;
         memset(m_inData[0], 0, m_inSpec.lineSize);
         memcpy(m_inData[0], in, inLen);
@@ -187,7 +223,7 @@ void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize) 
  }
 
  void AudioResample::Impl::printAudioSpec(AudioResampleSpec &spec) {
-    LOG_INFO(LOG_TAG, "channelLayout: %lld, channelNum: %d, sampleRate: %d, samples: %d, sampleFmt: %d, bytesPerSample: %d",
+    LOG_INFO(LOG_TAG, "chL:%lld, ch:%d, Rate:%d, samples:%d, Fmt:%d, bytesPerSample:%d",
         spec.channelLayout, spec.channelNum, spec.sampleRate, spec.samples, spec.sampleFmt, spec.bytesPerSample);
   }
 
@@ -209,7 +245,7 @@ void AudioResample::init(AudioSpec &in, AudioSpec &out)
     m_impl->init(in, out);
 }
 
-int AudioResample::resample(void *in, int inLen, void *out, int *outLen)
+int AudioResample::resample(void *in, size_t inLen, void *out, size_t *outLen)
 {
     return m_impl->resample(in, inLen, out, outLen);
 }
