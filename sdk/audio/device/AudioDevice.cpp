@@ -119,13 +119,13 @@ int AudioDevice::Impl::open(AudioSpec &spec)
         return -1;
     }
     LOG_DEBUG(LOG_TAG, "sdl spec format: %d", m_sdlSpec.format);
-    SDL_AudioSpec supportSpec;
-    int ret = SDL_OpenAudio(&m_sdlSpec, &supportSpec);
+    // SDL_AudioSpec supportSpec;
+    int ret = SDL_OpenAudio(&m_sdlSpec, nullptr);
     if (ret != 0) {
         LOG_ERROR(LOG_TAG, "SDL_OpenAudio failed: %s", SDL_GetError());
         return -1;
     }
-    printfSDLAudioSpec(&supportSpec);
+    printfSDLAudioSpec(&m_sdlSpec);
     m_isOpen = true;
     return 0;
 }
