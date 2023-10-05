@@ -270,7 +270,8 @@ MainWindow::~MainWindow() { }
 void MainWindow::btn_play_clicked()
 {
     MusicPlayerState state = musicPlayer->state();
-
+    if (state == m_state)
+        return;
     switch (state) {
     case MusicPlayerState::StoppedState:
         /* 媒体播放 */
@@ -286,6 +287,7 @@ void MainWindow::btn_play_clicked()
         musicPlayer->play();
         break;
     }
+    m_state = state;
 }
 
 void MainWindow::btn_next_clicked()
@@ -375,7 +377,7 @@ void MainWindow::mediaPlayerInit()
     appDir = QCoreApplication::applicationDirPath().toStdString();
     logDir = appDir + "/log";
     QDir dir(logDir.c_str());
-    if(!dir.exists())
+    if (!dir.exists())
         dir.mkdir(logDir.c_str());
     musicPlayer = std::make_shared<MusicPlayer>(this, logDir);
     /* 确保列表是空的 */

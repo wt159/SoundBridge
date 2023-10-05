@@ -232,7 +232,6 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
         if (signalProperties.curDataOffset >= signalProperties.dataSize) {
             signalProperties.curDataOffset = 0;
             signalProperties.curPositionMs = 0;
-            updatePlayState(MusicPlayerState::StoppedState);
             next();
         }
     }
