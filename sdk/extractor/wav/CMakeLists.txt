@@ -6,7 +6,7 @@ include_directories(${3RDPARTY_DIST_DIR}/include)
 
 # find_package(Boost_filesystem REQUIRED)
 
-file(GLOB_RECURSE SOURCES "*.cpp")
+set(SOURCES "WAVExtractor.cpp")
 
 add_library(WavExtractor ${SOURCES})
 

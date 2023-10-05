@@ -14,6 +14,7 @@ include_directories(${SDK_ROOT_DIR}/audio/device)
 include_directories(${SDK_ROOT_DIR}/audio/decode)
 include_directories(${SDK_ROOT_DIR}/audio/resample)
 include_directories(${SDK_ROOT_DIR}/extractor)
+include_directories(${SDK_ROOT_DIR})
 
 set(LOG_WRAPPER_DIR ${SDK_ROOT_DIR}/log)
 add_subdirectory(${LOG_WRAPPER_DIR})

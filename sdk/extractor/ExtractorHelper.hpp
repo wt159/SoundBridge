@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "ByteUtils.h"
 #include "ExtractorApi.h"
@@ -150,8 +151,8 @@ enum standardExtractors {
 };
 
 static const std::unordered_map<std::string, standardExtractors> defaultExtractorMap = {
-    { ".wav", WAV_EXTRACTOR },
-    /* { ".mp3", MP3_EXTRACTOR }, { ".aac", AAC_EXTRACTOR },
+    { ".wav", WAV_EXTRACTOR }, { ".aac", AAC_EXTRACTOR },
+    /* { ".mp3", MP3_EXTRACTOR },
 { ".flac", FLAC_EXTRACTOR }, { ".ogg", OGG_EXTRACTOR }, { ".aiff", AIFF_EXTRACTOR },
 { ".asf", ASF_EXTRACTOR },   { ".m4a", M4A_EXTRACTOR }, { ".opus", OPUS_EXTRACTOR } */
 };
@@ -162,10 +163,10 @@ public:
 
     virtual const char *name() { return "<unspecified>"; }
 
-    virtual uint64_t getDurationMs()                                      = 0;
-    virtual off64_t getDataSize()                                         = 0;
-    virtual AudioSpec getAudioSpec()                                      = 0;
-    virtual void readAudioRawData(off64_t offset, size_t size, void *buf) = 0;
+    virtual uint64_t getDurationMs()                                   = 0;
+    virtual off64_t getDataSize()                                      = 0;
+    virtual AudioSpec getAudioSpec()                                   = 0;
+    virtual void readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr) = 0;
 
 protected:
     ExtractorHelper() { }

@@ -243,7 +243,7 @@ void AudioDevice::Impl::SDLAudioSpec2AudioSpec(SDL_AudioSpec *sdlSpec, AudioSpec
         LOG_FATAL(LOG_TAG, "Audio format not supported");
         break;
     }
-    spec.bytesPerSample = getAudioFormatSize(spec.format);
+    spec.bytesPerSample = getBytePreSampleByAudioFormat(spec.format);
     spec.bitsPerSample  = spec.bytesPerSample * 8;
 }
 

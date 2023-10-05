@@ -5,6 +5,7 @@ project(Extractor)
 include_directories(${3RDPARTY_DIST_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/wav)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/aac)
 
 find_package(Boost_filesystem REQUIRED)
 
@@ -15,3 +16,5 @@ add_library(Extractor ${SOURCES})
 target_link_libraries(Extractor Boost::filesystem LogWrapper)
 
 add_subdirectory(wav)
+
+add_subdirectory(aac)

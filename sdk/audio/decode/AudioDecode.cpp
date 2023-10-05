@@ -78,6 +78,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
     LOG_INFO(LOG_TAG, "ffmpeg configuration: %s", m_configuration.c_str());
     LOG_INFO(LOG_TAG, "ffmpeg license info: %s", m_licenseInfo.c_str());
 
+#if 0
     for (uint32_t n = AV_CODEC_ID_MP2; n <= AV_CODEC_ID_CODEC2; n++) {
         m_codec = avcodec_find_decoder((enum AVCodecID)n);
         if (m_codec) {
@@ -86,7 +87,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
             LOG_INFO(LOG_TAG, "decoder not found %s", avcodec_get_name((enum AVCodecID)n));
         }
     }
-
+#endif
     m_codec = avcodec_find_decoder(m_avCodecID);
     if (!m_codec) {
         LOG_ERROR(LOG_TAG, "avcodec_find_decoder failed: %s", avcodec_get_name(m_avCodecID));
@@ -170,20 +171,20 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
     int ret = 0, len = 0;
     int inSize = IN_DATA_SIZE > srcSize ? srcSize : IN_DATA_SIZE;
     char inBuf[IN_DATA_SIZE + AV_INPUT_BUFFER_PADDING_SIZE] = { 0 };
-    uint8_t *inPtr = (uint8_t *)inBuf;
-    char *srcPtr = (char *)srcData;
+    uint8_t *inPtr                                          = (uint8_t *)inBuf;
+    char *srcPtr                                            = (char *)srcData;
     memcpy(inBuf, srcPtr, inSize);
-    srcPtr += inSize;
+    srcPtr  += inSize;
     srcSize -= inSize;
 
     while (inSize > 0) {
         ret = av_parser_parse2(m_parserCtx, m_ctx, &m_pkt->data, &m_pkt->size, inPtr, inSize,
-            AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+                               AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret < 0) {
             LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s", getAVErrorString(ret));
             goto err;
         }
-        inPtr += ret;
+        inPtr  += ret;
         inSize -= ret;
 
         if (m_pkt->size > 0) {
@@ -197,17 +198,17 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         if (inSize < AUDIO_REFILL_THRESH && srcSize > 0) {
             memmove(inBuf, inPtr, inSize);
             inPtr = (uint8_t *)inBuf;
-            len = (IN_DATA_SIZE - inSize) > srcSize ? srcSize : (IN_DATA_SIZE - inSize);
+            len   = (IN_DATA_SIZE - inSize) > srcSize ? srcSize : (IN_DATA_SIZE - inSize);
             memcpy(inPtr + inSize, srcPtr, len);
-            inSize += len;
-            srcPtr += len;
+            inSize  += len;
+            srcPtr  += len;
             srcSize -= len;
         }
     }
 
     m_pkt->data = nullptr;
     m_pkt->size = 0;
-    ret = decode(m_ctx, m_pkt, m_frame);
+    ret         = decode(m_ctx, m_pkt, m_frame);
     if (ret < 0) {
         LOG_ERROR(LOG_TAG, "decode failed: %s", getAVErrorString(ret));
     }
@@ -240,13 +241,14 @@ int AudioDecode::Impl::decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame
             LOG_ERROR(LOG_TAG, "avcodec_receive_frame failed %d:%s", ret, getAVErrorString(ret));
             goto end;
         }
-        out.lineData = frame->data;
-        out.lineSize = frame->linesize;
-        out.spec.numChannel = frame->channels;
-        out.spec.sampleRate = frame->sample_rate;
-        out.spec.samples = frame->nb_samples;
-        out.spec.bitsPerSample = av_get_bits_per_sample(m_avCodecID);
-        out.spec.bytesPerSample = av_get_bytes_per_sample(m_ctx->sample_fmt);
+        out.lineData            = frame->data;
+        out.lineSize            = frame->linesize;
+        out.spec.numChannel     = frame->channels;
+        out.spec.sampleRate     = frame->sample_rate;
+        out.spec.samples        = frame->nb_samples;
+        out.spec.format         = getAudioFormat((AVSampleFormat)m_ctx->sample_fmt);
+        out.spec.bytesPerSample = getBytePreSampleByAudioFormat(out.spec.format);
+        out.spec.bitsPerSample  = out.spec.bytesPerSample * 8;
         m_callback->onAudioDecodeCallback(out);
     }
 end:

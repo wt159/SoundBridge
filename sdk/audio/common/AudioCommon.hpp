@@ -20,7 +20,7 @@ enum AudioFormat {
     AudioFormatDBL64BE,
 };
 
-inline AudioFormat getAudioFormatByBits(int bits)
+inline AudioFormat getAudioFormatByBitPreSample(int bits)
 {
     switch (bits) {
     case 8:
@@ -38,7 +38,7 @@ inline AudioFormat getAudioFormatByBits(int bits)
     }
 }
 
-inline int getAudioFormatSize(AudioFormat format)
+inline int getBytePreSampleByAudioFormat(AudioFormat format)
 {
     switch (format) {
     case AudioFormatS8:

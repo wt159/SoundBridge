@@ -73,14 +73,8 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     signalProperties.spec          = extractor->getAudioSpec();
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
     LOG_INFO(LOG_TAG, "dataSize      : %lld", signalProperties.dataSize);
-    char *extractorOutputBuf = new char[signalProperties.dataSize];
-    if (extractorOutputBuf == nullptr) {
-        LOG_ERROR(LOG_TAG, "new extractorOutputBuf failed");
-        return;
-    }
-    AudioBuffer::AudioBufferPtr extBufPtr(
-        new AudioBuffer(extractorOutputBuf, signalProperties.dataSize));
-    extractor->readAudioRawData(0, signalProperties.dataSize, extractorOutputBuf);
+    AudioBuffer::AudioBufferPtr extBufPtr;
+    extractor->readAudioRawData(extBufPtr);
 
     if (signalProperties.spec == m_devSpec) {
         LOG_INFO(LOG_TAG, "audio spec is same");
@@ -92,16 +86,18 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         AudioSpec outSpec          = m_devSpec;
         inSpec.samples             = 1024;
         processProperties.resample = new AudioResample(inSpec, outSpec);
+        if(processProperties.resample == nullptr) {
+            LOG_ERROR(LOG_TAG, "new AudioResample failed");
+            return;
+        }
         size_t resampleBufSize     = extBufPtr->size() * outSpec.sampleRate * outSpec.numChannel
             * outSpec.bytesPerSample / inSpec.sampleRate / inSpec.numChannel
             / inSpec.bytesPerSample;
         LOG_INFO(LOG_TAG, "resampleBufSize : %d", resampleBufSize);
-        char *resampleBuf = new char[resampleBufSize + 64];
-        if (resampleBuf == nullptr) {
-            LOG_ERROR(LOG_TAG, "new resampleBuf failed");
-            return;
-        }
-        AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBuf, resampleBufSize));
+
+        AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBufSize));
+        char *resampleBuf = resampleBufPtr->data();
+        char *extractorOutputBuf = extBufPtr->data();
         size_t inOnceSize = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
         LOG_INFO(LOG_TAG, "inOnceSize : %d", inOnceSize);
         size_t inSize  = 0;

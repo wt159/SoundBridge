@@ -270,8 +270,6 @@ MainWindow::~MainWindow() { }
 void MainWindow::btn_play_clicked()
 {
     MusicPlayerState state = musicPlayer->state();
-    if (state == m_state)
-        return;
     switch (state) {
     case MusicPlayerState::StoppedState:
         /* 媒体播放 */
@@ -287,7 +285,6 @@ void MainWindow::btn_play_clicked()
         musicPlayer->play();
         break;
     }
-    m_state = state;
 }
 
 void MainWindow::btn_next_clicked()
@@ -390,6 +387,8 @@ void MainWindow::mediaPlayerInit()
 
 void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
 {
+    if(m_state == state)
+        return;
     switch (state) {
     case sdk::MusicPlayerState::StoppedState:
         pushButton[1]->setChecked(false);
@@ -403,6 +402,7 @@ void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
         pushButton[1]->setChecked(false);
         break;
     }
+    m_state = state;
 }
 
 void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
@@ -441,7 +441,6 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 
 void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 {
-    qDebug() << "position" << position << endl;
     if (!durationSlider->isSliderDown())
         durationSlider->setValue(position / 1000);
 

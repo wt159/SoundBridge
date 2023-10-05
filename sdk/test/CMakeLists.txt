@@ -24,4 +24,12 @@ add_executable(TestAudioDecode TestAudioDecode.cpp)
 target_link_libraries(TestAudioDecode LogWrapper AudioDecode)
 
 add_executable(TestMusicPlayer TestMusicPlayer.cpp)
-target_link_libraries(TestMusicPlayer sdk LogWrapper AudioDevice AudioResample AudioDecode Extractor)
+target_link_libraries(TestMusicPlayer
+    sdk
+    LogWrapper
+    AudioDevice
+    AudioResample
+    AudioDecode
+    Extractor
+    WavExtractor
+    AacExtractor)

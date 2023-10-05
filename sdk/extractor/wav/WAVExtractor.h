@@ -12,7 +12,7 @@ public:
     virtual uint64_t getDurationMs() { return m_durationMs; }
     virtual off64_t getDataSize()  { return m_dataSize; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
-     virtual void readAudioRawData(off64_t offset, size_t size, void *buf);
+     virtual void readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr);
     virtual ~WAVExtractor();
 
 private:
@@ -33,4 +33,5 @@ private:
     size_t m_dataSize;
     AudioSpec m_audioSpec;
     AudioCodecID m_audioCodecID;
+    AudioBuffer::AudioBufferPtr m_rawBuf;
 };

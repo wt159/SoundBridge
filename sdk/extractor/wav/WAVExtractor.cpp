@@ -37,9 +37,13 @@ WAVExtractor::WAVExtractor(DataSourceBase *source)
     m_initCheck = init();
 }
 
-void WAVExtractor::readAudioRawData(off64_t offset, size_t size, void *buf)
-{
-    m_dataSource->readAt(m_dataOffset + offset, buf, size);
+// void WAVExtractor::readAudioRawData(off64_t offset, size_t size, void *buf)
+// {
+//     m_dataSource->readAt(m_dataOffset + offset, buf, size);
+// }
+
+void WAVExtractor::readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr) { 
+    bufPtr = m_rawBuf;
 }
 
 WAVExtractor::~WAVExtractor() { }
@@ -125,7 +129,7 @@ status_t WAVExtractor::init()
 
             m_audioSpec.bitsPerSample = m_bitsPerSample = U16_LE_AT(&formatSpec[14]);
             m_audioSpec.bytesPerSample                  = m_bitsPerSample >> 3;
-            m_audioSpec.format = getAudioFormatByBits(m_audioSpec.bitsPerSample);
+            m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
             LOG_INFO(LOG_TAG, "bitsPerSample=%d", m_bitsPerSample);
             LOG_INFO(LOG_TAG, "bytesPerSample=%d", m_audioSpec.bytesPerSample);
             LOG_INFO(LOG_TAG, "format=%d", m_audioSpec.format);
@@ -203,7 +207,13 @@ status_t WAVExtractor::init()
                         return ERROR_MALFORMED;
 
                     m_durationMs = 1000LL * num_samples / m_sampleRate;
-                    LOG_INFO(LOG_TAG, "durationMs = %llu", m_durationMs);
+                    LOG_INFO(LOG_TAG, "durationMs = %lu", (long unsigned)m_durationMs);
+                }
+
+                m_rawBuf = AudioBuffer::AudioBufferPtr(new AudioBuffer(m_dataSize));
+                if (m_dataSource->readAt(m_dataOffset, m_rawBuf->data(), m_dataSize) < (ssize_t)m_dataSize) {
+                    LOG_ERROR(LOG_TAG, "readAt failed");
+                    return NO_INIT;
                 }
                 return OK;
             }

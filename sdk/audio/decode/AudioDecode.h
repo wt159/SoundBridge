@@ -1,3 +1,4 @@
+#pragma once
 #include "AudioCommon.hpp"
 #include <memory>
 
