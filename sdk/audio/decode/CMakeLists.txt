@@ -7,6 +7,6 @@ include_directories(${3RDPARTY_DIST_DIR}/include)
 link_directories(${3RDPARTY_DIST_DIR}/lib)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
 
-add_library(AudioDecode AudioDecode.cpp AudioDecode.h)
+add_library(AudioDecode AudioDecode.cpp AudioDecodeProcess.cpp)
 
 target_link_libraries(AudioDecode avcodec avutil avformat LogWrapper)

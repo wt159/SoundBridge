@@ -42,34 +42,23 @@ union AACHeader {
     ADIFHeader adif;
 };
 
-class AACExtractor : public ExtractorHelper, public AudioDecodeCallback, public NonCopyable {
+class AACExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit AACExtractor(DataSourceBase *source);
-
-    virtual uint64_t getDurationMs() { return m_durationMs; }
-    virtual off64_t getDataSize() { return m_dataSize; }
-    virtual AudioSpec getAudioSpec() { return m_audioSpec; }
-    virtual void readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr);
+    virtual AudioSpec getAudioSpec() { return m_spec; }
+    virtual AudioCodecID getAudioCodecID() { return m_audioCodecID;}
+    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf;}
     virtual ~AACExtractor();
 
 private:
     status_t init();
 
 private:
-    virtual void onAudioDecodeCallback(AudioDecodeSpec &out);
-
-private:
     DataSourceBase *m_dataSource;
-    AudioDecode *m_decode;
     AudioCodecID m_audioCodecID;
-    size_t m_decSize;
-    std::vector<AudioBuffer::AudioBufferPtr> m_decBufVec;
-    AudioBuffer::AudioBufferPtr m_decBuf;
+    AudioBuffer::AudioBufferPtr m_metaBuf;
     status_t m_initCheck;
     bool m_validFormat;
-    uint64_t m_durationMs;
-    off64_t m_dataOffset;
-    size_t m_dataSize;
-    AudioSpec m_audioSpec;
+    AudioSpec m_spec;
     AACHeader m_header;
 };

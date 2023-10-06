@@ -118,6 +118,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
         LOG_ERROR(LOG_TAG, "avcodec_open2 failed rc:%d, %s", ret, getAVErrorString(ret));
         return;
     }
+    LOG_INFO(LOG_TAG, "exit");
 }
 
 AudioDecode::Impl::~Impl()

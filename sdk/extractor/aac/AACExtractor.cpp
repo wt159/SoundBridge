@@ -19,27 +19,14 @@ uint32_t getSampleRate(const uint8_t sfIndex)
 
 AACExtractor::AACExtractor(DataSourceBase *source)
     : m_dataSource(source)
-    , m_decode(nullptr)
-    , m_decSize(0)
-    , m_decBufVec()
-    , m_decBuf(nullptr)
+    , m_metaBuf(nullptr)
     , m_validFormat(false)
-    , m_dataOffset(0)
-    , m_dataSize(0)
 {
     m_initCheck = init();
 }
 
-void AACExtractor::readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr)
-{
-    bufPtr = m_decBuf;
-}
-
 AACExtractor::~AACExtractor()
 {
-    if (m_decode != nullptr)
-        delete m_decode;
-    m_decode = nullptr;
 }
 
 status_t AACExtractor::init()
@@ -76,64 +63,20 @@ status_t AACExtractor::init()
             = ((data[3] & 0x03) << 11) | ((data[4] & 0xff) << 3) | ((data[5] & 0xe0) >> 5);
         m_header.adts.bufferFullness   = ((data[5] & 0x1F) << 6) | ((data[6] & 0xfc) >> 2);
         m_header.adts.numRawDataBlocks = data[6] & 0x03;
-        m_audioSpec.sampleRate         = getSampleRate(m_header.adts.samplingFrequencyIndex);
-        m_audioSpec.numChannel         = m_header.adts.channelConfiguration;
+        m_spec.sampleRate         = getSampleRate(m_header.adts.samplingFrequencyIndex);
+        m_spec.numChannel         = m_header.adts.channelConfiguration;
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
-    m_decode       = new AudioDecode(m_audioCodecID, this);
-    if (m_decode == nullptr) {
-        LOG_ERROR(LOG_TAG, "new AudioDecode failed");
-        return NO_MEMORY;
-    }
+    
     ssize_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
-    char *data                         = new char[fileSize];
-    AudioBuffer::AudioBufferPtr srcBuf = std::make_shared<AudioBuffer>(data, fileSize);
-    if (data == nullptr) {
-        LOG_ERROR(LOG_TAG, "new char failed");
-        return NO_MEMORY;
-    }
-    if (m_dataSource->readAt(0, data, fileSize) < fileSize) {
+    m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
+    if (m_dataSource->readAt(0, m_metaBuf->data(), fileSize) < fileSize) {
         LOG_ERROR(LOG_TAG, "readAt failed");
         return NO_MEMORY;
     }
-    int ret = m_decode->decode(data, fileSize);
-    if (ret < 0) {
-        LOG_ERROR(LOG_TAG, "decode failed");
-        return NO_MEMORY;
-    }
 
-    m_decBuf       = std::make_shared<AudioBuffer>(m_decSize);
-    off64_t offset = 0;
-    for (auto &buf : m_decBufVec) {
-        m_decBuf->setData(offset, buf->size(), buf->data());
-        offset += buf->size();
-    }
-
-    m_dataSize = m_decSize;
-    size_t bytesPreMs
-        = m_audioSpec.sampleRate * m_audioSpec.numChannel * m_audioSpec.bytesPerSample / 1000;
-    m_durationMs = m_decSize / bytesPreMs;
-
-    LOG_INFO(LOG_TAG, "m_dataSize = %d, m_durationMs = %d", m_dataSize, m_durationMs);
-    LOG_INFO(LOG_TAG, "sampleRate: %d, numChannel: %d, bytesPerSample: %d", m_audioSpec.sampleRate,
-             m_audioSpec.numChannel, m_audioSpec.bytesPerSample);
+    LOG_INFO(LOG_TAG, "sampleRate: %d, numChannel: %d, bytesPerSample: %d", m_spec.sampleRate,
+             m_spec.numChannel, m_spec.bytesPerSample);
     return NO_ERROR;
-}
-
-void AACExtractor::onAudioDecodeCallback(AudioDecodeSpec &out)
-{
-    size_t size = out.spec.samples * out.spec.numChannel * out.spec.bytesPerSample;
-    AudioBuffer::AudioBufferPtr buf = std::make_shared<AudioBuffer>(size);
-    off64_t offset                  = 0;
-    for (int i = 0; i < out.spec.samples; i++) {
-        for (int ch = 0; ch < out.spec.numChannel; ch++) {
-            buf->setData(offset, out.spec.bytesPerSample,
-                         (char *)out.lineData[ch] + out.spec.bytesPerSample * i);
-            offset += out.spec.bytesPerSample;
-        }
-    }
-    m_audioSpec  = out.spec;
-    m_decSize   += offset;
-    m_decBufVec.push_back(buf);
 }

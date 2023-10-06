@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 enum AudioFormat {
     AudioFormatUnknown = -1,
     AudioFormatS8,
@@ -74,6 +76,7 @@ struct AudioSpec {
     int bitsPerSample;
     int samples;
     int bytesPerSample;
+    uint64_t durationMs;
 
     AudioSpec()
         : sampleRate(0)
@@ -82,6 +85,7 @@ struct AudioSpec {
         , bitsPerSample(0)
         , samples(0)
         , bytesPerSample(0)
+        , durationMs(0)
     {
     }
 

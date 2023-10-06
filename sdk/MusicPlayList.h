@@ -5,6 +5,7 @@
 #include "AudioDecode.h"
 #include "AudioResample.h"
 #include "ExtractorHelper.hpp"
+#include "AudioDecodeProcess.h"
 #include "FileSource.h"
 #include "NonCopyable.hpp"
 #include "WorkQueue.hpp"
@@ -53,19 +54,10 @@ struct SignalProperties {
 };
 
 struct ProcessProperties {
-    DataSource *source;
-    ExtractorHelper *extractor;
-    AudioResample *resample;
-
-    ~ProcessProperties()
-    {
-        if (source != nullptr)
-            delete source;
-        if (extractor != nullptr)
-            delete extractor;
-        if (resample != nullptr)
-            delete resample;
-    }
+   std::shared_ptr<DataSource> source;
+    std::shared_ptr<ExtractorHelper> extractor;
+    std::shared_ptr<AudioDecodeProcess> decode;
+    std::shared_ptr<AudioResample> resample;
 };
 
 struct MusicProperties {

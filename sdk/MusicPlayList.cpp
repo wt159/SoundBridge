@@ -53,57 +53,65 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     fileProperties.parseFileName();
     LOG_INFO(LOG_TAG, "fineName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
-    FileSource *source = new FileSource(musicPath.c_str());
+    std::shared_ptr<FileSource> source(new FileSource(musicPath.c_str()));
     if (source == nullptr) {
         LOG_ERROR(LOG_TAG, "new FileSource failed");
         return;
     }
     processProperties.source = source;
-    ExtractorHelper *extractor
-        = ExtractorFactory::createExtractor(source, fileProperties.extensionName);
+    std::shared_ptr<ExtractorHelper> extractor(
+        ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName));
     if (extractor == nullptr) {
         LOG_ERROR(LOG_TAG, "createExtractor failed");
         return;
     }
     processProperties.extractor    = extractor;
-    signalProperties.durationMs    = extractor->getDurationMs();
+
+    std::shared_ptr<AudioDecodeProcess> decode(
+        new AudioDecodeProcess(extractor.get()));
+    if(decode == nullptr) {
+        LOG_ERROR(LOG_TAG, "new AudioDecodeProcess failed");
+        return;
+    }
+
+    
     signalProperties.curPositionMs = 0;
-    signalProperties.dataSize      = extractor->getDataSize();
     signalProperties.curDataOffset = 0;
-    signalProperties.spec          = extractor->getAudioSpec();
+    signalProperties.spec          = decode->getDecodeSpec();
+    AudioBuffer::AudioBufferPtr decBufPtr = decode->getDecodeBuffer();
+    signalProperties.dataSize      = decBufPtr->size();
+    signalProperties.durationMs    = signalProperties.spec.durationMs;
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
     LOG_INFO(LOG_TAG, "dataSize      : %lld", signalProperties.dataSize);
-    AudioBuffer::AudioBufferPtr extBufPtr;
-    extractor->readAudioRawData(extBufPtr);
 
     if (signalProperties.spec == m_devSpec) {
         LOG_INFO(LOG_TAG, "audio spec is same");
         processProperties.resample = nullptr;
-        musicProperties->rawBuffer = extBufPtr;
+        musicProperties->rawBuffer = decBufPtr;
     } else {
         LOG_INFO(LOG_TAG, "audio spec is not same, need resample");
         AudioSpec inSpec           = signalProperties.spec;
         AudioSpec outSpec          = m_devSpec;
         inSpec.samples             = 1024;
-        processProperties.resample = new AudioResample(inSpec, outSpec);
-        if(processProperties.resample == nullptr) {
+        processProperties.resample = std::make_shared<AudioResample>(inSpec, outSpec);
+        if (processProperties.resample == nullptr) {
             LOG_ERROR(LOG_TAG, "new AudioResample failed");
             return;
         }
-        size_t resampleBufSize     = extBufPtr->size() * outSpec.sampleRate * outSpec.numChannel
+        size_t resampleBufSize = decBufPtr->size() * outSpec.sampleRate * outSpec.numChannel
             * outSpec.bytesPerSample / inSpec.sampleRate / inSpec.numChannel
             / inSpec.bytesPerSample;
         LOG_INFO(LOG_TAG, "resampleBufSize : %d", resampleBufSize);
 
         AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBufSize));
-        char *resampleBuf = resampleBufPtr->data();
-        char *extractorOutputBuf = extBufPtr->data();
-        size_t inOnceSize = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
+        char *resampleBuf        = resampleBufPtr->data();
+        char *decOutputBuf = decBufPtr->data();
+        size_t inOnceSize        = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
         LOG_INFO(LOG_TAG, "inOnceSize : %d", inOnceSize);
         size_t inSize  = 0;
         size_t outSize = 0, outOnceSize = 0;
         while (1) {
-            ret = processProperties.resample->resample(extractorOutputBuf + inSize, inOnceSize,
+            ret = processProperties.resample->resample(decOutputBuf + inSize, inOnceSize,
                                                        resampleBuf + outSize, &outOnceSize);
             if (ret < 0) {
                 LOG_ERROR(LOG_TAG, "resample failed");
@@ -111,17 +119,17 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
             }
             inSize  += inOnceSize;
             outSize += outOnceSize;
-            if ((inSize + inOnceSize) > extBufPtr->size()) {
-                inOnceSize  = extBufPtr->size() - inSize;
+            if ((inSize + inOnceSize) > decBufPtr->size()) {
+                inOnceSize  = decBufPtr->size() - inSize;
                 outOnceSize = resampleBufSize - outSize;
                 LOG_DEBUG(LOG_TAG, "inOnceSize : %d, outOnceSize : %d", inOnceSize, outOnceSize);
             }
-            if (inSize >= extBufPtr->size()) {
+            if (inSize >= decBufPtr->size()) {
                 break;
             }
         }
         LOG_INFO(LOG_TAG, "resampleBufSize : %llu", resampleBufSize);
-        signalProperties.dataSize = outSize;
+        signalProperties.dataSize  = outSize;
         musicProperties->rawBuffer = resampleBufPtr;
     }
 

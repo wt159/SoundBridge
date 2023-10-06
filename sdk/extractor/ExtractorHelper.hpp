@@ -39,10 +39,9 @@ public:
 
     virtual const char *name() { return "<unspecified>"; }
 
-    virtual uint64_t getDurationMs()                                   = 0;
-    virtual off64_t getDataSize()                                      = 0;
-    virtual AudioSpec getAudioSpec()                                   = 0;
-    virtual void readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr) = 0;
+    virtual AudioSpec getAudioSpec()                  = 0;
+    virtual AudioCodecID getAudioCodecID()            = 0;
+    virtual AudioBuffer::AudioBufferPtr getMetaData() = 0;
 
 protected:
     ExtractorHelper() { }

@@ -31,19 +31,9 @@ static uint16_t U16_LE_AT(const uint8_t *ptr)
 
 WAVExtractor::WAVExtractor(DataSourceBase *source)
     : m_dataSource(source)
-    , m_decode(nullptr)
     , m_validFormat(false)
 {
     m_initCheck = init();
-}
-
-// void WAVExtractor::readAudioRawData(off64_t offset, size_t size, void *buf)
-// {
-//     m_dataSource->readAt(m_dataOffset + offset, buf, size);
-// }
-
-void WAVExtractor::readAudioRawData(AudioBuffer::AudioBufferPtr &bufPtr) { 
-    bufPtr = m_rawBuf;
 }
 
 WAVExtractor::~WAVExtractor() { }
@@ -105,40 +95,40 @@ status_t WAVExtractor::init()
                 return NO_INIT;
             }
 
-            m_audioSpec.numChannel = m_numChannels = U16_LE_AT(&formatSpec[2]);
-            if (m_numChannels < 1 || m_numChannels > 8) {
-                LOG_ERROR(LOG_TAG, "Unsupported number of channels (%d)", m_numChannels);
+            m_audioSpec.numChannel = U16_LE_AT(&formatSpec[2]);
+            if (m_audioSpec.numChannel < 1 || m_audioSpec.numChannel > 8) {
+                LOG_ERROR(LOG_TAG, "Unsupported number of channels (%d)", m_audioSpec.numChannel);
                 return ERROR_UNSUPPORTED;
             }
-            LOG_INFO(LOG_TAG, "numChannels=%d", m_numChannels);
+            LOG_INFO(LOG_TAG, "numChannels=%d", m_audioSpec.numChannel);
 
             if (m_waveFormat != WAVE_FORMAT_EXTENSIBLE) {
-                if (m_numChannels != 1 && m_numChannels != 2) {
+                if (m_audioSpec.numChannel != 1 && m_audioSpec.numChannel != 2) {
                     LOG_WARNING(LOG_TAG,
                                 "More than 2 channels (%d) in non-WAVE_EXT, unknown channel mask",
-                                m_numChannels);
+                                m_audioSpec.numChannel);
                 }
             }
 
-            m_audioSpec.sampleRate = m_sampleRate = U32_LE_AT(&formatSpec[4]);
-            LOG_INFO(LOG_TAG, "sampleRate=%d", m_sampleRate);
-            if (m_sampleRate == 0) {
-                LOG_ERROR(LOG_TAG, "Invalid sample rate (%d)", m_sampleRate);
+            m_audioSpec.sampleRate = U32_LE_AT(&formatSpec[4]);
+            LOG_INFO(LOG_TAG, "sampleRate=%d", m_audioSpec.sampleRate);
+            if (m_audioSpec.sampleRate == 0) {
+                LOG_ERROR(LOG_TAG, "Invalid sample rate (%d)", m_audioSpec.sampleRate);
                 return ERROR_MALFORMED;
             }
 
-            m_audioSpec.bitsPerSample = m_bitsPerSample = U16_LE_AT(&formatSpec[14]);
-            m_audioSpec.bytesPerSample                  = m_bitsPerSample >> 3;
-            m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-            LOG_INFO(LOG_TAG, "bitsPerSample=%d", m_bitsPerSample);
+            m_audioSpec.bitsPerSample  = U16_LE_AT(&formatSpec[14]);
+            m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample >> 3;
+            m_audioSpec.format         = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
+            LOG_INFO(LOG_TAG, "bitsPerSample=%d", m_audioSpec.bitsPerSample);
             LOG_INFO(LOG_TAG, "bytesPerSample=%d", m_audioSpec.bytesPerSample);
             LOG_INFO(LOG_TAG, "format=%d", m_audioSpec.format);
             if (m_waveFormat == WAVE_FORMAT_EXTENSIBLE) {
                 uint16_t validBitsPerSample = U16_LE_AT(&formatSpec[18]);
-                if (validBitsPerSample != m_bitsPerSample) {
+                if (validBitsPerSample != m_audioSpec.bitsPerSample) {
                     if (validBitsPerSample != 0) {
                         LOG_ERROR(LOG_TAG, "validBits(%d) != bitsPerSample(%d) are not supported",
-                                  validBitsPerSample, m_bitsPerSample);
+                                  validBitsPerSample, m_audioSpec.bitsPerSample);
                         return ERROR_UNSUPPORTED;
                     } else {
                         LOG_WARNING(LOG_TAG, "WAVE_EXT has 0 valid bits per sample, ignoring");
@@ -146,14 +136,15 @@ status_t WAVExtractor::init()
                 }
 
                 m_channelMask = U32_LE_AT(&formatSpec[20]);
-                LOG_DEBUG(LOG_TAG, "numChannels=%d channelMask=0x%x", m_numChannels, m_channelMask);
+                LOG_DEBUG(LOG_TAG, "numChannels=%d channelMask=0x%x", m_audioSpec.numChannel,
+                          m_channelMask);
                 if ((m_channelMask >> 18) != 0) {
                     LOG_ERROR(LOG_TAG, "invalid channel mask 0x%x", m_channelMask);
                     return ERROR_MALFORMED;
                 }
 
                 if ((m_channelMask != CHANNEL_MASK_USE_CHANNEL_ORDER)
-                    && (m_channelMask != m_numChannels)) {
+                    && (m_channelMask != (uint32_t)m_audioSpec.numChannel)) {
                     LOG_ERROR(LOG_TAG, "invalid number of channels (%d) in channel mask (0x%x)",
                               m_channelMask, m_channelMask);
                     return ERROR_MALFORMED;
@@ -166,20 +157,20 @@ status_t WAVExtractor::init()
                     return ERROR_UNSUPPORTED;
                 }
             } else if (m_waveFormat == WAVE_FORMAT_PCM) {
-                if (m_bitsPerSample != 8 && m_bitsPerSample != 16 && m_bitsPerSample != 24
-                    && m_bitsPerSample != 32) {
+                if (m_audioSpec.bitsPerSample != 8 && m_audioSpec.bitsPerSample != 16
+                    && m_audioSpec.bitsPerSample != 24 && m_audioSpec.bitsPerSample != 32) {
                     return ERROR_UNSUPPORTED;
                 }
             } else if (m_waveFormat == WAVE_FORMAT_IEEE_FLOAT) {
-                if (m_bitsPerSample != 32) { // TODO we don't support double
+                if (m_audioSpec.bitsPerSample != 32) { // TODO we don't support double
                     return ERROR_UNSUPPORTED;
                 }
             } else if (m_waveFormat == WAVE_FORMAT_MSGSM) {
-                if (m_bitsPerSample != 0) {
+                if (m_audioSpec.bitsPerSample != 0) {
                     return ERROR_UNSUPPORTED;
                 }
             } else if (m_waveFormat == WAVE_FORMAT_MULAW || m_waveFormat == WAVE_FORMAT_ALAW) {
-                if (m_bitsPerSample != 8) {
+                if (m_audioSpec.bitsPerSample != 8) {
                     return ERROR_UNSUPPORTED;
                 }
             } else {
@@ -191,27 +182,30 @@ status_t WAVExtractor::init()
             if (m_validFormat) {
                 m_dataOffset = offset;
                 m_dataSize   = chunkSize;
-                LOG_INFO(LOG_TAG, "dataOffset=%lu, dataSize=%lu",
-                         (long unsigned)m_dataOffset, ( long unsigned)m_dataSize);
+                LOG_INFO(LOG_TAG, "dataOffset=%lu, dataSize=%lu", (long unsigned)m_dataOffset,
+                         (long unsigned)m_dataSize);
 
                 if (m_waveFormat == WAVE_FORMAT_MSGSM) {
                     // 65 bytes decode to 320 8kHz samples
-                    m_durationMs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
+                    m_audioSpec.durationMs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
                 } else {
-                    if (!m_audioSpec.bytesPerSample || !m_numChannels)
+                    if (!m_audioSpec.bytesPerSample || !m_audioSpec.numChannel)
                         return ERROR_MALFORMED;
 
-                    size_t num_samples  = m_dataSize / (m_numChannels * m_audioSpec.bytesPerSample);
+                    size_t num_samples
+                        = m_dataSize / (m_audioSpec.numChannel * m_audioSpec.bytesPerSample);
                     m_audioSpec.samples = num_samples;
-                    if (!m_sampleRate)
+                    if (!m_audioSpec.sampleRate)
                         return ERROR_MALFORMED;
 
-                    m_durationMs = 1000LL * num_samples / m_sampleRate;
-                    LOG_INFO(LOG_TAG, "durationMs = %lu", (long unsigned)m_durationMs);
+                    m_audioSpec.durationMs = 1000LL * num_samples / m_audioSpec.sampleRate;
+                    LOG_INFO(LOG_TAG, "durationMs = %lu", (long unsigned)m_audioSpec.durationMs);
                 }
 
-                m_rawBuf = AudioBuffer::AudioBufferPtr(new AudioBuffer(m_dataSize));
-                if (m_dataSource->readAt(m_dataOffset, m_rawBuf->data(), m_dataSize) < (ssize_t)m_dataSize) {
+                m_audioCodecID = AUDIO_CODEC_ID_NONE;
+                m_metaBuf      = AudioBuffer::AudioBufferPtr(new AudioBuffer(m_dataSize));
+                if (m_dataSource->readAt(m_dataOffset, m_metaBuf->data(), m_dataSize)
+                    < (ssize_t)m_dataSize) {
                     LOG_ERROR(LOG_TAG, "readAt failed");
                     return NO_INIT;
                 }
