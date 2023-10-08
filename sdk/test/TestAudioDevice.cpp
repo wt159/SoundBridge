@@ -33,6 +33,7 @@ public:
         , m_file(fileName, std::ios::binary)
         , m_dev(this)
     {
+        m_dev.getDeviceSpec(m_devSpec);
         if (init() != 0) {
             std::cout << "init failed" << std::endl;
         } else {
@@ -54,7 +55,7 @@ public:
         m_file.close();
     }
     int play(){
-        if (m_dev.open(m_spec)) {
+        if (m_dev.open()) {
             std::cout << "open device failed" << std::endl;
             return -1;
         }
@@ -131,6 +132,7 @@ private:
     int m_bufferSize;
     int m_bufferPos;
     AudioSpec m_spec;
+    AudioSpec m_devSpec;
     AudioDevice m_dev;
 };
 

@@ -20,6 +20,7 @@ uint32_t getSampleRate(const uint8_t sfIndex)
 AACExtractor::AACExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_metaBuf(nullptr)
+    , m_initCheck(NO_INIT)
     , m_validFormat(false)
 {
     m_initCheck = init();

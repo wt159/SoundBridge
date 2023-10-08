@@ -13,6 +13,7 @@ private:
     int m_deviceNum;
     int m_driverNum;
     SDL_AudioSpec m_sdlSpec;
+    AudioSpec m_devSpec;
     bool m_isOpen;
     bool m_isStart;
     std::map<uint64_t, AudioDevSpec> m_devSpecList;
@@ -28,9 +29,7 @@ public:
     int getDeviceList(std::vector<AudDevPair> &devList);
     int selectDevice(uint64_t id);
     int getAudioSpec(AudioSpec &spec);
-    bool isSupportSpec(AudioSpec &spec);
-    AudioSpec getOutputSpec(void);
-    int open(AudioSpec &spec);
+    int open();
     void close();
     void start();
     void stop();
@@ -75,6 +74,8 @@ AudioDevice::Impl::Impl(AudioDataCallback *callback)
     m_sdlSpec.samples  = m_defaultSamples;
     m_sdlSpec.callback = audioCallback;
     m_sdlSpec.userdata = this;
+
+    SDLAudioSpec2AudioSpec(&m_sdlSpec, m_devSpec);
 }
 
 AudioDevice::Impl::~Impl()
@@ -96,23 +97,11 @@ int AudioDevice::Impl::selectDevice(uint64_t id)
 
 int AudioDevice::Impl::getAudioSpec(AudioSpec &spec)
 {
-    SDLAudioSpec2AudioSpec(&m_sdlSpec, spec);
+    spec = m_devSpec;
     return 0;
 }
 
-bool AudioDevice::Impl::isSupportSpec(AudioSpec &spec)
-{
-    return false;
-}
-
-AudioSpec AudioDevice::Impl::getOutputSpec(void)
-{
-    AudioSpec spec;
-    getAudioSpec(spec);
-    return spec;
-}
-
-int AudioDevice::Impl::open(AudioSpec &spec)
+int AudioDevice::Impl::open()
 {
     if (m_isOpen) {
         LOG_ERROR(LOG_TAG, "Audio device is already open");
@@ -318,19 +307,9 @@ int AudioDevice::selectDevice(uint64_t id)
     return m_impl->selectDevice(id);
 }
 
-bool AudioDevice::isSupportSpec(AudioSpec &spec)
+int AudioDevice::open()
 {
-    return m_impl->isSupportSpec(spec);
-}
-
-AudioSpec AudioDevice::getOutputSpec()
-{
-    return m_impl->getOutputSpec();
-}
-
-int AudioDevice::open(AudioSpec &spec)
-{
-    return m_impl->open(spec);
+    return m_impl->open();
 }
 
 int AudioDevice::close()

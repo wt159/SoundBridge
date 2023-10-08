@@ -45,7 +45,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
 {
     int ret                              = 0;
     MusicPropertiesPtr musicProperties   = std::make_shared<MusicProperties>();
-    musicProperties->index               = m_curIndex++;
+    musicProperties->index               = m_curIndex + 1;
     FileProperties &fileProperties       = musicProperties->fileProperties;
     SignalProperties &signalProperties   = musicProperties->signalProperties;
     ProcessProperties &processProperties = musicProperties->processProperties;
@@ -61,8 +61,8 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     processProperties.source = source;
     std::shared_ptr<ExtractorHelper> extractor(
         ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName));
-    if (extractor == nullptr) {
-        LOG_ERROR(LOG_TAG, "createExtractor failed");
+    if (extractor == nullptr || extractor->initCheck() != OK) {
+        LOG_ERROR(LOG_TAG, "createExtractor failed or initCheck failed");
         return;
     }
     processProperties.extractor    = extractor;
@@ -74,7 +74,6 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         return;
     }
 
-    
     signalProperties.curPositionMs = 0;
     signalProperties.curDataOffset = 0;
     signalProperties.spec          = decode->getDecodeSpec();
@@ -138,6 +137,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         return;
     }
     m_musicListProperties.push_back(musicProperties);
+    m_curIndex++;
     if (m_selectMusicProperties == nullptr) {
         m_selectMusicProperties = musicProperties;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);

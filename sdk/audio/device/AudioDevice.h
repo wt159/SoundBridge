@@ -31,9 +31,7 @@ public:
     std::vector<AudDevPair> getDeviceList();
     int getDeviceSpec(AudioSpec &spec);
     int selectDevice(uint64_t id);
-    bool isSupportSpec(AudioSpec &spec);
-    AudioSpec getOutputSpec();
-    int open(AudioSpec &spec);
+    int open();
     int close();
     int start();
     int stop();

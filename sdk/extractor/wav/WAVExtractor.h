@@ -8,6 +8,7 @@
 class WAVExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit WAVExtractor(DataSourceBase *source);
+    virtual status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }

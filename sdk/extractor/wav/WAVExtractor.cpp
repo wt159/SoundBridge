@@ -31,6 +31,7 @@ static uint16_t U16_LE_AT(const uint8_t *ptr)
 
 WAVExtractor::WAVExtractor(DataSourceBase *source)
     : m_dataSource(source)
+    , m_initCheck(NO_INIT)
     , m_validFormat(false)
 {
     m_initCheck = init();

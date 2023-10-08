@@ -48,7 +48,7 @@ private:
 private:
     WorkQueue m_workQueue;
     std::shared_ptr<AudioDevice> m_audioDev;
-    AudioSpec m_audioSupportSpec;
+    AudioSpec m_devSpec;
     std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
     MusicPlayerState m_state;
@@ -70,8 +70,8 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     LOG_INFO(LOG_TAG, "Log init success");
 
     m_audioDev         = std::make_shared<AudioDevice>(this);
-    m_audioSupportSpec = m_audioDev->getOutputSpec();
-    m_musicList        = std::make_shared<MusicPlayList>(this, &m_workQueue, m_audioSupportSpec);
+    m_audioDev->getDeviceSpec(m_devSpec);
+    m_musicList        = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
     LOG_INFO(LOG_TAG, "Impl construct");
 }
 
@@ -145,7 +145,7 @@ void MusicPlayer::Impl::_play()
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
-    m_audioDev->open(m_curMusicProperties->signalProperties.spec);
+    m_audioDev->open();
     m_audioDev->start();
     updatePlayState(MusicPlayerState::PlayingState);
 }
@@ -178,7 +178,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
     LOG_INFO(LOG_TAG, "%s", __func__);
     if (m_curMusicProperties && pos >= 0
         && pos <= m_curMusicProperties->signalProperties.durationMs) {
-        AudioSpec &spec                                      = m_audioSupportSpec;
+        AudioSpec &spec                                      = m_devSpec;
         m_curMusicProperties->signalProperties.curPositionMs = pos;
         m_curMusicProperties->signalProperties.curDataOffset
             = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
@@ -220,7 +220,7 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
     if (m_curMusicProperties) {
         SignalProperties &signalProperties = m_curMusicProperties->signalProperties;
         m_curMusicProperties->rawBuffer->getData(signalProperties.curDataOffset, len, (char *)data);
-        AudioSpec &spec                 = m_audioSupportSpec;
+        AudioSpec &spec                 = m_devSpec;
         signalProperties.curDataOffset += len;
         signalProperties.curPositionMs
             += 1000LL * len / (spec.bytesPerSample * spec.numChannel) / spec.sampleRate;

@@ -30,6 +30,4 @@ target_link_libraries(TestMusicPlayer
     AudioDevice
     AudioResample
     AudioDecode
-    Extractor
-    WavExtractor
-    AacExtractor)
+    Extractor)

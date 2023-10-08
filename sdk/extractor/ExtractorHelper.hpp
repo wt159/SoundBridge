@@ -23,8 +23,8 @@ enum standardExtractors {
 static const std::unordered_map<std::string, standardExtractors> defaultExtractorMap = {
     { ".wav", WAV_EXTRACTOR },
     { ".aac", AAC_EXTRACTOR },
-    /* { ".mp3", MP3_EXTRACTOR },
-    { ".flac", FLAC_EXTRACTOR },
+    { ".mp3", MP3_EXTRACTOR },
+    /* { ".flac", FLAC_EXTRACTOR },
     { ".ogg", OGG_EXTRACTOR },
     { ".aiff", AIFF_EXTRACTOR },
     { ".asf", ASF_EXTRACTOR },
@@ -38,7 +38,7 @@ public:
     virtual ~ExtractorHelper() { }
 
     virtual const char *name() { return "<unspecified>"; }
-
+    virtual status_t initCheck()                      = 0;
     virtual AudioSpec getAudioSpec()                  = 0;
     virtual AudioCodecID getAudioCodecID()            = 0;
     virtual AudioBuffer::AudioBufferPtr getMetaData() = 0;
