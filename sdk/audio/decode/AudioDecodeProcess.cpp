@@ -40,6 +40,10 @@ void AudioDecodeProcess::onAudioDecodeCallback(AudioDecodeSpec &out)
 status_t AudioDecodeProcess::init()
 {
     AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+    if(extPtr == nullptr) {
+        LOGE("getMetaData failed");
+        return INVALID_OPERATION;
+    }
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         LOG_ERROR(LOG_TAG, "m_codecID is AUDIO_CODEC_ID_NONE, not need decode");
         m_decBuf = extPtr;

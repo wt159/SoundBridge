@@ -69,8 +69,8 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
 
     std::shared_ptr<AudioDecodeProcess> decode(
         new AudioDecodeProcess(extractor.get()));
-    if(decode == nullptr) {
-        LOG_ERROR(LOG_TAG, "new AudioDecodeProcess failed");
+    if(decode == nullptr || decode->initCheck() != OK) {
+        LOG_ERROR(LOG_TAG, "new AudioDecodeProcess failed or initCheck failed, %p", decode.get());
         return;
     }
 
@@ -133,7 +133,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     }
 
     if (musicProperties->rawBuffer == nullptr) {
-        LOG_ERROR(LOG_TAG, "new AudioBuffer failed");
+        LOG_ERROR(LOG_TAG, "musicProperties->rawBuffer == nullptr");
         return;
     }
     m_musicListProperties.push_back(musicProperties);
