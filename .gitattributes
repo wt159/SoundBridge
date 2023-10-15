@@ -3,7 +3,3 @@
 *.dll filter=lfs diff=lfs merge=lfs -text
 
 *.cpp linguist-language=C++
-*.c linguist-language=C
-*.cmake linguist-language=CMake
-*.py linguist-language=Python
-*.sh linguist-language=Shell
