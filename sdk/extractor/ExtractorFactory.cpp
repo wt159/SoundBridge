@@ -4,6 +4,7 @@
 #include "aac/AACExtractor.h"
 #include "mp3/MP3Extractor.h"
 #include "flac/FLACExtractor.h"
+#include "m4a/M4AExtractor.h"
 
 ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
                                                    const std::string &extensionName)
@@ -20,6 +21,8 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         return new MP3Extractor(source);
     case standardExtractors::FLAC_EXTRACTOR:
         return new FLACExtractor(source);
+    case standardExtractors::M4A_EXTRACTOR:
+        return new M4AExtractor(source);
     default:
         break;
     }

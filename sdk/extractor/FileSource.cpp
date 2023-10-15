@@ -22,6 +22,7 @@ FileSource::FileSource(const char *filename)
         m_file.seekg(0, std::ios::end);
         m_length = m_file.tellg();
         m_file.seekg(0, std::ios::beg);
+        LOGI("file size: %lld", (long long)m_length);
     } else {
         LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename);
     }
