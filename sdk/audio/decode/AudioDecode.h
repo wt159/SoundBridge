@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioCommon.hpp"
+#include "Errors.h"
 #include <memory>
 
 struct AudioDecodeSpec
@@ -21,6 +22,7 @@ class AudioDecode
 public:
     AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback);
     ~AudioDecode();
+    status_t initCheck();
     int decode(const char *data, ssize_t size);
 private:
     class Impl;

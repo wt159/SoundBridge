@@ -50,7 +50,10 @@ status_t AudioDecodeProcess::init()
         m_decSize = m_decBuf->size();
     } else {
         m_decode = std::make_shared<AudioDecode>(m_codecID, this);
-
+        if (m_decode == nullptr || m_decode->initCheck() != OK) {
+            LOG_ERROR(LOG_TAG, "new AudioDecode failed or initCheck failed, %p", m_decode.get());
+            return INVALID_OPERATION;
+        }
         LOG_INFO(LOG_TAG, "extractor buffer size(): %llu", extPtr->size());
         int ret = m_decode->decode(extPtr->data(), extPtr->size());
         if (ret < 0) {

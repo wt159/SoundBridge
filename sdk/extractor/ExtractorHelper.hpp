@@ -26,8 +26,8 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
     { ".mp3", MP3_EXTRACTOR },
     { ".flac", FLAC_EXTRACTOR },
     { ".m4a", M4A_EXTRACTOR },
-    /* { ".ogg", OGG_EXTRACTOR },
-    { ".aiff", AIFF_EXTRACTOR },
+    { ".ogg", OGG_EXTRACTOR },
+    /* { ".aiff", AIFF_EXTRACTOR },
     { ".asf", ASF_EXTRACTOR },
     { ".wma", ASF_EXTRACTOR },
     { ".opus", OPUS_EXTRACTOR } */

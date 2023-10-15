@@ -24,11 +24,13 @@ private:
     int m_deviceVersion;
     std::string m_configuration;
     std::string m_licenseInfo;
+    status_t m_initCheck;
 
 public:
     Impl(AudioCodecID codec, AudioDecodeCallback *callback);
     ~Impl();
     int decode(const char *data, ssize_t size);
+    status_t initCheck() { return m_initCheck; }
 
 private:
     char *getAVErrorString(int errnum);
@@ -48,6 +50,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
     , m_deviceVersion(avcodec_version())
     , m_configuration(avcodec_configuration())
     , m_licenseInfo(avcodec_license())
+    , m_initCheck(NO_INIT)
 {
 
     LOG_INFO(LOG_TAG, "av log level: %d", av_log_get_level());
@@ -118,6 +121,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
         LOG_ERROR(LOG_TAG, "avcodec_open2 failed rc:%d, %s", ret, getAVErrorString(ret));
         return;
     }
+    m_initCheck = OK;
     LOG_INFO(LOG_TAG, "exit");
 }
 
@@ -263,6 +267,11 @@ AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback)
 }
 
 AudioDecode::~AudioDecode() { }
+
+status_t AudioDecode::initCheck()
+{
+    return m_impl->initCheck();
+}
 
 int AudioDecode::decode(const char *data, ssize_t size)
 {
