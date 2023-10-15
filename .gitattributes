@@ -3,3 +3,4 @@
 *.dll filter=lfs diff=lfs merge=lfs -text
 
 *.cpp linguist-language=C++
+dist/* linguist-vendor=false
