@@ -1,9 +1,11 @@
-#include "Errors.h"
+#include "ErrorUtils.h"
 #include "LogWrapper.h"
 #include "WAVExtractor.h"
 #include <cstring>
 
 #define LOG_TAG                        "WAVExtractor"
+
+using namespace sdk_utils;
 
 #define CHANNEL_MASK_USE_CHANNEL_ORDER 0
 

@@ -9,6 +9,8 @@ extern "C" {
 
 #define LOG_TAG "AudioDecode"
 
+using namespace sdk_utils;
+
 class AudioDecode::Impl {
 private:
     AudioCodecID m_codecID;

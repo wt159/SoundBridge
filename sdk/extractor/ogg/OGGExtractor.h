@@ -43,20 +43,20 @@ struct Page {
 class OGGExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit OGGExtractor(DataSourceBase *source);
-    virtual status_t initCheck() { return m_initCheck; }
+    virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual ~OGGExtractor();
 
 private:
-    status_t init();
+    sdk_utils::status_t init();
 
 private:
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
-    status_t m_initCheck;
+    sdk_utils::status_t m_initCheck;
     bool m_validFormat;
     AudioSpec m_spec;
     std::vector<OGG::Page> m_pageVec;

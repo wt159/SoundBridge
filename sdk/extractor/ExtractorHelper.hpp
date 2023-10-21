@@ -3,7 +3,7 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "ByteUtils.h"
-#include "ExtractorApi.h"
+#include "ErrorUtils.h"
 #include <unordered_map>
 
 enum standardExtractors {
@@ -39,7 +39,7 @@ public:
     virtual ~ExtractorHelper() { }
 
     virtual const char *name() { return "<unspecified>"; }
-    virtual status_t initCheck()                      = 0;
+    virtual sdk_utils::status_t initCheck()                      = 0;
     virtual AudioSpec getAudioSpec()                  = 0;
     virtual AudioCodecID getAudioCodecID()            = 0;
     virtual AudioBuffer::AudioBufferPtr getMetaData() = 0;

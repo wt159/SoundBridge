@@ -3,6 +3,8 @@
 
 #define LOG_TAG "AudioDecodeProcess"
 
+using namespace sdk_utils;
+
 AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor)
     : m_extractor(extractor)
     , m_decode(nullptr)

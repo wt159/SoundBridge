@@ -4,6 +4,8 @@
 
 #define LOG_TAG "AACExtractor"
 
+using namespace sdk_utils;
+
 // Returns the sample rate based on the sampling frequency index
 uint32_t getSampleRate(const uint8_t sfIndex)
 {

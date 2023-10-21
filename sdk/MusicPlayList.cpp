@@ -7,6 +7,8 @@ namespace sdk {
 
 #define LOG_TAG "MusicPlayList"
 
+using namespace sdk_utils;
+
 MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, AudioSpec &devSpec)
     : m_callback(callback)
     , m_curIndex(0)

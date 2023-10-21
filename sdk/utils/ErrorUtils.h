@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <sys/types.h>
 
+namespace sdk_utils {
+
 #ifdef _WIN32
 typedef int status_t;
 #else
@@ -42,8 +44,12 @@ enum {
 #endif
     FDS_NOT_ALLOWED = (UNKNOWN_ERROR + 7),
     UNEXPECTED_NULL = (UNKNOWN_ERROR + 8),
+    ERROR_UNSUPPORTED = (UNKNOWN_ERROR + 9),
+    ERROR_MALFORMED = (UNKNOWN_ERROR + 10),
 };
 
 #ifdef _WIN32
 #define NO_ERROR 0L
 #endif
+
+} // namespace sdk_utils

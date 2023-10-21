@@ -4,6 +4,8 @@
 
 #define LOG_TAG "FLACExtractor"
 
+using namespace sdk_utils;
+
 FLACExtractor::FLACExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_metaBuf(nullptr)

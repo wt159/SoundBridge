@@ -15,12 +15,12 @@ private:
     size_t m_decSize;
     std::vector<AudioBuffer::AudioBufferPtr> m_decBufVec;
     AudioBuffer::AudioBufferPtr m_decBuf;
-    status_t m_initCheck;
+    sdk_utils::status_t m_initCheck;
 
 public:
     AudioDecodeProcess(ExtractorHelper *extractor);
     ~AudioDecodeProcess();
-    status_t initCheck() { return m_initCheck; }
+    sdk_utils::status_t initCheck() { return m_initCheck; }
     AudioBuffer::AudioBufferPtr getDecodeBuffer(void) { return m_decBuf; }
     AudioSpec getDecodeSpec(void) { return m_spec; }
 
@@ -28,5 +28,5 @@ protected:
     virtual void onAudioDecodeCallback(AudioDecodeSpec &out) override;
 
 private:
-    status_t init();
+    sdk_utils::status_t init();
 };

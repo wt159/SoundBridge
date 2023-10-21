@@ -5,6 +5,8 @@
 
 #define LOG_TAG "FileSource"
 
+using namespace sdk_utils;
+
 FileSource::FileSource(const char *filename)
     : m_file(filename, std::ios::binary)
     , m_offset(0)

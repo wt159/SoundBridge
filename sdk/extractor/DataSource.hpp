@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ByteUtils.h"
-#include "ExtractorApi.h"
+#include "ErrorUtils.h"
 #include <string>
 
 class DataSourceBase {
@@ -16,7 +16,7 @@ public:
 
     DataSourceBase() { }
 
-    virtual status_t initCheck() const = 0;
+    virtual sdk_utils::status_t initCheck() const = 0;
 
     // Returns the number of bytes read, or -1 on failure. It's not an error if
     // this returns zero; it just means the given offset is equal to, or
@@ -122,11 +122,10 @@ public:
         return false;
     }
 
-    // May return ERROR_UNSUPPORTED.
-    virtual status_t getSize(off64_t *size)
+    virtual sdk_utils::status_t getSize(off64_t *size)
     {
         *size = 0;
-        return ERROR_UNSUPPORTED;
+        return sdk_utils::UNKNOWN_ERROR;
     }
 
     virtual bool getUri(char * /*uriString*/, size_t /*bufferSize*/) { return false; }
@@ -135,7 +134,7 @@ public:
 
     virtual void close() {};
 
-    virtual status_t getAvailableSize(off64_t /*offset*/, off64_t * /*size*/) { return -1; }
+    virtual sdk_utils::status_t getAvailableSize(off64_t /*offset*/, off64_t * /*size*/) { return -1; }
 
 protected:
     virtual ~DataSourceBase() { }
@@ -153,7 +152,7 @@ public:
 
     virtual std::string toString() { return std::string("<unspecified>"); }
 
-    virtual status_t reconnectAtOffset(off64_t /*offset*/) { return ERROR_UNSUPPORTED; }
+    virtual sdk_utils::status_t reconnectAtOffset(off64_t /*offset*/) { return sdk_utils::ERROR_UNSUPPORTED; }
 
     ////////////////////////////////////////////////////////////////////////////
 

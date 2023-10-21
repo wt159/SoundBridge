@@ -2,32 +2,23 @@ cmake_minimum_required(VERSION 3.2)
 
 project(test)
 
-
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/common)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/device)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/resample)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/decode)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../extractor)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
+include_directories(${3RDPARTY_DIST_DIR}/include)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
 
 add_executable(TestLogWrapper TestLogWrapper.cpp)
 target_link_libraries(TestLogWrapper LogWrapper)
 
 add_executable(TestAudioDevice TestAudioDevice.cpp)
-target_link_libraries(TestAudioDevice LogWrapper AudioDevice)
+target_link_libraries(TestAudioDevice AudioDevice)
 
 add_executable(TestAudioResample TestAudioResample.cpp)
-target_link_libraries(TestAudioResample LogWrapper AudioResample)
+target_link_libraries(TestAudioResample AudioResample)
 
 add_executable(TestAudioDecode TestAudioDecode.cpp)
-target_link_libraries(TestAudioDecode LogWrapper AudioDecode)
+target_link_libraries(TestAudioDecode AudioDecode)
 
 add_executable(TestMusicPlayer TestMusicPlayer.cpp)
-target_link_libraries(TestMusicPlayer
-    sdk
-    LogWrapper
-    AudioDevice
-    AudioResample
-    AudioDecode
-    Extractor)
+target_link_libraries(TestMusicPlayer sdk)
+
+add_executable(TestFFmpegAudioDecode TestFFmpegAudioDecode.cpp)
+target_link_libraries(TestAudioDecode avformat avcodec avutil swresample)

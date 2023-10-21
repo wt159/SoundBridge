@@ -10,3 +10,5 @@ find_package(g3sinks REQUIRED)
 add_library(LogWrapper LogWrapper.cpp LogWrapper.h)
 
 target_link_libraries(LogWrapper G3::g3logrotate)
+
+target_include_directories(LogWrapper PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

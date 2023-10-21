@@ -177,20 +177,20 @@ struct FLACHeader {
 class FLACExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit FLACExtractor(DataSourceBase *source);
-    virtual status_t initCheck() { return m_initCheck; }
+    virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual ~FLACExtractor();
 
 private:
-    status_t init();
+    sdk_utils::status_t init();
 
 private:
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
-    status_t m_initCheck;
+    sdk_utils::status_t m_initCheck;
     bool m_validFormat;
     AudioSpec m_spec;
     FLACHeader m_header;

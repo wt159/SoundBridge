@@ -18,7 +18,7 @@
 
 class MP3Extractor : public ExtractorHelper, public NonCopyable {
 private:
-    status_t m_initCheck;
+    sdk_utils::status_t m_initCheck;
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
@@ -30,11 +30,11 @@ private:
 public:
     explicit MP3Extractor(DataSourceBase *source);
     ~MP3Extractor() = default;
-    virtual status_t initCheck() { return m_initCheck; }
+    virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
 
 private:
-    status_t init();
+    sdk_utils::status_t init();
 };
