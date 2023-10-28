@@ -21,4 +21,4 @@ add_executable(TestMusicPlayer TestMusicPlayer.cpp)
 target_link_libraries(TestMusicPlayer sdk)
 
 add_executable(TestFFmpegAudioDecode TestFFmpegAudioDecode.cpp)
-target_link_libraries(TestAudioDecode avformat avcodec avutil swresample)
+target_link_libraries(TestFFmpegAudioDecode avformat avcodec avutil swresample avdevice)

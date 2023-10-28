@@ -11,8 +11,8 @@ AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor)
     , m_decSize(0)
 {
     m_decBufVec.clear();
-    m_spec      = m_extractor->getAudioSpec();
-    m_codecID   = m_extractor->getAudioCodecID();
+    m_spec    = m_extractor->getAudioSpec();
+    m_codecID = m_extractor->getAudioCodecID();
     LOG_INFO(LOG_TAG, "m_codecID: %#x", m_codecID);
     m_initCheck = init();
     if (m_initCheck < OK) {
@@ -42,13 +42,13 @@ void AudioDecodeProcess::onAudioDecodeCallback(AudioDecodeSpec &out)
 status_t AudioDecodeProcess::init()
 {
     AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-    if(extPtr == nullptr) {
+    if (extPtr == nullptr) {
         LOGE("getMetaData failed");
         return INVALID_OPERATION;
     }
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         LOG_ERROR(LOG_TAG, "m_codecID is AUDIO_CODEC_ID_NONE, not need decode");
-        m_decBuf = extPtr;
+        m_decBuf  = extPtr;
         m_decSize = m_decBuf->size();
     } else {
         m_decode = std::make_shared<AudioDecode>(m_codecID, this);
@@ -72,8 +72,8 @@ status_t AudioDecodeProcess::init()
         }
 
         m_decBufVec.clear();
+        size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample / 1000;
+        m_spec.durationMs = m_decSize / bytesPreMs;
     }
-    size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample / 1000;
-    m_spec.durationMs = m_decSize / bytesPreMs;
     return NO_ERROR;
 }

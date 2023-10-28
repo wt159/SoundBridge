@@ -1,4 +1,5 @@
 #include "ExtractorFactory.h"
+#include "LogWrapper.h"
 #include "FileSource.h"
 #include "wav/WavExtractor.h"
 #include "aac/AACExtractor.h"
@@ -6,6 +7,9 @@
 #include "flac/FLACExtractor.h"
 #include "m4a/M4AExtractor.h"
 #include "ogg/OGGExtractor.h"
+#include "aiff/AIFFExtractor.h"
+
+#define LOG_TAG "ExtractorFactory"
 
 ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
                                                    const std::string &extensionName)
@@ -26,7 +30,10 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         return new M4AExtractor(source);
     case standardExtractors::OGG_EXTRACTOR:
         return new OGGExtractor(source);
+    case standardExtractors::AIFF_EXTRACTOR:
+        return new AIFFExtractor(source);
     default:
+        LOGW("Unknown extractor type");
         break;
     }
     return nullptr;

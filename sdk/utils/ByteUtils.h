@@ -17,6 +17,8 @@ uint32_t htonl(uint32_t x);
 uint64_t ntoh64(uint64_t x);
 uint64_t hton64(uint64_t x);
 
+long double ieee754_80bits_to_long_double(const uint8_t *ptr);
+
 void MakeFourCCString(uint32_t x, char *s);
 
 } // extern "C"

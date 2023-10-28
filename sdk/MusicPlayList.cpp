@@ -53,7 +53,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     ProcessProperties &processProperties = musicProperties->processProperties;
     fileProperties.fullPath              = musicPath;
     fileProperties.parseFileName();
-    LOG_INFO(LOG_TAG, "fineName      : %s", fileProperties.fileName.data());
+    LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
     std::shared_ptr<FileSource> source(new FileSource(musicPath.c_str()));
     if (source == nullptr) {
@@ -144,6 +144,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         m_selectMusicProperties = musicProperties;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
     }
+    LOGI("this music fished, m_curIndex=%d", m_curIndex.load());
 }
 void MusicPlayList::_next()
 {

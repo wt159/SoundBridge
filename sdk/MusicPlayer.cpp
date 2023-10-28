@@ -69,9 +69,9 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
     LOG_INFO(LOG_TAG, "Log init success");
 
-    m_audioDev         = std::make_shared<AudioDevice>(this);
+    m_audioDev = std::make_shared<AudioDevice>(this);
     m_audioDev->getDeviceSpec(m_devSpec);
-    m_musicList        = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
+    m_musicList = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
     LOG_INFO(LOG_TAG, "Impl construct");
 }
 
@@ -241,11 +241,9 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
     LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d", property->index);
     m_curMusicProperties = property;
-    m_workQueue.asyncRunTask([this, property]() {
-        m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
-        m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
-        m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
-    });
+    m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
+    m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
+    m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
 }
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
