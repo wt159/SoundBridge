@@ -182,6 +182,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         m_curMusicProperties->signalProperties.curPositionMs = pos;
         m_curMusicProperties->signalProperties.curDataOffset
             = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
+        m_listener->onMusicPlayerPositionChanged(pos);
     }
 }
 
