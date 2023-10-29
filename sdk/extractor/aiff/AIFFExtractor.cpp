@@ -130,8 +130,12 @@ status_t AIFFExtractor::init()
     }
 
     m_audioCodecID = AUDIO_CODEC_ID_NONE;
-
+#if 1
+    // TODO:  Not supported at the moment
+    return NO_INIT;
+#else
     return OK;
+#endif
 }
 
 void AIFFExtractor::commonChunk2AudioSpec(const AIFF::CommonChunk *cChunk, AudioSpec &audioSpec)
