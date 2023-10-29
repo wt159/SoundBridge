@@ -24,7 +24,7 @@ std::vector<std::string> recursiveFileSearch(
     while (iter != end) {
         std::string extensionName = iter->path().extension().string();
         if (fs::is_regular_file(*iter) && extractorMap.find(extensionName) != extractorMap.end()) {
-            fileVec.push_back(iter->path().string());
+            fileVec.push_back(iter->path().generic_string());
             LOG_DEBUG(LOG_TAG, "file name:%s", iter->path().filename().string().c_str());
         }
 

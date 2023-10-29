@@ -35,7 +35,7 @@ private:
     struct CompareTasks {
         bool operator()(const TaskWrapperPtr &t1, const TaskWrapperPtr &t2)
         {
-            return t1->runTimePointUs < t2->runTimePointUs;
+            return t1->runTimePointUs > t2->runTimePointUs;
         }
     };
     using TaskQueue
