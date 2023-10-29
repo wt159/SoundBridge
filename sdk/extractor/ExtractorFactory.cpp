@@ -8,6 +8,7 @@
 #include "m4a/M4AExtractor.h"
 #include "ogg/OGGExtractor.h"
 #include "aiff/AIFFExtractor.h"
+#include "asf/ASFExtractor.h"
 
 #define LOG_TAG "ExtractorFactory"
 
@@ -32,6 +33,8 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         return new OGGExtractor(source);
     case standardExtractors::AIFF_EXTRACTOR:
         return new AIFFExtractor(source);
+    case standardExtractors::ASF_EXTRACTOR:
+        return new ASFExtractor(source);
     default:
         LOGW("Unknown extractor type");
         break;
