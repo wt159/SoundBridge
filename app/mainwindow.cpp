@@ -29,7 +29,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(pushButton[0], SIGNAL(clicked()), this, SLOT(btn_previous_clicked()));
     connect(pushButton[1], SIGNAL(clicked()), this, SLOT(btn_play_clicked()));
     connect(pushButton[2], SIGNAL(clicked()), this, SLOT(btn_next_clicked()));
-
+    connect(pushButton[3], SIGNAL(clicked()), this, SLOT(btn_favorite_clicked()));
+    connect(pushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
+    connect(pushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
+    connect(pushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
     /* 媒体信号槽连接 */
     // connect(musicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
     //         SLOT(mediaPlayerStateChanged(QMediaPlayer::State)));
@@ -311,6 +314,26 @@ void MainWindow::btn_previous_clicked()
     musicPlayer->play();
 }
 
+void MainWindow::btn_favorite_clicked()
+{
+    // TODO:
+}
+
+void MainWindow::btn_playMode_clicked()
+{
+    // TODO:
+}
+
+void MainWindow::btn_playList_clicked()
+{
+    // TODO:
+}
+
+void MainWindow::btn_volume_clicked()
+{
+    // TODO:
+}
+
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
     qDebug() << "listWidgetCliked" << endl;
@@ -328,6 +351,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 void MainWindow::durationSliderReleased()
 {
     /* 设置媒体播放的位置 */
+    qDebug() << "durationSliderReleased:" << durationSlider->value() << endl;
     musicPlayer->setPosition(durationSlider->value() * 1000);
 }
 
@@ -348,9 +372,11 @@ void MainWindow::scanSongs()
         //     MediaObjectInfo info;
         //     /* 使用utf-8编码 */
         //     QString fileName
-        //         = QString::fromUtf8(files.at(i).fileName().replace(".mp3", "").toUtf8().data());
+        //         = QString::fromUtf8(files.at(i).fileName().replace(".mp3",
+        //         "").toUtf8().data());
         //     info.fileName = fileName + "\n" + fileName.split("-").at(1);
-        //     info.filePath = QString::fromUtf8(files.at(i).filePath().toUtf8().data());
+        //     info.filePath =
+        //     QString::fromUtf8(files.at(i).filePath().toUtf8().data());
         //     /* 媒体列表添加歌曲 */
         //     if (mediaPlaylist->addMedia(QUrl::fromLocalFile(info.filePath))) {
         //         /* 添加到容器数组里储存 */
@@ -387,7 +413,7 @@ void MainWindow::mediaPlayerInit()
 
 void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
 {
-    if(m_state == state)
+    if (m_state == state)
         return;
     switch (state) {
     case sdk::MusicPlayerState::StoppedState:

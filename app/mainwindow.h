@@ -112,6 +112,18 @@ private slots:
     /* 上一曲按钮点击 */
     void btn_previous_clicked();
 
+    /* 收藏按钮点击 */
+    void btn_favorite_clicked();
+
+    /* 播放模式按钮点击 */
+    void btn_playMode_clicked();
+
+    /* 播放列表按钮点击 */
+    void btn_playList_clicked();
+
+    /* 播放音量按钮点击 */
+    void btn_volume_clicked();
+
     /* 列表单击 */
     void listWidgetCliked(QListWidgetItem *);
 
