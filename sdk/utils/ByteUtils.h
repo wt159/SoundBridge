@@ -6,6 +6,8 @@ namespace sdk_utils {
 
 extern "C" {
 
+bool is_little_endian();
+
 uint16_t U16_AT(const uint8_t *ptr);
 uint32_t U32_AT(const uint8_t *ptr);
 uint64_t U64_AT(const uint8_t *ptr);

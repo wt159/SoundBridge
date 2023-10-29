@@ -72,7 +72,7 @@ status_t AIFFExtractor::init()
             cChunk->numChannels     = U16_AT(&temp[0]);
             cChunk->numSampleFrames = U32_AT(&temp[2]);
             cChunk->sampleSize      = U16_AT(&temp[6]);
-            cChunk->sampleRate = (uint32_t)ieee754_80bits_to_long_double(&temp[8]);
+            cChunk->sampleRate      = (uint32_t)ieee754_80bits_to_long_double(&temp[8]);
             m_formChunk.chunkVec.push_back(cChunk);
             LOGI("numChannels=%u", cChunk->numChannels);
             LOGI("numSampleFrames=%u", cChunk->numSampleFrames);
@@ -117,6 +117,7 @@ status_t AIFFExtractor::init()
             }
             offset    += soundDataSize;
             m_metaBuf  = sdChunk->soundData;
+            AudioBuffer2HostEndian(m_metaBuf, m_audioSpec);
         } else {
             if (invalidChunkCount++ > 15) {
                 m_validFormat = false;
@@ -130,12 +131,7 @@ status_t AIFFExtractor::init()
     }
 
     m_audioCodecID = AUDIO_CODEC_ID_NONE;
-#if 1
-    // TODO:  Not supported at the moment
-    return NO_INIT;
-#else
     return OK;
-#endif
 }
 
 void AIFFExtractor::commonChunk2AudioSpec(const AIFF::CommonChunk *cChunk, AudioSpec &audioSpec)
@@ -148,4 +144,26 @@ void AIFFExtractor::commonChunk2AudioSpec(const AIFF::CommonChunk *cChunk, Audio
     audioSpec.samples        = cChunk->numSampleFrames;
     audioSpec.durationMs     = (uint64_t)cChunk->numSampleFrames * 1000 / cChunk->sampleRate;
     LOGI("durationMs=%llu", audioSpec.durationMs);
+}
+
+void AIFFExtractor::AudioBuffer2HostEndian(AudioBuffer::AudioBufferPtr &audioBuf,
+                                           const AudioSpec &spec)
+{
+    // AIFF is big endian
+    if (!is_little_endian()) {
+        return;
+    }
+
+    for (size_t i = 0; i < audioBuf->size(); i += spec.bytesPerSample) {
+        if (spec.bytesPerSample == 2) {
+            uint16_t *p = (uint16_t *)(audioBuf->data() + i);
+            *p          = U16_AT((uint8_t *)(audioBuf->data() + i));
+        } else if (spec.bytesPerSample == 4) {
+            uint32_t *p = (uint32_t *)(audioBuf->data() + i);
+            *p          = U32_AT((uint8_t *)(audioBuf->data() + i));
+        } else if (spec.bytesPerSample == 8) {
+            uint64_t *p = (uint64_t *)(audioBuf->data() + i);
+            *p          = U64_AT((uint8_t *)(audioBuf->data() + i));
+        }
+    }
 }

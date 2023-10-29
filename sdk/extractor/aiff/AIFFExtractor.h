@@ -43,7 +43,7 @@ struct CommonChunk : public Chunk {
     uint16_t numChannels;
     uint32_t numSampleFrames;
     uint16_t sampleSize;
-    uint32_t sampleRate;    /* 80bits, 浮点 */
+    uint32_t sampleRate; /* 80bits, 浮点 */
 };
 
 struct SoundDataChunk : public Chunk {
@@ -66,6 +66,7 @@ public:
 private:
     sdk_utils::status_t init();
     void commonChunk2AudioSpec(const AIFF::CommonChunk *cChunk, AudioSpec &audioSpec);
+    void AudioBuffer2HostEndian(AudioBuffer::AudioBufferPtr &audioBuf, const AudioSpec &spec);
 
 private:
     DataSourceBase *m_dataSource;

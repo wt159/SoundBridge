@@ -5,9 +5,7 @@
 namespace sdk_utils {
 
 extern "C" {
-
 typedef char char_t;
-
 /**
  * @brief 用于进行判断主机字节序的联合体。
  * @note
@@ -82,6 +80,11 @@ uint64_t vx_ntohll(uint64_t xult_llong)
             | ((xult_llong & 0x000000FF00000000) >> 8) | ((xult_llong & 0x0000FF0000000000) >> 24)
             | ((xult_llong & 0x00FF000000000000) >> 40) | ((xult_llong) >> 56));
     return xult_llong;
+}
+
+bool is_little_endian()
+{
+    return X_IS_LITTLE_ENDIAN;
 }
 
 uint16_t U16_AT(const uint8_t *ptr)

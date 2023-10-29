@@ -3,7 +3,7 @@
 #include "WAVExtractor.h"
 #include <cstring>
 
-#define LOG_TAG                        "WAVExtractor"
+#define LOG_TAG "WAVExtractor"
 
 using namespace sdk_utils;
 
