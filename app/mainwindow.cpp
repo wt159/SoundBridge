@@ -139,6 +139,7 @@ void MainWindow::musicLayout()
 
     /* V0布局 */
     listWidget->setMinimumSize(310, 265);
+    listWidget->setFont(QFont("UTF-8"));
     hWidget[1]->setMinimumSize(310, 80);
     hWidget[1]->setMaximumHeight(80);
     label[0]->setMinimumSize(310, 95);
@@ -489,4 +490,12 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 
     /* 显示现在播放的时间 */
     label[2]->setText(mediaPosition);
+}
+
+void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
+{
+    listWidget->clear();
+    for (auto &index : list) {
+        listWidget->addItem(QString::fromStdString(index.name));
+    }
 }

@@ -12,6 +12,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <list>
 
 namespace sdk {
 
@@ -29,13 +30,19 @@ enum class MusicPlaybackMode {
     Random,
 };
 
+struct MusicIndex {
+    int index;
+    std::string name;
+};
+
 class MusicPlayerListener {
 public:
-    virtual ~MusicPlayerListener()                           = default;
-    virtual void onMusicPlayerStateChanged(MusicPlayerState) = 0;
-    virtual void onMusicPlayerListCurrentIndexChanged(int)   = 0;
-    virtual void onMusicPlayerDurationChanged(uint64_t)      = 0;
-    virtual void onMusicPlayerPositionChanged(uint64_t)      = 0;
+    virtual ~MusicPlayerListener()                                    = default;
+    virtual void onMusicPlayerStateChanged(MusicPlayerState)          = 0;
+    virtual void onMusicPlayerListCurrentIndexChanged(int)            = 0;
+    virtual void onMusicPlayerDurationChanged(uint64_t)               = 0;
+    virtual void onMusicPlayerPositionChanged(uint64_t)               = 0;
+    virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex>) = 0;
 };
 
 class MusicPlayer {

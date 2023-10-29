@@ -5,6 +5,7 @@
 #include "MusicPlayList.h"
 #include "MusicPlayer.h"
 #include "WorkQueue.hpp"
+#include <list>
 
 namespace sdk {
 
@@ -41,6 +42,7 @@ protected:
 protected:
     virtual void getAudioData(void *data, int len);
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property);
+    virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list);
 
 private:
     void updatePlayState(MusicPlayerState state);
@@ -53,6 +55,7 @@ private:
     MusicPlayerListener *m_listener;
     MusicPlayerState m_state;
     MusicPropertiesPtr m_curMusicProperties;
+    std::list<MusicIndex> m_musicListIndex;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
@@ -82,6 +85,7 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
     for (auto &path : musicList) {
         m_musicList->addMusic(path);
     }
+    m_musicList->updateList();
 }
 
 void MusicPlayer::Impl::play()
@@ -246,6 +250,20 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
     m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
 }
+
+void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
+{
+    LOG_INFO(LOG_TAG, "updateMusicList");
+    m_musicListIndex.clear();
+    for(auto &property : list) {
+        MusicIndex index;
+        index.index = property->index;
+        index.name  = property->fileProperties.fileName;
+        m_musicListIndex.push_back(index);
+    }
+    m_listener->onMusicPlayerMusicListChanged(m_musicListIndex);
+}
+
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
 {

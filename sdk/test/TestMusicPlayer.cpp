@@ -54,6 +54,10 @@ protected:
     {
         LOG_INFO(LOG_TAG, "onMusicPlayerPositionChanged : %llu", position);
     }
+    virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
+    {
+        LOG_INFO(LOG_TAG, "onMusicPlayerMusicListChanged : %d", list.size());
+    }
 };
 
 void TestCode()

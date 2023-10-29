@@ -39,6 +39,10 @@ void MusicPlayList::setCurrentIndex(int index)
 {
     m_workQueue->asyncRunTask([this, index]() { _setCurrentIndex(index); });
 }
+void MusicPlayList::updateList()
+{
+    m_workQueue->asyncRunTask(MusicPlayList::_updateList, this);
+}
 int MusicPlayList::getMusicCount()
 {
     return m_curIndex.load();
@@ -67,21 +71,20 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         LOG_ERROR(LOG_TAG, "createExtractor failed or initCheck failed");
         return;
     }
-    processProperties.extractor    = extractor;
+    processProperties.extractor = extractor;
 
-    std::shared_ptr<AudioDecodeProcess> decode(
-        new AudioDecodeProcess(extractor.get()));
-    if(decode == nullptr || decode->initCheck() != OK) {
+    std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+    if (decode == nullptr || decode->initCheck() != OK) {
         LOG_ERROR(LOG_TAG, "new AudioDecodeProcess failed or initCheck failed, %p", decode.get());
         return;
     }
 
-    signalProperties.curPositionMs = 0;
-    signalProperties.curDataOffset = 0;
-    signalProperties.spec          = decode->getDecodeSpec();
+    signalProperties.curPositionMs        = 0;
+    signalProperties.curDataOffset        = 0;
+    signalProperties.spec                 = decode->getDecodeSpec();
     AudioBuffer::AudioBufferPtr decBufPtr = decode->getDecodeBuffer();
-    signalProperties.dataSize      = decBufPtr->size();
-    signalProperties.durationMs    = signalProperties.spec.durationMs;
+    signalProperties.dataSize             = decBufPtr->size();
+    signalProperties.durationMs           = signalProperties.spec.durationMs;
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
     LOG_INFO(LOG_TAG, "dataSize      : %lld", signalProperties.dataSize);
 
@@ -105,9 +108,9 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         LOG_INFO(LOG_TAG, "resampleBufSize : %d", resampleBufSize);
 
         AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBufSize));
-        char *resampleBuf        = resampleBufPtr->data();
+        char *resampleBuf  = resampleBufPtr->data();
         char *decOutputBuf = decBufPtr->data();
-        size_t inOnceSize        = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
+        size_t inOnceSize  = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
         LOG_INFO(LOG_TAG, "inOnceSize : %d", inOnceSize);
         size_t inSize  = 0;
         size_t outSize = 0, outOnceSize = 0;
@@ -174,5 +177,11 @@ void MusicPlayList::_setCurrentIndex(int index)
     m_selectMusicProperties->signalProperties.curDataOffset = 0;
     m_selectMusicProperties->signalProperties.curPositionMs = 0;
     m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
+}
+void MusicPlayList::_updateList()
+{
+    if (m_musicListProperties.size() > 0) {
+        m_callback->updateMusicList(m_musicListProperties);
+    }
 }
 }

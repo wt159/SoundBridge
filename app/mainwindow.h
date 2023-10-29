@@ -102,6 +102,9 @@ protected:
     /* 媒体播放位置改变 */
     virtual void onMusicPlayerPositionChanged(uint64_t position);
 
+    /* 媒体列表改变 */
+    virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex> list);
+
 private slots:
     /* 播放按钮点击 */
     void btn_play_clicked();

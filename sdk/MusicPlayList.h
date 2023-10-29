@@ -3,9 +3,9 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
+#include "AudioDecodeProcess.h"
 #include "AudioResample.h"
 #include "ExtractorHelper.hpp"
-#include "AudioDecodeProcess.h"
 #include "FileSource.h"
 #include "NonCopyable.hpp"
 #include "WorkQueue.hpp"
@@ -30,16 +30,16 @@ struct FileProperties {
         size_t lastSlashPos = fullPath.find_last_of("/");
         if (lastSlashPos != std::string::npos) {
             // 提取文件目录
-            fileDir = fullPath.substr(0, lastSlashPos + 1);
+            fileDir           = fullPath.substr(0, lastSlashPos + 1);
             // 提取文件名
-            fileName = fullPath.substr(lastSlashPos + 1);
+            fileName          = fullPath.substr(lastSlashPos + 1);
             // 查找最后一个点的位置
             size_t lastDotPos = fileName.find_last_of(".");
             if (lastDotPos != std::string::npos) {
                 // 提取扩展名
                 extensionName = fileName.substr(lastDotPos);
                 // 去除扩展名后的文件名
-                fileName = fileName.substr(0, lastDotPos);
+                fileName      = fileName.substr(0, lastDotPos);
             }
         }
     }
@@ -54,7 +54,7 @@ struct SignalProperties {
 };
 
 struct ProcessProperties {
-   std::shared_ptr<DataSource> source;
+    std::shared_ptr<DataSource> source;
     std::shared_ptr<ExtractorHelper> extractor;
     std::shared_ptr<AudioDecodeProcess> decode;
     std::shared_ptr<AudioResample> resample;
@@ -74,8 +74,9 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 
 class MusicPlayListCallback {
 public:
-    virtual ~MusicPlayListCallback()                                 = default;
-    virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property) = 0;
+    virtual ~MusicPlayListCallback()                                    = default;
+    virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property)    = 0;
+    virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list) = 0;
 };
 
 class MusicPlayList : public NonCopyable {
@@ -97,6 +98,7 @@ public:
     void next();
     void pervious();
     void setCurrentIndex(int index);
+    void updateList();
     int getMusicCount();
 
 protected:
@@ -104,5 +106,6 @@ protected:
     void _next();
     void _pervious();
     void _setCurrentIndex(int index);
+    void _updateList();
 };
 }
