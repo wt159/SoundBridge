@@ -139,7 +139,7 @@ void MainWindow::musicLayout()
 
     /* V0布局 */
     listWidget->setMinimumSize(310, 265);
-    listWidget->setFont(QFont("UTF-8"));
+    listWidget->setFont(QFont("ANSI"));
     hWidget[1]->setMinimumSize(310, 80);
     hWidget[1]->setMaximumHeight(80);
     label[0]->setMinimumSize(310, 95);
@@ -496,6 +496,7 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
 {
     listWidget->clear();
     for (auto &index : list) {
-        listWidget->addItem(QString::fromStdString(index.name));
+        std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
+        listWidget->addItem(QString::fromStdString(name));
     }
 }
