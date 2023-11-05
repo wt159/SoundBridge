@@ -23,9 +23,15 @@ private:
     std::ofstream m_outFile;
     int m_initCheck;
     int m_audioStream;
+    char m_error[AV_ERROR_MAX_STRING_SIZE];
 
 public:
     int initCheck() const { return m_initCheck; }
+    char *getAVErrorString(int errnum)
+    {
+        av_strerror(errnum, m_error, sizeof(m_error));
+        return m_error;
+    }
     AudioDecode() = delete;
     AudioDecode(const string &fileName, const string &outFile)
         : m_formatCtx(nullptr)
@@ -40,6 +46,27 @@ public:
         int ret = -1;
         av_register_all();
         avformat_network_init();
+        av_log_set_level(AV_LOG_TRACE);
+        av_log_set_callback([](void *avcl, int level, const char *fmt, va_list vl) {
+            char line[1024];
+            vsnprintf(line, sizeof(line), fmt, vl);
+            switch (level) {
+            case AV_LOG_INFO:
+                cout << "INFO: " << line << endl;
+                break;
+            case AV_LOG_WARNING:
+                cout << "WARNING: " << line << endl;
+                break;
+            case AV_LOG_ERROR:
+                cout << "ERROR: " << line << endl;
+                break;
+            case AV_LOG_FATAL:
+                cout << "FATAL: " << line << endl;
+                break;
+            default:
+                break;
+            }
+        });
         m_formatCtx = avformat_alloc_context();
 
         if (avformat_open_input(&m_formatCtx, fileName.c_str(), nullptr, nullptr) != 0) {
@@ -82,6 +109,7 @@ public:
         cout << "sample_fmt: " << m_codecCtx->sample_fmt << endl;
         cout << "sample_rate: " << m_codecCtx->sample_rate << endl;
         cout << "frame_size: " << m_codecCtx->frame_size << endl;
+        cout << "codec_id: " << m_codecCtx->codec_id << endl;
 
         m_codec = avcodec_find_decoder(m_codecCtx->codec_id);
         if (m_codec == nullptr) {
@@ -137,21 +165,31 @@ public:
                 return;
             }
             else  */
-            if (ret < 0) {
-                cout << "av_read_frame failed, ret:" << ret << endl;
-                ret = 0;
+            if (ret <= 0) {
+                cout << "av_read_frame failed, ret:" << ret << " " << getAVErrorString(ret) << endl;
+                ret = -1;
                 break;
             }
-            ret = avcodec_decode_audio4(m_codecCtx, m_frame, &got_frame, m_pkt);
-            if (ret < 0) {
-                cout << "avcodec_decode_audio4 failed:" << endl;
+            if (m_pkt->size <= 0)
+                continue;
+            ret = avcodec_send_packet(m_codecCtx, m_pkt);
+            if (ret <= 0) {
+                cout << "avcodec_send_packet failed, ret:" << ret << " " << getAVErrorString(ret)
+                     << endl;
+                ret = -1;
                 break;
             }
-            num++;
-            if (got_frame > 0) {
-                gotFrameNum++;
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(m_codecCtx, m_frame);
+                if (ret < 0) {
+                    // LOG_ERROR(LOG_TAG, "avcodec_receive_frame failed %d:%s", ret,
+                    // getAVErrorString(ret));
+                    cout << "avcodec_receive_frame failed, ret:" << ret << " "
+                         << getAVErrorString(ret) << endl;
+                    break;
+                }
                 int bytesPerSample = av_get_bytes_per_sample(m_codecCtx->sample_fmt);
-                m_outFile.write((char *)m_frame->data[0], m_frame->linesize[0]);
+                // m_outFile.write((char *)m_frame->data[0], m_frame->linesize[0]);
                 for (int i = 0; i < m_frame->nb_samples; i++) {
                     for (int ch = 0; ch < m_codecCtx->channels; ch++) {
                         m_outFile.write((char *)m_frame->data[ch] + bytesPerSample * i,
@@ -159,6 +197,18 @@ public:
                     }
                 }
             }
+            num++;
+            // if (got_frame > 0) {
+            //     gotFrameNum++;
+            //     int bytesPerSample = av_get_bytes_per_sample(m_codecCtx->sample_fmt);
+            //     m_outFile.write((char *)m_frame->data[0], m_frame->linesize[0]);
+            //     for (int i = 0; i < m_frame->nb_samples; i++) {
+            //         for (int ch = 0; ch < m_codecCtx->channels; ch++) {
+            //             m_outFile.write((char *)m_frame->data[ch] + bytesPerSample * i,
+            //                             bytesPerSample);
+            //         }
+            //     }
+            // }
         }
         cout << "decode end, num:" << num << " gotFrameNum:" << gotFrameNum << endl;
         return ret;

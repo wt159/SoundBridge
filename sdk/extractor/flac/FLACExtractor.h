@@ -169,9 +169,48 @@ struct MetaDataBlock {
     } data;
 };
 
+enum AudioFrameHeaderBlockingStrategy {
+    FIXED_BLOCKING_STRATEGY    = 0,
+    VARIABLE_BLOCKING_STRATEGY = 1
+};
+
+struct AudioFrameHeader {
+    uint16_t syncCode         : 14;
+    uint8_t blockingReserved  : 1;
+    uint8_t blockingStrategy  : 1;
+    uint8_t samples           : 4;
+    uint8_t sampleRate        : 4;
+    uint8_t channelAssignment : 4;
+    uint8_t bitsPerSample     : 3;
+    uint8_t reserved          : 1;
+    uint8_t sampleRateCode    : 4;
+    uint8_t frameNumber[2];
+    uint8_t sampleNumber[3];
+    uint8_t blockSize[2];
+    uint8_t *data;
+    uint8_t crc8;
+};
+
+struct AudioSubFrame {
+    uint8_t type;
+    uint8_t wastedBits;
+    uint8_t *data;
+};
+
+struct AudioFrameFooter {
+    uint16_t crc16;
+};
+
+struct AudioFrame {
+    AudioFrameHeader header;
+    std::vector<AudioSubFrame> subFrameVec;
+    AudioFrameFooter footer;
+};
+
 struct FLACHeader {
     FileMark fileMark;
     std::vector<MetaDataBlock> metaDataBlockVec;
+    std::vector<AudioFrame> audioFrameVec;
 };
 
 class FLACExtractor : public ExtractorHelper, public NonCopyable {
