@@ -1,24 +1,28 @@
 # boost
 if(NOT BUILD_OPTION_BOOST)
-    set(BUILD_OPTION_BOOST ON)
+    option(BUILD_OPTION_BOOST "Build boost" OFF)
 endif()
 # ffmpeg
 if(NOT BUILD_OPTION_FFMPEG)
-    set(BUILD_OPTION_FFMPEG ON)
+    option(BUILD_OPTION_FFMPEG "Build ffmpeg" OFF)
+endif()
+# flac
+if(NOT BUILD_OPTION_FLAC)
+    option(BUILD_OPTION_FLAC "Build flac" ON)
 endif()
 # g3log
 if(NOT BUILD_OPTION_G3LOG)
-    set(BUILD_OPTION_G3LOG ON)
+    option(BUILD_OPTION_G3LOG "Build g3log" OFF)
 endif()
 # g3sinks
 if(NOT BUILD_OPTION_G3SINKS)
-    set(BUILD_OPTION_G3SINKS ON)
+    option(BUILD_OPTION_G3SINKS "Build g3sinks" OFF)
 endif()
 # zlib
 if(NOT BUILD_OPTION_ZLIB)
-    set(BUILD_OPTION_ZLIB ON)
+    option(BUILD_OPTION_ZLIB "Build zlib" OFF)
 endif()
 # SDL
 if(NOT BUILD_OPTION_SDL2)
-    set(BUILD_OPTION_SDL2 ON)
+    option(BUILD_OPTION_SDL2 "Build SDL2" OFF)
 endif()
