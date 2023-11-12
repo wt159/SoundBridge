@@ -69,7 +69,6 @@ status_t AudioDecodeProcess::init()
         m_decBuf  = extPtr;
         m_decSize = m_decBuf->size();
     } else if(m_codecID == AUDIO_CODEC_ID_FLAC) {
-        // TODO: add flac decode
         FLACDecode flacDecode(this);
         int ret = flacDecode.decode(extPtr);
         if (ret < 0) {

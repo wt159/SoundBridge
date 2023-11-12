@@ -22,6 +22,10 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
 FLACDecode::~FLACDecode()
 {
     if (m_decSpec.lineData != nullptr) {
+        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
+            delete[] m_decSpec.lineData[ch];
+            m_decSpec.lineData[ch] = nullptr;
+        }
         delete[] m_decSpec.lineData;
         m_decSpec.lineData = nullptr;
     }
@@ -72,18 +76,31 @@ int FLACDecode::decode(AudioBufferPtr &inBuf)
         m_decSpec.spec.numChannel     = this->get_channels();
         m_decSpec.spec.bitsPerSample  = this->get_bits_per_sample();
         m_decSpec.spec.bytesPerSample = m_decSpec.spec.bitsPerSample >> 3;
-        m_decSpec.spec.format = getAudioFormatByBitPreSample(m_decSpec.spec.bitsPerSample);
+        m_decSpec.spec.format         = getAudioFormatByBitPreSample(m_decSpec.spec.bitsPerSample);
         m_decSpec.spec.sampleRate     = this->get_sample_rate();
         m_decSpec.lineData            = new uint8_t *[m_decSpec.spec.numChannel];
         m_decSpec.lineSize            = new int[m_decSpec.spec.numChannel];
+        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
+            m_decSpec.lineData[ch] = nullptr;
+        }
         LOGI("numChannel: %d, bitsPerSample: %d, bytesPerSample: %d, sampleRate: %d, samples: %d",
              m_decSpec.spec.numChannel, m_decSpec.spec.bitsPerSample, m_decSpec.spec.bytesPerSample,
              m_decSpec.spec.sampleRate, m_decSpec.spec.samples);
     }
-    m_decSpec.spec.samples = frame->header.blocksize;
-    for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
-        m_decSpec.lineData[ch] = (uint8_t *)buffer[ch];
-        m_decSpec.lineSize[ch] = m_decSpec.spec.samples * m_decSpec.spec.bytesPerSample;
+    if (m_decSpec.spec.samples != frame->header.blocksize) {
+        m_decSpec.spec.samples = frame->header.blocksize;
+        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
+            if (m_decSpec.lineData[ch] != nullptr)
+                delete[] m_decSpec.lineData[ch];
+            m_decSpec.lineSize[ch] = m_decSpec.spec.samples * m_decSpec.spec.bytesPerSample;
+            m_decSpec.lineData[ch] = new uint8_t[m_decSpec.lineSize[ch]];
+        }
+    }
+    for (int i = 0; i < frame->header.blocksize; i++) {
+        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
+            memcpy(m_decSpec.lineData[ch] + i * m_decSpec.spec.bytesPerSample, buffer[ch] + i,
+                   m_decSpec.spec.bytesPerSample);
+        }
     }
     m_callback->onAudioDecodeCallback(m_decSpec);
     return status;
