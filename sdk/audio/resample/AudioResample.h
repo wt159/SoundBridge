@@ -1,6 +1,7 @@
 #pragma once
 #include <NonCopyable.hpp>
 #include <AudioCommon.hpp>
+#include "ErrorUtils.h"
 #include <memory>
 
 class AudioResample : public NonCopyable {
@@ -9,7 +10,7 @@ public:
     AudioResample(AudioSpec &in, AudioSpec &out);
     ~AudioResample();
     void init(AudioSpec &in, AudioSpec &out);
-
+    sdk_utils::status_t initCheck();
     /**
      * @brief Resampling function
      * 

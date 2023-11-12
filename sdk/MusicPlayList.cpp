@@ -51,7 +51,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
 {
     int ret                              = 0;
     MusicPropertiesPtr musicProperties   = std::make_shared<MusicProperties>();
-    musicProperties->index               = m_curIndex + 1;
+    musicProperties->index               = m_curIndex;
     FileProperties &fileProperties       = musicProperties->fileProperties;
     SignalProperties &signalProperties   = musicProperties->signalProperties;
     ProcessProperties &processProperties = musicProperties->processProperties;
@@ -98,7 +98,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         AudioSpec outSpec          = m_devSpec;
         inSpec.samples             = 1024;
         processProperties.resample = std::make_shared<AudioResample>(inSpec, outSpec);
-        if (processProperties.resample == nullptr) {
+        if (processProperties.resample == nullptr || processProperties.resample->initCheck() != OK) {
             LOG_ERROR(LOG_TAG, "new AudioResample failed");
             return;
         }

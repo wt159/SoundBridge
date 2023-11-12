@@ -30,15 +30,17 @@ private:
     AudioResampleSpec m_inSpec;
     AudioResampleSpec m_outSpec;
     char m_error[1024];
+    sdk_utils::status_t m_initCheck;
 
 public:
     Impl();
     ~Impl();
     void init(AudioSpec &in, AudioSpec &out);
+    sdk_utils::status_t initCheck() { return m_initCheck; }
     int resample(void *in, size_t inLen, void *out, size_t *outLen);
 
 private:
-    void AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out);
+    bool AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out);
     void getAVErrText(int err, char *errText, int errTextSize);
     void printAudioSpec(AudioResampleSpec &spec);
 };
@@ -53,6 +55,7 @@ AudioResample::Impl::Impl()
     , m_swrCtx(nullptr)
     , m_inSpec()
     , m_outSpec()
+    , m_initCheck(sdk_utils::UNKNOWN_ERROR)
 {
     LOG_INFO(LOG_TAG, "Impl::Impl()");
 }
@@ -105,10 +108,16 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
     });
     m_in = in;
     m_out = out;
-    AudioSpec2AudioResampleSpec(m_in, m_inSpec);
-    m_out.samples = m_inSpec.samples * m_out.sampleRate / m_inSpec.sampleRate;
-    AudioSpec2AudioResampleSpec(m_out, m_outSpec);
+    if(!AudioSpec2AudioResampleSpec(m_in, m_inSpec)) {
+        LOG_ERROR(LOG_TAG, "AudioSpec2AudioResampleSpec input failed");
+        return;
+    }
     printAudioSpec(m_inSpec);
+    m_out.samples = m_inSpec.samples * m_out.sampleRate / m_inSpec.sampleRate;
+    if(!AudioSpec2AudioResampleSpec(m_out, m_outSpec)) {
+        LOG_ERROR(LOG_TAG, "AudioSpec2AudioResampleSpec output failed");
+        return;
+    }
     printAudioSpec(m_outSpec);
     m_swrCtx = swr_alloc_set_opts(nullptr, m_outSpec.channelLayout, m_outSpec.sampleFmt,
         m_outSpec.sampleRate, m_inSpec.channelLayout, m_inSpec.sampleFmt, m_inSpec.sampleRate, 0,
@@ -139,6 +148,7 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
         return;
     }
     LOG_INFO(LOG_TAG, "ret: %d, m_outSpec.lineSize: %d", ret, m_outSpec.lineSize);
+    m_initCheck = sdk_utils::OK;
     m_isInit = true;
     LOG_INFO(LOG_TAG, "exit");
 }
@@ -180,8 +190,9 @@ int AudioResample::Impl::resample(void *in, size_t inLen, void *out, size_t *out
     return 0;
 }
 
-void AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out)
+bool AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out)
 {
+    bool ret = true;
     out.channelLayout = av_get_default_channel_layout(in.numChannel);
     out.channelNum = in.numChannel;
     out.sampleRate = in.sampleRate;
@@ -213,9 +224,11 @@ void AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResamp
     default:
         out.sampleFmt = AV_SAMPLE_FMT_NONE;
         LOG_ERROR(LOG_TAG, "unsupport format: %d", in.format);
+        ret = false;
         break;
     }
     out.bytesPerSample = in.numChannel * av_get_bytes_per_sample(out.sampleFmt);
+    return ret;
 }
 
 void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize) {
@@ -243,6 +256,11 @@ AudioResample::~AudioResample() { }
 void AudioResample::init(AudioSpec &in, AudioSpec &out)
 {
     m_impl->init(in, out);
+}
+
+sdk_utils::status_t AudioResample::initCheck()
+{
+    return m_impl->initCheck();
 }
 
 int AudioResample::resample(void *in, size_t inLen, void *out, size_t *outLen)

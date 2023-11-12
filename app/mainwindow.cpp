@@ -337,7 +337,7 @@ void MainWindow::btn_volume_clicked()
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
-    qDebug() << "listWidgetCliked" << endl;
+    qDebug() << "listWidgetCliked:" << listWidget->row(item) << endl;
     musicPlayer->stop();
     musicPlayer->setCurrentIndex(listWidget->row(item));
     musicPlayer->play();
@@ -436,7 +436,7 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 {
     if (-1 == index)
         return;
-
+    qDebug() << "onListCurIndex:" << index << endl;
     /* 设置列表正在播放的项 */
     listWidget->setCurrentRow(index);
 }
@@ -498,5 +498,6 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
         listWidget->addItem(QString::fromStdString(name));
+        qDebug() << "onMusicList: " << index.index << " " << name.c_str();
     }
 }
