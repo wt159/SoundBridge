@@ -1,4 +1,5 @@
 #include "AudioDecodeProcess.h"
+#include "FLACDecode.h"
 #include "LogWrapper.h"
 
 #define LOG_TAG "AudioDecodeProcess"
@@ -39,6 +40,22 @@ void AudioDecodeProcess::onAudioDecodeCallback(AudioDecodeSpec &out)
     m_decBufVec.push_back(buf);
 }
 
+void AudioDecodeProcess::mergeDecodeBuffer(AudioBufferPtr &outBuf,
+                                           std::vector<AudioBuffer::AudioBufferPtr> &inBufVec)
+{
+    size_t size = 0;
+    for (auto &buf : inBufVec) {
+        size += buf->size();
+    }
+    LOGI("mergeDecodeBuffer size: %llu", size);
+    outBuf = std::make_shared<AudioBuffer>(size);
+    off64_t offset = 0;
+    for (auto &buf : inBufVec) {
+        outBuf->setData(offset, buf->size(), buf->data());
+        offset += buf->size();
+    }
+}
+
 status_t AudioDecodeProcess::init()
 {
     AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
@@ -46,34 +63,40 @@ status_t AudioDecodeProcess::init()
         LOGE("getMetaData failed");
         return INVALID_OPERATION;
     }
+    LOG_INFO(LOG_TAG, "extractor buffer size(): %llu", extPtr->size());
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         LOG_ERROR(LOG_TAG, "m_codecID is AUDIO_CODEC_ID_NONE, not need decode");
         m_decBuf  = extPtr;
         m_decSize = m_decBuf->size();
+    } else if(m_codecID == AUDIO_CODEC_ID_FLAC) {
+        // TODO: add flac decode
+        FLACDecode flacDecode(this);
+        int ret = flacDecode.decode(extPtr);
+        if (ret < 0) {
+            LOG_ERROR(LOG_TAG, "decode failed");
+            return INVALID_OPERATION;
+        }
+        mergeDecodeBuffer(m_decBuf, m_decBufVec);
+        m_decBufVec.clear();
+        size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
+        m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     } else {
         m_decode = std::make_shared<AudioDecode>(m_codecID, this);
         if (m_decode == nullptr || m_decode->initCheck() != OK) {
             LOG_ERROR(LOG_TAG, "new AudioDecode failed or initCheck failed, %p", m_decode.get());
             return INVALID_OPERATION;
         }
-        LOG_INFO(LOG_TAG, "extractor buffer size(): %llu", extPtr->size());
         int ret = m_decode->decode(extPtr->data(), extPtr->size());
         if (ret < 0) {
             LOG_ERROR(LOG_TAG, "decode failed");
             return INVALID_OPERATION;
         }
 
-        LOG_INFO(LOG_TAG, "decode size : %llu", m_decSize);
-        m_decBuf       = std::make_shared<AudioBuffer>(m_decSize);
-        off64_t offset = 0;
-        for (auto &buf : m_decBufVec) {
-            m_decBuf->setData(offset, buf->size(), buf->data());
-            offset += buf->size();
-        }
+        mergeDecodeBuffer(m_decBuf, m_decBufVec);
 
         m_decBufVec.clear();
-        size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample / 1000;
-        m_spec.durationMs = m_decSize / bytesPreMs;
+        size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
+        m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     }
     return NO_ERROR;
 }

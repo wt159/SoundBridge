@@ -29,7 +29,7 @@ set(SDK_SOURCES MusicPlayList.cpp MusicPlayer.cpp)
 
 add_library(sdk ${SDK_SOURCES})
 
-target_link_libraries(sdk LogWrapper Extractor AudioDevice AudioDecode AudioResample)
+target_link_libraries(sdk Extractor AudioDevice AudioResample)
 
 target_include_directories(sdk PUBLIC ${SDK_ROOT_DIR})
 

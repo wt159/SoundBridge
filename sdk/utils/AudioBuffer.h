@@ -19,3 +19,5 @@ public:
     void setData(off64_t offset, size_t len, char *buffer);
     void getData(off64_t offset, size_t len, char *buffer);
 };
+
+using AudioBufferPtr = std::shared_ptr<AudioBuffer>;

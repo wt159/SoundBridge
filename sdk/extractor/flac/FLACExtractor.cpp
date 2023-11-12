@@ -51,25 +51,19 @@ status_t FLACExtractor::init()
             LOGI("isLastBlock: %d, type: %d, blockSize: %d", block.header.isLastBlock,
                  block.header.type, block.header.blockSize);
 
-            if (block.header.type >= PICTURE) {
-                LOGE("invalid type");
-                offset -= 4;
-                break;
-            }
+            // if (block.header.type >= PICTURE) {
+            //     LOGE("invalid type");
+            //     offset -= 4;
+            //     break;
+            // }
 
-            int size = block.header.blockSize - 4;
-            if (size > 0x100000) {
-                LOGE("block size is too large");
-                return NO_INIT;
-            }
-            uint8_t data[size];
+            int size = block.header.blockSize;
+            if (block.header.type == STREAMINFO) {
+                LOGD("block header type is STREAMINFO");
+                uint8_t data[size];
             if (m_dataSource->readAt(offset, data, size) < size) {
                 return NO_INIT;
             }
-            offset += size;
-
-            if (block.header.type == STREAMINFO) {
-                LOGD("block header type is STREAMINFO");
                 block.data.streamInfo.minBlockSize = ((data[0] & 0xff) << 8) | (data[1] & 0xff);
                 block.data.streamInfo.maxBlockSize = ((data[2] & 0xff) << 8) | (data[3] & 0xff);
                 block.data.streamInfo.minFrameSize
@@ -98,7 +92,7 @@ status_t FLACExtractor::init()
                 m_spec.bytesPerSample = m_spec.bitsPerSample >> 3;
                 m_spec.format         = getAudioFormatByBitPreSample(m_spec.bitsPerSample);
                 m_spec.samples        = block.data.streamInfo.totalSamples;
-                m_spec.durationMs     = m_spec.samples * 1000 / m_spec.sampleRate;
+                m_spec.durationMs     = ((uint64_t)m_spec.samples * 1000) / m_spec.sampleRate;
             } else if (block.header.type == PADDING) {
                 LOGD("block header type is PADDING");
             } else if (block.header.type == APPLICATION) {
@@ -111,14 +105,33 @@ status_t FLACExtractor::init()
                 LOGD("block header type is CUESHEET");
             } else if (block.header.type == PICTURE) {
                 LOGD("block header type is PICTURE");
+            } else {
+                LOGD("block header type is UNKNOWN");
             }
-
+            offset += size;
             m_header.metaDataBlockVec.push_back(block);
 
             if (block.header.isLastBlock) {
                 break;
             }
         }
+    }
+    {
+        // Audio Frame
+        uint8_t temp[4];
+        if (m_dataSource->readAt(offset, temp, 4) < 4) {
+            return NO_INIT;
+        }
+        AudioFrame frame;
+        frame.header.syncCode = ((temp[0] & 0xff) << 6) | ((temp[1] & 0xFC) >> 2);
+        frame.header.blockingStrategy = (temp[1] & 0x01);
+        frame.header.bsCode = (temp[2] & 0xf0) >> 4;
+        frame.header.srCode = (temp[2] & 0x0F);
+        frame.header.chMode = (temp[3] & 0xf0) >> 4;
+        frame.header.bpsCode = (temp[3] & 0x0e) >> 1;
+        LOGI("syncCode: %d, blockingStrategy: %d, bs_code: %d, sr_code: %d, chMode: %d, bpsCode: %d",
+             frame.header.syncCode, frame.header.blockingStrategy, frame.header.bsCode, frame.header.srCode,
+             frame.header.chMode, frame.header.bpsCode);
     }
 
     if (!m_validFormat) {
@@ -135,8 +148,8 @@ status_t FLACExtractor::init()
         return NO_MEMORY;
     }
 
-    LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d", m_spec.sampleRate, m_spec.numChannel,
-         m_spec.bytesPerSample);
-    LOGI("durationMs: %d", m_spec.durationMs);
+    LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d, samples:%d", m_spec.sampleRate, m_spec.numChannel,
+         m_spec.bytesPerSample, m_spec.samples);
+    LOGI("durationMs: %lu", m_spec.durationMs);
     return NO_ERROR;
 }

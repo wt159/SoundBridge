@@ -34,22 +34,22 @@ git clone git@github.com:wt159/SoundBridge.git
 
 第三方库一般是不用编译的，我这里是用mingw32编译器直接编译好的，在`SoundBridge/sdk/3rdparty/dist`目录下直接使用即可。
 
-如果本机编译器不是这个编译器，需要新建`toolchain.windows_xxx.cmake`(可以按照`toolchain.windows_mingw.cmake`修改),然后重新编译。
+如果本机编译器不是这个编译器，需要新建`toolchain.windows_xxx.cmake`(可以按照`toolchain.windows_x86_64_mingw.cmake`修改),然后重新编译。
 
 ```shell
 # 打开cmd
 cd SoundBridge/sdk/3rdparty
 # 新建build目录
 mkdir build && cd build
-# 修改 toolchain.windows_mingw.cmake编译工具链
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\toolchain.windows_mingw.cmake -G "MinGW Makefiles"
+# 修改 toolchain.windows_x86_64_mingw.cmake编译工具链
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake -G "MinGW Makefiles"
 ```
 
 #### soundBridge
 
 ```shell
 # 打开cmd
-cd SoundBridge/sdk/3rdparty
+cd SoundBridge
 # 新建build目录
 mkdir build && cd build
 # 修改 toolchain.windows_x86_64_mingw.cmake编译工具链

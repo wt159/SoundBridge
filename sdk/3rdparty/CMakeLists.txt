@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.2)
 
 project(3rdparty)
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_VERBOSE_MAKEFILE ON)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/utils.cmake)
 
 set(3RDPARTY_DIR ${CMAKE_CURRENT_LIST_DIR})
 set(3RDPARTY_INSTALL_DIR ${3RDPARTY_DIR}/dist/${CMAKE_TARGET_3RDPARTY_NAME})
@@ -76,6 +74,12 @@ if(BUILD_OPTION_FFMPEG STREQUAL "ON")
         generate_ffmpeg_files ALL
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
     )
+endif()
+
+# flac
+if(BUILD_OPTION_FLAC STREQUAL "ON")
+    set(FLAC_ROOT ${3RDPARTY_DIR}/flac-1.4.3)
+    add_subdirectory(${FLAC_ROOT})
 endif()
 
 # g3log

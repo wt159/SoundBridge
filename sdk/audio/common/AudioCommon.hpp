@@ -74,8 +74,8 @@ struct AudioSpec {
     AudioFormat format;
     int numChannel;
     int bitsPerSample;
-    int samples;
     int bytesPerSample;
+    uint64_t samples;
     uint64_t durationMs;
 
     AudioSpec()
@@ -83,8 +83,8 @@ struct AudioSpec {
         , format(AudioFormatUnknown)
         , numChannel(0)
         , bitsPerSample(0)
-        , samples(0)
         , bytesPerSample(0)
+        , samples(0)
         , durationMs(0)
     {
     }

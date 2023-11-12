@@ -26,6 +26,7 @@ public:
 
 protected:
     virtual void onAudioDecodeCallback(AudioDecodeSpec &out) override;
+    void mergeDecodeBuffer(AudioBufferPtr &outBuf, std::vector<AudioBuffer::AudioBufferPtr> &inBufVec);
 
 private:
     sdk_utils::status_t init();

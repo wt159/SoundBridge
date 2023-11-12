@@ -188,7 +188,7 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         ret = av_parser_parse2(m_parserCtx, m_ctx, &m_pkt->data, &m_pkt->size, inPtr, inSize,
                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret <= 0) {
-            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s", getAVErrorString(ret));
+            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s, rc:%d, srcSize:%lu", getAVErrorString(ret), ret, srcSize);
             ret = -1;
             goto err;
         }
