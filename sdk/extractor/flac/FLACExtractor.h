@@ -175,15 +175,15 @@ enum AudioFrameHeaderBlockingStrategy {
 };
 
 struct AudioFrameHeader {
-    uint16_t syncCode         : 14;
-    uint8_t blockingReserved  : 1;
-    uint8_t blockingStrategy  : 1;
-    uint8_t samples           : 4;
-    uint8_t sampleRate        : 4;
-    uint8_t channelAssignment : 4;
-    uint8_t bitsPerSample     : 3;
-    uint8_t reserved          : 1;
-    uint8_t sampleRateCode    : 4;
+    uint16_t syncCode        : 14;
+    uint8_t blockingReserved : 1;
+    uint8_t blockingStrategy : 1;
+    uint8_t bsCode           : 4;
+    uint8_t srCode           : 4;
+    uint8_t chMode           : 4;
+    uint8_t bpsCode          : 3;
+    uint8_t reserved         : 1;
+    uint8_t sampleRateCode   : 4;
     uint8_t frameNumber[2];
     uint8_t sampleNumber[3];
     uint8_t blockSize[2];

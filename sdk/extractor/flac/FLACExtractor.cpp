@@ -125,13 +125,13 @@ status_t FLACExtractor::init()
         AudioFrame frame;
         frame.header.syncCode = ((temp[0] & 0xff) << 6) | ((temp[1] & 0xFC) >> 2);
         frame.header.blockingStrategy = (temp[1] & 0x01);
-        frame.header.samples = (temp[2] & 0xf0) >> 4;
-        frame.header.sampleRate = (temp[2] & 0x0F);
-        frame.header.channelAssignment = (temp[3] & 0xf0) >> 4;
-        frame.header.bitsPerSample = (temp[3] & 0x0e) >> 1;
-        LOGI("syncCode: %d, blockingStrategy: %d, samples: %d, sampleRate: %d, channelAssignment: %d, bitsPerSample: %d",
-             frame.header.syncCode, frame.header.blockingStrategy, frame.header.samples, frame.header.sampleRate,
-             frame.header.channelAssignment, frame.header.bitsPerSample);
+        frame.header.bsCode = (temp[2] & 0xf0) >> 4;
+        frame.header.srCode = (temp[2] & 0x0F);
+        frame.header.chMode = (temp[3] & 0xf0) >> 4;
+        frame.header.bpsCode = (temp[3] & 0x0e) >> 1;
+        LOGI("syncCode: %d, blockingStrategy: %d, bs_code: %d, sr_code: %d, chMode: %d, bpsCode: %d",
+             frame.header.syncCode, frame.header.blockingStrategy, frame.header.bsCode, frame.header.srCode,
+             frame.header.chMode, frame.header.bpsCode);
     }
 
     if (!m_validFormat) {

@@ -244,7 +244,7 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
 
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
-    LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d", property->index);
+    LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d(%s)", property->index, property->fileProperties.fileName.data());
     m_curMusicProperties = property;
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);

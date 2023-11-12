@@ -1,4 +1,9 @@
-add_library(FLAC++
+if(BUILD_SHARED_LIBS)
+    set(BUILD_FLAGS SHARED)
+else()
+    set(BUILD_FLAGS STATIC)
+endif()
+add_library(FLAC++ ${BUILD_FLAGS}
     metadata.cpp
     stream_decoder.cpp
     stream_encoder.cpp
