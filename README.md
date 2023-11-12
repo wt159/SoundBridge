@@ -88,8 +88,6 @@ cmake --build .
 
 ### 待办
 
-* flac解码失败
-
 * m4a解码失败
 
 * ogg解码失败
