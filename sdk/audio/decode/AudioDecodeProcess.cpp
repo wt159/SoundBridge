@@ -28,7 +28,7 @@ void AudioDecodeProcess::onAudioDecodeCallback(AudioDecodeSpec &out)
     size_t size = out.spec.samples * out.spec.numChannel * out.spec.bytesPerSample;
     AudioBuffer::AudioBufferPtr buf = std::make_shared<AudioBuffer>(size);
     off64_t offset                  = 0;
-    for (int i = 0; i < out.spec.samples; i++) {
+    for (size_t i = 0; i < out.spec.samples; i++) {
         for (int ch = 0; ch < out.spec.numChannel; ch++) {
             buf->setData(offset, out.spec.bytesPerSample,
                          (char *)out.lineData[ch] + out.spec.bytesPerSample * i);

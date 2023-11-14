@@ -27,6 +27,9 @@ struct PageHeader {
     uint32_t checkSum;
     uint8_t numPageSegments;
     uint8_t segmentTable[PAGE_SEGMENT_NUM_MAX];
+    bool isNewPacket() { return headerType & HeaderType::newPacket; }
+    bool isFirstPage() { return headerType & HeaderType::firstPage; }
+    bool isLastPage() { return headerType & HeaderType::lastPage; }
 };
 
 struct PagePacket {

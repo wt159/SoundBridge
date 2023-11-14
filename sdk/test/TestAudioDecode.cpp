@@ -136,7 +136,7 @@ public:
 #if 0
         m_outFile.write((char *)out.lineData[0], out.lineSize[0]);
 #else
-        for (int i = 0; i < out.spec.samples; i++) {
+        for (uint64_t i = 0; i < out.spec.samples; i++) {
             for (int ch = 0; ch < out.spec.numChannel; ch++) {
                 m_outFile.write((char *)out.lineData[ch] + out.spec.bytesPerSample * i,
                                 out.spec.bytesPerSample);

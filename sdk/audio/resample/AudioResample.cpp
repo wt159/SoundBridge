@@ -236,7 +236,7 @@ void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize) 
  }
 
  void AudioResample::Impl::printAudioSpec(AudioResampleSpec &spec) {
-    LOG_INFO(LOG_TAG, "chL:%lld, ch:%d, Rate:%d, samples:%d, Fmt:%d, bytesPerSample:%d",
+    LOG_INFO(LOG_TAG, "chL:%lld, ch:%d, Rate:%d, samples:%llu, Fmt:%d, bytesPerSample:%d",
         spec.channelLayout, spec.channelNum, spec.sampleRate, spec.samples, spec.sampleFmt, spec.bytesPerSample);
   }
 
