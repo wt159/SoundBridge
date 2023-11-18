@@ -98,6 +98,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
         LOG_ERROR(LOG_TAG, "avcodec_find_decoder failed: %s", avcodec_get_name(m_avCodecID));
         return;
     }
+    LOG_INFO(LOG_TAG, "avcodec_find_decoder success: %s", avcodec_get_name(m_avCodecID));
     m_parserCtx = av_parser_init(m_codec->id);
     if (!m_parserCtx) {
         LOG_ERROR(LOG_TAG, "av_parser_init failed: %s", avcodec_get_name(m_avCodecID));
@@ -188,7 +189,7 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         ret = av_parser_parse2(m_parserCtx, m_ctx, &m_pkt->data, &m_pkt->size, inPtr, inSize,
                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret <= 0) {
-            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s, rc:%d, srcSize:%lu", getAVErrorString(ret), ret, srcSize);
+            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s, rc:%d, srcSize:%ld", getAVErrorString(ret), ret, srcSize);
             ret = -1;
             goto err;
         }

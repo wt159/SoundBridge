@@ -1,0 +1,14 @@
+prefix=/d/flushbonad/github/SoundBridge/sdk/3rdparty/build/../ffmpeg-4.4.4/../dist/windows_x86_64_gcc_debug
+exec_prefix=${prefix}
+libdir=/d/flushbonad/github/SoundBridge/sdk/3rdparty/build/../ffmpeg-4.4.4/../dist/windows_x86_64_gcc_debug/lib
+includedir=/d/flushbonad/github/SoundBridge/sdk/3rdparty/build/../ffmpeg-4.4.4/../dist/windows_x86_64_gcc_debug/include
+
+Name: libswscale
+Description: FFmpeg image rescaling library
+Version: 5.9.100
+Requires: 
+Requires.private: libavutil >= 56.70.100
+Conflicts:
+Libs: -L${libdir}  -lswscale 
+Libs.private: -lm -latomic
+Cflags: -I${includedir}

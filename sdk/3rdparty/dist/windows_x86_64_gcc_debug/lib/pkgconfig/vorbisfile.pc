@@ -1,0 +1,14 @@
+# libvorbisfile pkg-config source file
+
+prefix=D:/flushbonad/github/SoundBridge_fix_bug/SoundBridge/sdk/3rdparty/dist/windows_x86_64_gcc_debug
+exec_prefix=D:/flushbonad/github/SoundBridge_fix_bug/SoundBridge/sdk/3rdparty/dist/windows_x86_64_gcc_debug/bin
+libdir=D:/flushbonad/github/SoundBridge_fix_bug/SoundBridge/sdk/3rdparty/dist/windows_x86_64_gcc_debug/lib
+includedir=D:/flushbonad/github/SoundBridge_fix_bug/SoundBridge/sdk/3rdparty/dist/windows_x86_64_gcc_debug/include
+
+Name: vorbisfile
+Description: vorbisfile is a library that provides a convenient high-level API for decoding and basic manipulation of all Vorbis I audio streams
+Version: 1.3.7
+Requires.private: vorbis
+Conflicts:
+Libs: -L${libdir} -lvorbisfile
+Cflags: -I${includedir}

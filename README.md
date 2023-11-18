@@ -43,6 +43,8 @@ cd SoundBridge/sdk/3rdparty
 mkdir build && cd build
 # 修改 toolchain.windows_x86_64_mingw.cmake编译工具链
 cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake -G "MinGW Makefiles"
+# 编译
+cmake --build .
 ```
 
 #### soundBridge

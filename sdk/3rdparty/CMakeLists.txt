@@ -19,15 +19,6 @@ else()
     # return()
 endif()
 
-# option
-message(STATUS "Options:")
-message(STATUS "  BUILD_OPTION_BOOST:     ${BUILD_OPTION_BOOST}")
-message(STATUS "  BUILD_OPTION_FFMPEG:    ${BUILD_OPTION_FFMPEG}")
-message(STATUS "  BUILD_OPTION_G3LOG:     ${BUILD_OPTION_G3LOG}")
-message(STATUS "  BUILD_OPTION_G3SINKS:   ${BUILD_OPTION_G3SINKS}")
-message(STATUS "  BUILD_OPTION_ZLIB:      ${BUILD_OPTION_ZLIB}")
-message(STATUS "  BUILD_OPTION_SDL2:      ${BUILD_OPTION_SDL2}")
-
 # boost
 if(BUILD_OPTION_BOOST STREQUAL "ON")
     set(BOOST_ROOT ${3RDPARTY_DIR}/boost_1_81_0)
@@ -98,4 +89,14 @@ endif()
 # SDL
 if(BUILD_OPTION_SDL2 STREQUAL "ON")
     add_subdirectory(${3RDPARTY_DIR}/SDL-release-2.28.1)
+endif()
+
+# ogg
+if(BUILD_OPTION_OGG STREQUAL "ON")
+    add_subdirectory(${3RDPARTY_DIR}/ogg-1.3.5)
+endif()
+
+# vorbis
+if(BUILD_OPTION_VORBIS STREQUAL "ON")
+    add_subdirectory(${3RDPARTY_DIR}/vorbis-1.3.7)
 endif()

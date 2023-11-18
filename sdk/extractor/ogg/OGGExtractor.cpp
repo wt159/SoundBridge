@@ -3,6 +3,7 @@
 #include "OGGExtractor.h"
 #include "type_name.hpp"
 #include <cstring>
+#include <vector>
 
 #define LOG_TAG "OGGExtractor"
 
@@ -13,6 +14,7 @@ constexpr uint16_t kMaxCodecParameterNum = 15;
 
 OGGExtractor::OGGExtractor(DataSourceBase *source)
     : m_dataSource(source)
+    , m_audioCodecID(AUDIO_CODEC_ID_NONE)
     , m_metaBuf(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
@@ -83,51 +85,57 @@ status_t OGGExtractor::init()
         return NO_INIT;
     }
 
-    PagePacket *codecPkt = &(m_pageVec[0].packets[0]);
-    if (codecPkt->data->size() < 5) {
-        LOGE("codecPkt size error");
+    // find audio pkt
+    auto findAudioPkt = [this](PagePacket &pkt) {
+        bool isFound = false;
+        if (!memcmp(pkt.data->data(), "\177fLaC", 5)) {
+            m_audioCodecID = AUDIO_CODEC_ID_FLAC;
+            isFound        = true;
+        } else if (!memcmp(pkt.data->data(), "OpusHead", 8)) {
+            m_audioCodecID = AUDIO_CODEC_ID_OPUS;
+            isFound        = true;
+        } else if (!memcmp(pkt.data->data(), "\x01vorbis", 7)) {
+            m_audioCodecID = AUDIO_CODEC_ID_VORBIS;
+            isFound        = true;
+        } else if (!memcmp(pkt.data->data(), "Speex   ", 8)) {
+            m_audioCodecID = AUDIO_CODEC_ID_SPEEX;
+            isFound        = true;
+        } else if (!memcmp(pkt.data->data(), "CELT    ", 8)) {
+            m_audioCodecID = AUDIO_CODEC_ID_CELT;
+            isFound        = true;
+        } else if (!memcmp(pkt.data->data(), "PCM     ", 8)) {
+            m_audioCodecID = AUDIO_CODEC_ID_NONE;
+            isFound        = true;
+        }
+        return isFound;
+    };
+    int audioPktIdx         = -1;
+    bool isFound            = false;
+    uint32_t audioSerialNum = -1;
+    for (auto &page : m_pageVec) {
+        for (int i = 0; i < page.header.numPageSegments; i++) {
+            if (findAudioPkt(page.packets[i])) {
+                isFound = true;
+                audioSerialNum = page.header.serialNumber;
+                break;
+            }
+            if (audioPktIdx++ > kMaxCodecParameterNum) {
+                break;
+            }
+        }
+    }
+
+    if (!isFound) {
+        LOGE("can not find audio pkt");
         return NO_INIT;
     }
-
-    if (!memcmp(codecPkt->data->data(), "\177fLaC", 5)) {
-        m_audioCodecID = AUDIO_CODEC_ID_FLAC;
-    } else if (!memcmp(codecPkt->data->data(), "OpusHead", 8)) {
-        m_audioCodecID = AUDIO_CODEC_ID_OPUS;
-    } else if (!memcmp(codecPkt->data->data(), "\x01vorbis", 7)) {
-        m_audioCodecID = AUDIO_CODEC_ID_VORBIS;
-    } else if (!memcmp(codecPkt->data->data(), "Speex   ", 8)) {
-        m_audioCodecID = AUDIO_CODEC_ID_SPEEX;
-    } else if (!memcmp(codecPkt->data->data(), "CELT    ", 8)) {
-        m_audioCodecID = AUDIO_CODEC_ID_CELT;
-    } else if (!memcmp(codecPkt->data->data(), "PCM     ", 8)) {
-        m_audioCodecID = AUDIO_CODEC_ID_NONE;
-    } else {
-        LOGE("unknown codec id");
-        return NO_INIT;
-    }
-
-    uint32_t codecSerialNum = m_pageVec[0].header.serialNumber;
-    LOGD("codecSerialNum = %u", codecSerialNum);
-    uint64_t dataSize = 0;
-    std::vector<AudioBuffer::AudioBufferPtr> codecPktVec;
-    codecPktVec.clear();
-
-    for (auto &pg : m_pageVec) {
-        if (pg.header.serialNumber != codecSerialNum) {
-            continue;
-        }
-        for (auto &pkt : pg.packets) {
-            dataSize += pkt.data->size();
-            codecPktVec.push_back(pkt.data);
-        }
-    }
-    LOGD("dataSize = %llu", dataSize);
-
+    LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
+    off64_t dataSize = 0;
+    m_dataSource->getSize(&dataSize);
     m_metaBuf                = std::make_shared<AudioBuffer>(dataSize);
-    uint64_t offsetInMetaBuf = 0;
-    for (auto &pkt : codecPktVec) {
-        memcpy(m_metaBuf->data() + offsetInMetaBuf, pkt->data(), pkt->size());
-        offsetInMetaBuf += pkt->size();
+    if(m_dataSource->readAt(0, m_metaBuf->data(), dataSize) < dataSize) {
+        LOGE("read meta data failed");
+        return NO_INIT;
     }
 
     return OK;
