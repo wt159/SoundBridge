@@ -8,7 +8,7 @@ include(CMakePackageConfigHelpers)
 include(CTest)
 
 # Build options
-option(BUILD_SHARED_LIBS "Build shared library" OFF)
+option(BUILD_SHARED_LIBS "Build shared library" ON)
 if(APPLE)
     option(BUILD_FRAMEWORK "Build Framework bundle for OSX" OFF)
 endif()
@@ -82,16 +82,16 @@ set(OGG_SOURCES
     src/crctable.h
 )
 
-if(WIN32 AND BUILD_SHARED_LIBS)
-    list(APPEND OGG_SOURCES win32/ogg.def)
-endif()
+# if(WIN32 AND BUILD_SHARED_LIBS)
+#     list(APPEND OGG_SOURCES win32/ogg.def)
+# endif()
 
 if(BUILD_FRAMEWORK)
     set(BUILD_SHARED_LIBS TRUE)
 endif()
 
 add_library(ogg ${OGG_HEADERS} ${OGG_SOURCES})
-add_library(Ogg::ogg ALIAS ogg)
+# add_library(Ogg::ogg ALIAS ogg)
 target_include_directories(ogg PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>

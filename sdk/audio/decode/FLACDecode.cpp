@@ -96,7 +96,7 @@ int FLACDecode::decode(AudioBufferPtr &inBuf)
             m_decSpec.lineData[ch] = new uint8_t[m_decSpec.lineSize[ch]];
         }
     }
-    for (int i = 0; i < frame->header.blocksize; i++) {
+    for (uint32_t i = 0; i < frame->header.blocksize; i++) {
         for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
             memcpy(m_decSpec.lineData[ch] + i * m_decSpec.spec.bytesPerSample, buffer[ch] + i,
                    m_decSpec.spec.bytesPerSample);

@@ -3,27 +3,31 @@
 #include "ErrorUtils.h"
 #include <memory>
 
-struct AudioDecodeSpec
-{
+struct AudioDecodeSpec {
     AudioSpec spec;
     uint8_t **lineData;
     int *lineSize;
+
+    AudioDecodeSpec()
+        : lineData(nullptr)
+        , lineSize(nullptr)
+    {
+    }
 };
 
-class AudioDecodeCallback
-{
+class AudioDecodeCallback {
 public:
-    virtual ~AudioDecodeCallback() {}
+    virtual ~AudioDecodeCallback() { }
     virtual void onAudioDecodeCallback(AudioDecodeSpec &out) = 0;
 };
 
-class AudioDecode
-{
+class AudioDecode {
 public:
     AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback);
     ~AudioDecode();
     sdk_utils::status_t initCheck();
     int decode(const char *data, ssize_t size);
+
 private:
     class Impl;
     std::unique_ptr<Impl> m_impl;

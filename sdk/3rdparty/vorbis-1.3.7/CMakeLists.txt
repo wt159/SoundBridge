@@ -9,7 +9,7 @@ include(CheckIncludeFiles)
 include(CheckLibraryExists)
 
 # Build options
-option(BUILD_SHARED_LIBS "Build shared library" OFF)
+option(BUILD_SHARED_LIBS "Build shared library" ON)
 if(APPLE)
     option(BUILD_FRAMEWORK "Build Framework bundle for OSX" OFF)
 endif()
@@ -62,7 +62,7 @@ message(STATUS "Configuring ${PROJECT_NAME} ${PROJECT_VERSION}")
 check_library_exists(m floor "" HAVE_LIBM)
 
 # Find ogg dependency
-find_package(Ogg REQUIRED)
+# find_package(Ogg REQUIRED)
 
 add_subdirectory(lib)
 

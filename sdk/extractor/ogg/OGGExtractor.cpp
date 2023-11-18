@@ -130,26 +130,12 @@ status_t OGGExtractor::init()
         return NO_INIT;
     }
     LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
-    uint64_t dataSize = 0;
-    std::vector<AudioBuffer::AudioBufferPtr> codecPktVec;
-    codecPktVec.clear();
-
-    for (auto &pg : m_pageVec) {
-        if (pg.header.serialNumber != audioSerialNum) {
-            continue;
-        }
-        for (auto &pkt : pg.packets) {
-            dataSize += pkt.data->size();
-            codecPktVec.push_back(pkt.data);
-        }
-    }
-    LOGD("dataSize = %llu", dataSize);
-
+    off64_t dataSize = 0;
+    m_dataSource->getSize(&dataSize);
     m_metaBuf                = std::make_shared<AudioBuffer>(dataSize);
-    uint64_t offsetInMetaBuf = 0;
-    for (auto &pkt : codecPktVec) {
-        memcpy(m_metaBuf->data() + offsetInMetaBuf, pkt->data(), pkt->size());
-        offsetInMetaBuf += pkt->size();
+    if(m_dataSource->readAt(0, m_metaBuf->data(), dataSize) < dataSize) {
+        LOGE("read meta data failed");
+        return NO_INIT;
     }
 
     return OK;

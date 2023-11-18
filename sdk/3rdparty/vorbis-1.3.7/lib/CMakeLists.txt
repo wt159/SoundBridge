@@ -61,11 +61,11 @@ if(WIN32)
     list(APPEND VORBIS_SOURCES vorbisenc.c)
 endif()
 
-if(WIN32)
-    list(APPEND VORBIS_SOURCES ../win32/vorbis.def)
-    list(APPEND VORBISENC_SOURCES ../win32/vorbisenc.def)
-    list(APPEND VORBISFILE_SOURCES ../win32/vorbisfile.def)
-endif()
+# if(WIN32)
+#     list(APPEND VORBIS_SOURCES ../win32/vorbis.def)
+#     list(APPEND VORBISENC_SOURCES ../win32/vorbisenc.def)
+#     list(APPEND VORBISFILE_SOURCES ../win32/vorbisfile.def)
+# endif()
 
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -106,7 +106,7 @@ if (NOT BUILD_FRAMEWORK)
     )
 
     target_link_libraries(vorbis
-        PUBLIC Ogg::ogg
+        PUBLIC ogg
         PRIVATE $<$<BOOL:${HAVE_LIBM}>:m>
     )
     target_link_libraries(vorbisenc PUBLIC vorbis)
