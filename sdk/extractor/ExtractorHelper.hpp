@@ -30,6 +30,7 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
     { ".aiff", AIFF_EXTRACTOR },
     { ".asf", ASF_EXTRACTOR },
     { ".wma", ASF_EXTRACTOR },
+    { ".amr", ASF_EXTRACTOR },
     { ".opus", OPUS_EXTRACTOR }
 };
 // clang-format on
