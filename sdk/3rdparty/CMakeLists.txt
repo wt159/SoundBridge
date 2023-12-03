@@ -7,6 +7,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/utils.cmake)
 set(3RDPARTY_DIR ${CMAKE_CURRENT_LIST_DIR})
 set(3RDPARTY_INSTALL_DIR ${3RDPARTY_DIR}/dist/${CMAKE_TARGET_3RDPARTY_NAME})
 set(CMAKE_INSTALL_PREFIX ${3RDPARTY_INSTALL_DIR})
+set(INSTALL_DIR ${CMAKE_TARGET_3RDPARTY_NAME})
 message(STATUS "3RDPARTY_DIR: ${3RDPARTY_DIR}")
 message(STATUS "3RDPARTY_INSTALL_DIR: ${3RDPARTY_INSTALL_DIR}")
 include(${CMAKE_CURRENT_LIST_DIR}/build_option.cmake)
@@ -41,6 +42,7 @@ endif()
 
 # ffmpeg
 if(BUILD_OPTION_FFMPEG STREQUAL "ON")
+    message(STATUS "ffmpeg build start...")
     # 执行bash命令检查是否安装
     execute_process(
         COMMAND bash -c "echo 'Bash is installed.'"
@@ -56,19 +58,25 @@ if(BUILD_OPTION_FFMPEG STREQUAL "ON")
     endif()
     set(FFMPEG_ROOT ${3RDPARTY_DIR}/ffmpeg-4.4.4)
     set(FFMPEG_BUILD_SCRIPT_DEP "${FFMPEG_ROOT}/build.sh")
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
-        COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
-        DEPENDS ${FFMPEG_BUILD_SCRIPT_DEP}
-    )
-    add_custom_target(
-        generate_ffmpeg_files ALL
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
-    )
+    message(STATUS ${FFMPEG_BUILD_SCRIPT_DEP})
+    # add_custom_command(
+    #     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
+    #     COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
+    #     DEPENDS ${FFMPEG_BUILD_SCRIPT_DEP}
+    # )
+    # add_custom_target(
+    #     generate_ffmpeg_files ALL
+    #     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
+    # )
+    execute_process(
+            COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
+            COMMAND_ECHO STDOUT
+        )
 endif()
 
 # flac
 if(BUILD_OPTION_FLAC STREQUAL "ON")
+    message(STATUS "flac build start...")
     set(FLAC_ROOT ${3RDPARTY_DIR}/flac-1.4.3)
     add_subdirectory(${FLAC_ROOT})
 endif()

@@ -44,7 +44,6 @@ public:
         , m_audioStream(-1)
     {
         int ret = -1;
-        av_register_all();
         avformat_network_init();
         av_log_set_level(AV_LOG_TRACE);
         av_log_set_callback([](void *avcl, int level, const char *fmt, va_list vl) {
@@ -157,7 +156,7 @@ public:
         // 6，解码数据包，调用avcodec_decode_audio3()
         // 7，将解码后的数据返回
         cout << "decode start" << endl;
-        int ret = 0, got_frame = 0;
+        int ret = 0/* , got_frame = 0 */;
         size_t num = 0, gotFrameNum = 0;
         while (1) {
             ret = av_read_frame(m_formatCtx, m_pkt);

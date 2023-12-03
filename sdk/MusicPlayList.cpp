@@ -25,7 +25,7 @@ MusicPlayList::~MusicPlayList() { }
 void MusicPlayList::addMusic(const std::string &musicPath)
 {
     LOG_INFO(LOG_TAG, "addMusic : %s", musicPath.data());
-    m_workQueue->asyncRunTask(MusicPlayList::_addMusic, this, musicPath);
+    m_workQueue->asyncRunTask(&MusicPlayList::_addMusic, this, musicPath);
 }
 void MusicPlayList::next()
 {
@@ -41,7 +41,7 @@ void MusicPlayList::setCurrentIndex(int index)
 }
 void MusicPlayList::updateList()
 {
-    m_workQueue->asyncRunTask(MusicPlayList::_updateList, this);
+    m_workQueue->asyncRunTask(&MusicPlayList::_updateList, this);
 }
 int MusicPlayList::getMusicCount()
 {

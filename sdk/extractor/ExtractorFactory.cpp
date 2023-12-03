@@ -1,7 +1,7 @@
 #include "ExtractorFactory.h"
 #include "LogWrapper.h"
 #include "FileSource.h"
-#include "wav/WavExtractor.h"
+#include "wav/WAVExtractor.h"
 #include "aac/AACExtractor.h"
 #include "mp3/MP3Extractor.h"
 #include "flac/FLACExtractor.h"

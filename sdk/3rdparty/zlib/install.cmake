@@ -25,7 +25,7 @@ install(
     # 静态库
     ARCHIVE DESTINATION lib
     # 动态库
-    LIBRARY DESTINATION bin
+    LIBRARY DESTINATION lib
     # 可执行程序
     RUNTIME DESTINATION bin)
 

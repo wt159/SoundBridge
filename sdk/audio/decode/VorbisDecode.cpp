@@ -1,6 +1,7 @@
 #include "LogWrapper.h"
 #include "VorbisDecode.h"
 #include <cmath>
+#include <cstring>
 
 #define LOG_TAG "VorbisDecode"
 

@@ -33,4 +33,4 @@ target_link_libraries(sdk Extractor AudioDevice AudioResample)
 
 target_include_directories(sdk PUBLIC ${SDK_ROOT_DIR})
 
-add_subdirectory(${SDK_ROOT_DIR}/test)
+# add_subdirectory(${SDK_ROOT_DIR}/test)

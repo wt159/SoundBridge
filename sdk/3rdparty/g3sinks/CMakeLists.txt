@@ -35,10 +35,10 @@ set(G3LOG_INCLUDE_DIRS ${3RDPARTY_DIR}/g3log/src ${CMAKE_CURRENT_BINARY_DIR}/../
 # endif()
 
 find_package(Boost REQUIRED COMPONENTS filesystem system)
-find_package(g3log REQUIRED)
-find_package(zlib REQUIRED)
-include_directories(${BOOST_INCLUDE_DIRS})
-include_directories(${G3LOG_INCLUDE_DIRS})
+# find_package(g3log REQUIRED)
+# find_package(zlib REQUIRED)
+# include_directories(${BOOST_INCLUDE_DIRS})
+# include_directories(${G3LOG_INCLUDE_DIRS})
 message("g3log library: ${G3LOG_LIBRARY}")
 message("g3log include should be: ${G3LOG_INCLUDE_DIRS}")
 

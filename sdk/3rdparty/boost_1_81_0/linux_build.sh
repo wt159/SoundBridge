@@ -45,7 +45,7 @@ fi
 
 echo "boost_build: b2"
 # --build-type=complete variant=release threading=multi link=shared runtime-link=shared
-./b2 -j "$max_threads" \
+./b2 cxxflags="--std=gnu++11" -j "$max_threads" \
     --build-dir="$build_dir" --prefix="$prefix" \
     --without-atomic \
     --without-chrono \

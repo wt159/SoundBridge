@@ -57,7 +57,7 @@ if exist %boost_dir%/b2.exe (
 
 echo boost_build: b2
 @REM --build-type=complete variant=release threading=multi link=shared runtime-link=shared
-b2.exe -j %max_threads% ^
+b2.exe cxxflags="--std=gnu++11" -j %max_threads% ^
     --build-dir=%build_dir% --prefix=%prefix% ^
     --without-atomic ^
     --without-chrono ^

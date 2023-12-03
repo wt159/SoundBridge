@@ -11,7 +11,6 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
     , m_decSpec()
     , m_decOffset(0)
 {
-    memset(&m_decSpec, 0, sizeof(m_decSpec));
     ::FLAC__StreamDecoderInitStatus init_status = this->init();
     if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
         LOGE("initializing decoder: %s", FLAC__StreamDecoderInitStatusString[init_status]);
