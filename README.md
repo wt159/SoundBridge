@@ -28,25 +28,9 @@ git clone git@github.com:wt159/SoundBridge.git
 
 ## 编译
 
+[**注意第一次编译请先编译sdk/3rdparty目录下的依赖库，点击跳转**](sdk/3rdparty/Readme.md)
+
 ### windows
-
-#### 3rdparty
-
-第三方库一般是不用编译的，我这里是用mingw32编译器直接编译好的，在`SoundBridge/sdk/3rdparty/dist`目录下直接使用即可。
-
-如果本机编译器不是这个编译器，需要新建`toolchain.windows_xxx.cmake`(可以按照`toolchain.windows_x86_64_mingw.cmake`修改),然后重新编译。
-
-```shell
-# 打开cmd
-cd SoundBridge/sdk/3rdparty
-# 新建build目录
-mkdir build && cd build
-# 修改 toolchain.windows_x86_64_mingw.cmake编译工具链
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake -G "MinGW Makefiles"
-# 编译
-cmake --build .
-cmake --install .
-```
 
 #### soundBridge
 
@@ -63,34 +47,20 @@ cmake --build .
 
 ### Linux
 
-#### 3rdparty
-
-第三方库一般是不用编译的，我这里是用gcc编译器直接编译好的，在`SoundBridge/sdk/3rdparty/dist`目录下直接使用即可。
-
-如果本机编译器不是这个编译器，需要新建`toolchain.linux_xxx.cmake`(可以按照`toolchain.linux_x86_64_gcc.cmake`修改),然后重新编译。
-
-```shell
-cd SoundBridge/sdk/3rdparty
-mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -G "Unix Makefiles"
-cmake --build .
-cmake --install .
-```
-
 #### soundBridge
 
 ```shell
-# 打开cmd
+# 打开bash
 cd SoundBridge
 # 新建build目录
 mkdir build && cd build
-# 修改 toolchain.windows_x86_64_mingw.cmake编译工具链
+# 指定编译工具链
 cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -G "Unix Makefiles"
 # 编译
 cmake --build .
 ```
 
-### 嵌入式Linux
+### Embedded_Linux
 
 待完成
 
