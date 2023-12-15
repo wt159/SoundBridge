@@ -31,12 +31,22 @@ if(BUILD_OPTION_BOOST STREQUAL "ON")
             COMMAND_ECHO STDOUT
         )
     else()
-        set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/linux_build.sh")
-        execute_process(
-            COMMAND bash ${BOOST_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME}  ${INSTALL_DIR}
-            COMMAND_ECHO STDOUT
-        )
-    endif()
+        if(CMAKE_TARGET_SYSTEM_PROCESSOR STREQUAL "x86_64")
+            set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/linux_build.sh")
+            execute_process(
+                COMMAND bash ${BOOST_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME}  ${INSTALL_DIR}
+                COMMAND_ECHO STDOUT
+            )
+        elseif(CMAKE_TARGET_SYSTEM_PROCESSOR STREQUAL "arm_gnueabihf")
+            set(BOOST_BUILD_SCRIPT_DEP "${BOOST_ROOT}/build_linux_arm.sh")
+            execute_process(
+                COMMAND bash ${BOOST_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME}  ${INSTALL_DIR}
+                COMMAND_ECHO STDOUT
+            )
+        else()
+            message(FATAL_ERROR "${CMAKE_TARGET_SYSTEM_PROCESSOR} error")
+        endif()
+    endif() #build_linux_arm
 endif()
 
 
@@ -57,21 +67,22 @@ if(BUILD_OPTION_FFMPEG STREQUAL "ON")
         message(FATAL_ERROR "Bash is not installed. Please install bash and try again.")
     endif()
     set(FFMPEG_ROOT ${3RDPARTY_DIR}/ffmpeg-4.4.4)
-    set(FFMPEG_BUILD_SCRIPT_DEP "${FFMPEG_ROOT}/build.sh")
-    message(STATUS ${FFMPEG_BUILD_SCRIPT_DEP})
-    # add_custom_command(
-    #     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
-    #     COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
-    #     DEPENDS ${FFMPEG_BUILD_SCRIPT_DEP}
-    # )
-    # add_custom_target(
-    #     generate_ffmpeg_files ALL
-    #     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg_generated_files.txt
-    # )
-    execute_process(
-            COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
-            COMMAND_ECHO STDOUT
-        )
+    
+    if(CMAKE_TARGET_SYSTEM_PROCESSOR STREQUAL "arm_gnueabihf")
+        set(FFMPEG_BUILD_SCRIPT_DEP "${FFMPEG_ROOT}/build_linux_arm.sh")
+        message(STATUS ${FFMPEG_BUILD_SCRIPT_DEP})
+        execute_process(
+                COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
+                COMMAND_ECHO STDOUT
+            )
+    else()
+        set(FFMPEG_BUILD_SCRIPT_DEP "${FFMPEG_ROOT}/build.sh")
+        message(STATUS ${FFMPEG_BUILD_SCRIPT_DEP})
+        execute_process(
+                COMMAND bash ${FFMPEG_BUILD_SCRIPT_DEP} ${CMAKE_TARGET_SYSTEM_NAME} ${CMAKE_TARGET_SYSTEM_PROCESSOR} ${CMAKE_TARGET_TOOLCHAIN_NAME} ${INSTALL_DIR}
+                COMMAND_ECHO STDOUT
+            )
+    endif()
 endif()
 
 # flac

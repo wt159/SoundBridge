@@ -40,4 +40,12 @@ Ubuntu下编译需要安装一些依赖：
 
 ## Embedded_linux
 
-暂无
+* imx6ull linux arm-linux-gnueabihf
+
+```shell
+cd SoundBridge/sdk/3rdparty
+mkdir arm_build && cd arm_build
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake -G "Unix Makefiles"
+cmake --build .
+cmake --install .
+```
