@@ -45,7 +45,7 @@ Ubuntu下编译需要安装一些依赖：
 ```shell
 cd SoundBridge/sdk/3rdparty
 mkdir arm_build && cd arm_build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake -G "Unix Makefiles"
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DBUILD_OPTION_G3LOG=OFF -DBUILD_OPTION_G3SINKS=OFF -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake -G "Unix Makefiles"
 cmake --build .
 cmake --install .
 ```
