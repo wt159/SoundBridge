@@ -75,7 +75,7 @@ status_t FLACExtractor::init()
                 block.data.streamInfo.channels = ((data[12] & 0x0e) >> 1) + 1;
                 block.data.streamInfo.bitsPerSample
                     = (((data[12] & 0x01) << 4) | ((data[13] & 0xff) >> 4)) + 1;
-                block.data.streamInfo.totalSamples = ((data[13] & 0x0f) << 32)
+                block.data.streamInfo.totalSamples = ((uint64_t)(data[13] & 0x0f) << 32)
                     | ((data[14] & 0xff) << 24) | ((data[15] & 0xff) << 16)
                     | ((data[16] & 0xff) << 8) | (data[17] & 0xff);
                 memcpy(block.data.streamInfo.md5, &data[18], 16);
@@ -139,7 +139,7 @@ status_t FLACExtractor::init()
     }
     m_audioCodecID = AUDIO_CODEC_ID_FLAC;
 
-    ssize_t fileSize = 0;
+    off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
     fileSize -= offset;
     m_metaBuf = std::make_shared<AudioBuffer>(fileSize);

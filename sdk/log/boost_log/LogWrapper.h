@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+#define CHECK(x)       assert(x)
+
 enum logLevel
 {
     INFO,
@@ -16,7 +18,7 @@ enum logLevel
 class LogWrapper : NonCopyable {
 private:
     class Impl;
-    std::unique_ptr<Impl> m_impl;
+    std::shared_ptr<Impl> m_impl;
     static std::unique_ptr<LogWrapper> m_staticLog;
 
 public:
@@ -28,7 +30,7 @@ public:
     void log(int level, const char *tag, const char* format, ...);
 
 private:
-    LogWrapper() : m_impl(nullptr) {}
+    LogWrapper() {}
 public:
     ~LogWrapper() = default;
 };

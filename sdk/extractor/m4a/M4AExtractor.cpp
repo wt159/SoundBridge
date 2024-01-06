@@ -83,7 +83,7 @@ status_t M4AExtractor::init()
         }
     }
 #else
-    ssize_t bufSize = 0;
+    off64_t bufSize = 0;
     m_dataSource->getSize(&bufSize);
     m_metaBuf       = std::make_shared<AudioBuffer>(bufSize);
     if (m_dataSource->readAt(0, m_metaBuf->data(), bufSize) < bufSize) {

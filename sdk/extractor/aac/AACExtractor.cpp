@@ -71,7 +71,7 @@ status_t AACExtractor::init()
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
     
-    ssize_t fileSize = 0;
+    off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
     m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
     if (m_dataSource->readAt(0, m_metaBuf->data(), fileSize) < fileSize) {

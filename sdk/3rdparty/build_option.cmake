@@ -1,10 +1,10 @@
 # boost
 if(NOT BUILD_OPTION_BOOST)
-    option(BUILD_OPTION_BOOST "Build boost" ON)
+    option(BUILD_OPTION_BOOST "Build boost" OFF)
 endif()
 # ffmpeg
 if(NOT BUILD_OPTION_FFMPEG)
-    option(BUILD_OPTION_FFMPEG "Build ffmpeg" ON)
+    option(BUILD_OPTION_FFMPEG "Build ffmpeg" OFF)
 endif()
 # flac
 if(NOT BUILD_OPTION_FLAC)
@@ -16,7 +16,7 @@ if(NOT BUILD_OPTION_G3LOG)
 endif()
 # g3sinks
 if(NOT BUILD_OPTION_G3SINKS)
-    option(BUILD_OPTION_G3SINKS "Build g3sinks" ON)
+    option(BUILD_OPTION_G3SINKS "Build g3sinks" OFF)
 endif()
 # zlib
 if(NOT BUILD_OPTION_ZLIB)

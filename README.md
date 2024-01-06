@@ -62,7 +62,16 @@ cmake --build .
 
 ### Embedded_Linux
 
-待完成
+```shell
+# 打开bash
+cd SoundBridge
+# 新建build目录
+mkdir build && cd build
+# 指定编译工具链
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake -G "Unix Makefiles"
+# 编译
+cmake --build .
+```
 
 ## 运行
 
