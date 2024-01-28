@@ -151,21 +151,27 @@ public:
         {
         case logLevel::INFO:
             BOOST_LOG_SEV(m_slg, normal) << buf;
+            printf("INFO    %s\n", buf);
             break;
         case logLevel::ERROR:
             BOOST_LOG_SEV(m_slg, error) << buf;
+            printf("ERROR   %s\n", buf);
             break;
         case logLevel::WARNING:
             BOOST_LOG_SEV(m_slg, warning) << buf;
+            printf("WARNING %s\n", buf);
             break;
         case logLevel::FATAL:
             BOOST_LOG_SEV(m_slg, fatal) << buf;
+            printf("FATAL   %s\n", buf);
             break;
         case logLevel::DEBUG:
             BOOST_LOG_SEV(m_slg, debug) << buf;
+            printf("DEBUG   %s\n", buf);
             break;
         case logLevel::VERBOSE:
             BOOST_LOG_SEV(m_slg, verbose) << buf;
+            printf("VERBOSE %s\n", buf);
             break;
         default:
             break;
@@ -173,10 +179,12 @@ public:
     }
 protected:
     void init() {
-            // Create a text file sink
+        // Create a text file sink
+        std::string file_name = m_logDir + "/";
+        file_name += "%Y%m%d_%H%M%S_%5N.log";
         typedef sinks::synchronous_sink< sinks::text_file_backend > file_sink;
         boost::shared_ptr< file_sink > sink(new file_sink(
-            keywords::file_name = "file.log",                       // file name pattern
+            keywords::file_name = file_name.c_str(),                       // file name pattern
             keywords::target_file_name = "%Y%m%d_%H%M%S_%5N.log",   // file name pattern
             keywords::rotation_size = m_singleFileSizeInBytes       // rotation size, in characters
             ));

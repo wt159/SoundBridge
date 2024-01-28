@@ -108,6 +108,8 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
     });
     m_in = in;
     m_out = out;
+    LOGD("in  spec %d %d %d", m_in.sampleRate, m_in.numChannel, m_in.format);
+    LOGD("out spec %d %d %d", m_out.sampleRate, m_out.numChannel, m_out.format);
     if(!AudioSpec2AudioResampleSpec(m_in, m_inSpec)) {
         LOG_ERROR(LOG_TAG, "AudioSpec2AudioResampleSpec input failed");
         return;
@@ -236,7 +238,7 @@ void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize) 
  }
 
  void AudioResample::Impl::printAudioSpec(AudioResampleSpec &spec) {
-    LOG_INFO(LOG_TAG, "chL:%lld, ch:%d, Rate:%d, samples:%llu, Fmt:%d, bytesPerSample:%d",
+    LOG_INFO(LOG_TAG, "chL:%d, ch:%d, Rate:%d, samples:%d, Fmt:%d, bytesPerSample:%d",
         spec.channelLayout, spec.channelNum, spec.sampleRate, spec.samples, spec.sampleFmt, spec.bytesPerSample);
   }
 

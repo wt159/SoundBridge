@@ -399,7 +399,14 @@ void MainWindow::scanSongs()
 void MainWindow::mediaPlayerInit()
 {
     appDir = QCoreApplication::applicationDirPath().toStdString();
+#ifdef _WIN32
     logDir = appDir + "/log";
+#else
+#define TONAME1(x) #x
+#define TONAME(x) TONAME1(x)
+    logDir = "/var/log/";
+    logDir += TONAME(EXE_NAME);
+#endif // _WIN32
     QDir dir(logDir.c_str());
     if (!dir.exists())
         dir.mkdir(logDir.c_str());

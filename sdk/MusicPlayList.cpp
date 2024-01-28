@@ -96,16 +96,21 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         LOG_INFO(LOG_TAG, "audio spec is not same, need resample");
         AudioSpec inSpec           = signalProperties.spec;
         AudioSpec outSpec          = m_devSpec;
+        LOGD("in  spec %d %d %d", inSpec.sampleRate, inSpec.numChannel, inSpec.bytesPerSample);
+        LOGD("out spec %d %d %d", outSpec.sampleRate, outSpec.numChannel, outSpec.bytesPerSample);
         inSpec.samples             = 1024;
         processProperties.resample = std::make_shared<AudioResample>(inSpec, outSpec);
         if (processProperties.resample == nullptr || processProperties.resample->initCheck() != OK) {
             LOG_ERROR(LOG_TAG, "new AudioResample failed");
             return;
         }
-        size_t resampleBufSize = decBufPtr->size() * outSpec.sampleRate * outSpec.numChannel
-            * outSpec.bytesPerSample / inSpec.sampleRate / inSpec.numChannel
-            / inSpec.bytesPerSample;
-        LOG_INFO(LOG_TAG, "resampleBufSize : %d", resampleBufSize);
+        LOG_INFO(LOG_TAG, "resampleBufSize : %lu", decBufPtr->size());
+        long resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate / (double)inSpec.sampleRate);
+        LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
+        resampleBufSize = resampleBufSize * outSpec.numChannel / inSpec.numChannel;
+        LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
+        resampleBufSize = resampleBufSize * outSpec.bytesPerSample / inSpec.bytesPerSample;
+        LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
 
         AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBufSize));
         char *resampleBuf  = resampleBufPtr->data();

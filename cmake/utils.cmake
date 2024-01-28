@@ -30,11 +30,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
-    set(CMAKE_VERBOSE_MAKEFILE ON)
-    set(COMMON_FLAGS "-O2 -Wno-format")
+    set(CMAKE_VERBOSE_MAKEFILE OFF)
+    set(COMMON_FLAGS "-O2 -Wno-format -DEXE_NAME=SoundBridge")
 else()
     set(CMAKE_VERBOSE_MAKEFILE OFF)
-    set(COMMON_FLAGS "-O3")
+    set(COMMON_FLAGS "-O3 -Wno-format -DEXE_NAME=SoundBridge")
 endif()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${COMMON_FLAGS}")
