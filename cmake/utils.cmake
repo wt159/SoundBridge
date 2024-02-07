@@ -31,11 +31,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
     set(CMAKE_VERBOSE_MAKEFILE OFF)
-    set(COMMON_FLAGS "-O2 -Wno-format -DEXE_NAME=SoundBridge")
+    set(COMMON_FLAGS "-O2 -DEXE_NAME=SoundBridge")
 else()
     set(CMAKE_VERBOSE_MAKEFILE OFF)
-    set(COMMON_FLAGS "-O3 -Wno-format -DEXE_NAME=SoundBridge")
+    set(COMMON_FLAGS "-O3 -DEXE_NAME=SoundBridge")
 endif()
 
+# 检查C++编译器版本是否符合要求
+if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "8.0.0")
+    message(WARNING "C++ compiler version (${CMAKE_CXX_COMPILER_VERSION})")
+else()
+    list(APPEND COMMON_FLAGS "-Wno-format")
+    
+endif()
+message(INFO "common flags: ${COMMON_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${COMMON_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMMON_FLAGS}")
