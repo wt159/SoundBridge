@@ -2,29 +2,35 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QDebug>
+#include <QScreen>
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
-    /* 指定文件 */
+    
+    /* 加载样式表 */
     QFile file(":/style.qss");
-
-    /* 判断文件是否存在 */
     if (file.exists()) {
-        /* 以只读的方式打开 */
-        file.open(QFile::ReadOnly);
-        /* 以字符串的方式保存读出的结果 */
-        QString styleSheet = QLatin1String(file.readAll());
-        /* 设置全局样式 */
-        qApp->setStyleSheet(styleSheet);
-        /* 关闭文件 */
-        file.close();
+        if (file.open(QFile::ReadOnly)) {
+            /* 以字符串的方式保存读出的结果 */
+            QString styleSheet = QString::fromUtf8(file.readAll());
+            /* 设置全局样式 */
+            a.setStyleSheet(styleSheet);
+            /* 关闭文件 */
+            file.close();
+        } else {
+            qWarning() << "无法打开样式表文件:" << file.errorString();
+        }
     } else {
         /* 如果文件不存在，则打印错误信息 */
-        qDebug() << "stylesheet not found!";
+        qWarning() << "样式表文件不存在!";
     }
 
     MainWindow w;
-    w.show();
+    
+    /* 设置窗口全屏显示 */
+    w.showFullScreen();
+    
     return a.exec();
 }
