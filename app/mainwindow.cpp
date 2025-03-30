@@ -14,7 +14,7 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_state(MusicPlayerState::StoppedState)
+    , mState(MusicPlayerState::StoppedState)
 {
     /* 布局初始化 */
     musicLayout();
@@ -26,29 +26,29 @@ MainWindow::MainWindow(QWidget *parent)
     scanSongs();
 
     /* 按钮信号槽连接 */
-    connect(pushButton[0], SIGNAL(clicked()), this, SLOT(btn_previous_clicked()));
-    connect(pushButton[1], SIGNAL(clicked()), this, SLOT(btn_play_clicked()));
-    connect(pushButton[2], SIGNAL(clicked()), this, SLOT(btn_next_clicked()));
-    connect(pushButton[3], SIGNAL(clicked()), this, SLOT(btn_favorite_clicked()));
-    connect(pushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
-    connect(pushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
-    connect(pushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
+    connect(mPushButton[0], SIGNAL(clicked()), this, SLOT(btn_previous_clicked()));
+    connect(mPushButton[1], SIGNAL(clicked()), this, SLOT(btn_play_clicked()));
+    connect(mPushButton[2], SIGNAL(clicked()), this, SLOT(btn_next_clicked()));
+    connect(mPushButton[3], SIGNAL(clicked()), this, SLOT(btn_favorite_clicked()));
+    connect(mPushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
+    connect(mPushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
+    connect(mPushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
     /* 媒体信号槽连接 */
-    // connect(musicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
+    // connect(mMusicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
     //         SLOT(mediaPlayerStateChanged(QMediaPlayer::State)));
     // connect(mediaPlaylist, SIGNAL(currentIndexChanged(int)), this,
     //         SLOT(mediaPlaylistCurrentIndexChanged(int)));
-    // connect(musicPlayer, SIGNAL(durationChanged(qint64)), this,
+    // connect(mMusicPlayer, SIGNAL(durationChanged(qint64)), this,
     //         SLOT(musicPlayerDurationChanged(qint64)));
-    // connect(musicPlayer, SIGNAL(positionChanged(qint64)), this,
+    // connect(mMusicPlayer, SIGNAL(positionChanged(qint64)), this,
     //         SLOT(mediaPlayerPositionChanged(qint64)));
 
     /* 列表信号槽连接 */
-    connect(listWidget, SIGNAL(itemClicked(QListWidgetItem *)), this,
+    connect(mListWidget, SIGNAL(itemClicked(QListWidgetItem *)), this,
             SLOT(listWidgetCliked(QListWidgetItem *)));
 
     /* slider信号槽连接 */
-    connect(durationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
+    connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
 
     /* 失去焦点 */
     this->setFocus();
@@ -62,119 +62,119 @@ void MainWindow::musicLayout()
 
     /* 按钮 */
     for (int i = 0; i < 7; i++)
-        pushButton[i] = new QPushButton();
+        mPushButton[i] = new QPushButton();
 
     /* 标签 */
     for (int i = 0; i < 4; i++)
-        label[i] = new QLabel();
+        mLabel[i] = new QLabel();
 
     for (int i = 0; i < 3; i++) {
         /* 垂直容器 */
-        vWidget[i] = new QWidget();
-        vWidget[i]->setAutoFillBackground(true);
+        mVWidget[i] = new QWidget();
+        mVWidget[i]->setAutoFillBackground(true);
         /* 垂直布局 */
-        vBoxLayout[i] = new QVBoxLayout();
+        mVBoxLayout[i] = new QVBoxLayout();
     }
 
     for (int i = 0; i < 4; i++) {
         /* 水平容器 */
-        hWidget[i] = new QWidget();
-        hWidget[i]->setAutoFillBackground(true);
+        mHWidget[i] = new QWidget();
+        mHWidget[i]->setAutoFillBackground(true);
         /* 水平布局 */
-        hBoxLayout[i] = new QHBoxLayout();
+        mHBoxLayout[i] = new QHBoxLayout();
     }
 
     /* 播放进度条 */
-    durationSlider = new QSlider(Qt::Horizontal);
-    durationSlider->setMinimumSize(300, 15);
-    durationSlider->setMaximumHeight(15);
-    durationSlider->setObjectName("durationSlider");
+    mDurationSlider = new QSlider(Qt::Horizontal);
+    mDurationSlider->setMinimumSize(300, 15);
+    mDurationSlider->setMaximumHeight(15);
+    mDurationSlider->setObjectName("mDurationSlider");
 
     /* 音乐列表 */
-    listWidget = new QListWidget();
-    listWidget->setObjectName("listWidget");
-    listWidget->resize(310, 265);
-    listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mListWidget = new QListWidget();
+    mListWidget->setObjectName("mListWidget");
+    mListWidget->resize(310, 265);
+    mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     /* 列表遮罩 */
-    listMask = new QWidget(listWidget);
-    listMask->setMinimumSize(310, 50);
-    listMask->setMinimumHeight(50);
-    listMask->setObjectName("listMask");
-    listMask->setGeometry(0, listWidget->height() - 50, 310, 50);
+    mListMask = new QWidget(mListWidget);
+    mListMask->setMinimumSize(310, 50);
+    mListMask->setMinimumHeight(50);
+    mListMask->setObjectName("mListMask");
+    mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
 
     /* 设置对象名称 */
-    pushButton[0]->setObjectName("btn_previous");
-    pushButton[1]->setObjectName("btn_play");
-    pushButton[2]->setObjectName("btn_next");
-    pushButton[3]->setObjectName("btn_favorite");
-    pushButton[4]->setObjectName("btn_mode");
-    pushButton[5]->setObjectName("btn_menu");
-    pushButton[6]->setObjectName("btn_volume");
+    mPushButton[0]->setObjectName("btn_previous");
+    mPushButton[1]->setObjectName("btn_play");
+    mPushButton[2]->setObjectName("btn_next");
+    mPushButton[3]->setObjectName("btn_favorite");
+    mPushButton[4]->setObjectName("btn_mode");
+    mPushButton[5]->setObjectName("btn_menu");
+    mPushButton[6]->setObjectName("btn_volume");
 
     /* 设置按钮属性 */
-    pushButton[1]->setCheckable(true);
-    pushButton[3]->setCheckable(true);
+    mPushButton[1]->setCheckable(true);
+    mPushButton[3]->setCheckable(true);
 
     /* H0布局 */
-    vWidget[0]->setMinimumSize(310, 480);
-    vWidget[0]->setMaximumWidth(310);
-    vWidget[1]->setMinimumSize(320, 480);
+    mVWidget[0]->setMinimumSize(310, 480);
+    mVWidget[0]->setMaximumWidth(310);
+    mVWidget[1]->setMinimumSize(320, 480);
     QSpacerItem *hSpacer0 = new QSpacerItem(70, 480, QSizePolicy::Minimum, QSizePolicy::Maximum);
 
     QSpacerItem *hSpacer1 = new QSpacerItem(65, 480, QSizePolicy::Minimum, QSizePolicy::Maximum);
 
     QSpacerItem *hSpacer2 = new QSpacerItem(60, 480, QSizePolicy::Minimum, QSizePolicy::Maximum);
 
-    hBoxLayout[0]->addSpacerItem(hSpacer0);
-    hBoxLayout[0]->addWidget(vWidget[0]);
-    hBoxLayout[0]->addSpacerItem(hSpacer1);
-    hBoxLayout[0]->addWidget(vWidget[1]);
-    hBoxLayout[0]->addSpacerItem(hSpacer2);
-    hBoxLayout[0]->setContentsMargins(0, 0, 0, 0);
+    mHBoxLayout[0]->addSpacerItem(hSpacer0);
+    mHBoxLayout[0]->addWidget(mVWidget[0]);
+    mHBoxLayout[0]->addSpacerItem(hSpacer1);
+    mHBoxLayout[0]->addWidget(mVWidget[1]);
+    mHBoxLayout[0]->addSpacerItem(hSpacer2);
+    mHBoxLayout[0]->setContentsMargins(0, 0, 0, 0);
 
-    hWidget[0]->setLayout(hBoxLayout[0]);
-    setCentralWidget(hWidget[0]);
+    mHWidget[0]->setLayout(mHBoxLayout[0]);
+    setCentralWidget(mHWidget[0]);
 
     /* V0布局 */
-    listWidget->setMinimumSize(310, 265);
-    listWidget->setFont(QFont("ANSI"));
-    hWidget[1]->setMinimumSize(310, 80);
-    hWidget[1]->setMaximumHeight(80);
-    label[0]->setMinimumSize(310, 95);
-    label[0]->setMaximumHeight(95);
+    mListWidget->setMinimumSize(310, 265);
+    mListWidget->setFont(QFont("ANSI"));
+    mHWidget[1]->setMinimumSize(310, 80);
+    mHWidget[1]->setMaximumHeight(80);
+    mLabel[0]->setMinimumSize(310, 95);
+    mLabel[0]->setMaximumHeight(95);
     QSpacerItem *vSpacer0 = new QSpacerItem(310, 10, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer1 = new QSpacerItem(310, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
-    vBoxLayout[0]->addWidget(label[0]);
-    vBoxLayout[0]->addWidget(listWidget);
-    vBoxLayout[0]->addSpacerItem(vSpacer0);
-    vBoxLayout[0]->addWidget(hWidget[1]);
-    vBoxLayout[0]->addSpacerItem(vSpacer1);
-    vBoxLayout[0]->setContentsMargins(0, 0, 0, 0);
+    mVBoxLayout[0]->addWidget(mLabel[0]);
+    mVBoxLayout[0]->addWidget(mListWidget);
+    mVBoxLayout[0]->addSpacerItem(vSpacer0);
+    mVBoxLayout[0]->addWidget(mHWidget[1]);
+    mVBoxLayout[0]->addSpacerItem(vSpacer1);
+    mVBoxLayout[0]->setContentsMargins(0, 0, 0, 0);
 
-    vWidget[0]->setLayout(vBoxLayout[0]);
+    mVWidget[0]->setLayout(mVBoxLayout[0]);
 
     /* H1布局 */
     for (int i = 0; i < 3; i++) {
-        pushButton[i]->setMinimumSize(80, 80);
+        mPushButton[i]->setMinimumSize(80, 80);
     }
     QSpacerItem *hSpacer3 = new QSpacerItem(40, 80, QSizePolicy::Expanding, QSizePolicy::Expanding);
     QSpacerItem *hSpacer4 = new QSpacerItem(40, 80, QSizePolicy::Expanding, QSizePolicy::Expanding);
-    hBoxLayout[1]->addWidget(pushButton[0]);
-    hBoxLayout[1]->addSpacerItem(hSpacer3);
-    hBoxLayout[1]->addWidget(pushButton[1]);
-    hBoxLayout[1]->addSpacerItem(hSpacer4);
-    hBoxLayout[1]->addWidget(pushButton[2]);
-    hBoxLayout[1]->setContentsMargins(0, 0, 0, 0);
+    mHBoxLayout[1]->addWidget(mPushButton[0]);
+    mHBoxLayout[1]->addSpacerItem(hSpacer3);
+    mHBoxLayout[1]->addWidget(mPushButton[1]);
+    mHBoxLayout[1]->addSpacerItem(hSpacer4);
+    mHBoxLayout[1]->addWidget(mPushButton[2]);
+    mHBoxLayout[1]->setContentsMargins(0, 0, 0, 0);
 
-    hWidget[1]->setLayout(hBoxLayout[1]);
+    mHWidget[1]->setLayout(mHBoxLayout[1]);
 
     /* V1布局 */
     QSpacerItem *vSpacer2 = new QSpacerItem(320, 40, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer3 = new QSpacerItem(320, 20, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer4 = new QSpacerItem(320, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
-    label[1]->setMinimumSize(320, 320);
+    mLabel[1]->setMinimumSize(320, 320);
     QImage Image;
     Image.load(":/images/cd.png");
     QPixmap pixmap = QPixmap::fromImage(Image);
@@ -182,30 +182,30 @@ void MainWindow::musicLayout()
     int height     = 320;
     QPixmap fitpixmap
         = pixmap.scaled(with, height, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-    label[1]->setPixmap(fitpixmap);
-    label[1]->setAlignment(Qt::AlignCenter);
-    vWidget[2]->setMinimumSize(300, 80);
-    vWidget[2]->setMaximumHeight(80);
-    vBoxLayout[1]->addSpacerItem(vSpacer2);
-    vBoxLayout[1]->addWidget(label[1]);
-    vBoxLayout[1]->addSpacerItem(vSpacer3);
-    vBoxLayout[1]->addWidget(durationSlider);
-    vBoxLayout[1]->addWidget(vWidget[2]);
-    vBoxLayout[1]->addSpacerItem(vSpacer4);
-    vBoxLayout[1]->setContentsMargins(0, 0, 0, 0);
+    mLabel[1]->setPixmap(fitpixmap);
+    mLabel[1]->setAlignment(Qt::AlignCenter);
+    mVWidget[2]->setMinimumSize(300, 80);
+    mVWidget[2]->setMaximumHeight(80);
+    mVBoxLayout[1]->addSpacerItem(vSpacer2);
+    mVBoxLayout[1]->addWidget(mLabel[1]);
+    mVBoxLayout[1]->addSpacerItem(vSpacer3);
+    mVBoxLayout[1]->addWidget(mDurationSlider);
+    mVBoxLayout[1]->addWidget(mVWidget[2]);
+    mVBoxLayout[1]->addSpacerItem(vSpacer4);
+    mVBoxLayout[1]->setContentsMargins(0, 0, 0, 0);
 
-    vWidget[1]->setLayout(vBoxLayout[1]);
+    mVWidget[1]->setLayout(mVBoxLayout[1]);
 
     /* V2布局 */
     QSpacerItem *vSpacer5 = new QSpacerItem(300, 10, QSizePolicy::Minimum, QSizePolicy::Maximum);
-    hWidget[2]->setMinimumSize(320, 20);
-    hWidget[3]->setMinimumSize(320, 60);
-    vBoxLayout[2]->addWidget(hWidget[2]);
-    vBoxLayout[2]->addSpacerItem(vSpacer5);
-    vBoxLayout[2]->addWidget(hWidget[3]);
-    vBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
+    mHWidget[2]->setMinimumSize(320, 20);
+    mHWidget[3]->setMinimumSize(320, 60);
+    mVBoxLayout[2]->addWidget(mHWidget[2]);
+    mVBoxLayout[2]->addSpacerItem(vSpacer5);
+    mVBoxLayout[2]->addWidget(mHWidget[3]);
+    mVBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
 
-    vWidget[2]->setLayout(vBoxLayout[2]);
+    mVWidget[2]->setLayout(mVBoxLayout[2]);
 
     /* H2布局 */
     QFont font;
@@ -213,26 +213,26 @@ void MainWindow::musicLayout()
     font.setPixelSize(10);
 
     /* 设置标签文本 */
-    label[0]->setText("Q Music，Enjoy it！");
-    label[2]->setText("00:00");
-    label[3]->setText("00:00");
-    label[2]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    label[3]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    label[3]->setAlignment(Qt::AlignRight);
-    label[2]->setAlignment(Qt::AlignLeft);
-    label[2]->setFont(font);
-    label[3]->setFont(font);
+    mLabel[0]->setText("Q Music，Enjoy it！");
+    mLabel[2]->setText("00:00");
+    mLabel[3]->setText("00:00");
+    mLabel[2]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    mLabel[3]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    mLabel[3]->setAlignment(Qt::AlignRight);
+    mLabel[2]->setAlignment(Qt::AlignLeft);
+    mLabel[2]->setFont(font);
+    mLabel[3]->setFont(font);
 
     pal.setColor(QPalette::WindowText, Qt::white);
-    label[0]->setPalette(pal);
-    label[2]->setPalette(pal);
-    label[3]->setPalette(pal);
+    mLabel[0]->setPalette(pal);
+    mLabel[2]->setPalette(pal);
+    mLabel[3]->setPalette(pal);
 
-    hBoxLayout[2]->addWidget(label[2]);
-    hBoxLayout[2]->addWidget(label[3]);
+    mHBoxLayout[2]->addWidget(mLabel[2]);
+    mHBoxLayout[2]->addWidget(mLabel[3]);
 
-    hBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
-    hWidget[2]->setLayout(hBoxLayout[2]);
+    mHBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
+    mHWidget[2]->setLayout(mHBoxLayout[2]);
 
     /* H3布局 */
     QSpacerItem *hSpacer5 = new QSpacerItem(0, 60, QSizePolicy::Minimum, QSizePolicy::Maximum);
@@ -242,77 +242,77 @@ void MainWindow::musicLayout()
     QSpacerItem *hSpacer9 = new QSpacerItem(0, 60, QSizePolicy::Minimum, QSizePolicy::Maximum);
 
     for (int i = 3; i < 7; i++) {
-        pushButton[i]->setMinimumSize(25, 25);
-        pushButton[i]->setMaximumSize(25, 25);
+        mPushButton[i]->setMinimumSize(25, 25);
+        mPushButton[i]->setMaximumSize(25, 25);
     }
 
-    hBoxLayout[3]->addSpacerItem(hSpacer5);
-    hBoxLayout[3]->addWidget(pushButton[3]);
-    hBoxLayout[3]->addSpacerItem(hSpacer6);
-    hBoxLayout[3]->addWidget(pushButton[4]);
-    hBoxLayout[3]->addSpacerItem(hSpacer7);
-    hBoxLayout[3]->addWidget(pushButton[5]);
-    hBoxLayout[3]->addSpacerItem(hSpacer8);
-    hBoxLayout[3]->addWidget(pushButton[6]);
-    hBoxLayout[3]->addSpacerItem(hSpacer9);
-    hBoxLayout[3]->setContentsMargins(0, 0, 0, 0);
-    hBoxLayout[3]->setAlignment(Qt::AlignHCenter);
+    mHBoxLayout[3]->addSpacerItem(hSpacer5);
+    mHBoxLayout[3]->addWidget(mPushButton[3]);
+    mHBoxLayout[3]->addSpacerItem(hSpacer6);
+    mHBoxLayout[3]->addWidget(mPushButton[4]);
+    mHBoxLayout[3]->addSpacerItem(hSpacer7);
+    mHBoxLayout[3]->addWidget(mPushButton[5]);
+    mHBoxLayout[3]->addSpacerItem(hSpacer8);
+    mHBoxLayout[3]->addWidget(mPushButton[6]);
+    mHBoxLayout[3]->addSpacerItem(hSpacer9);
+    mHBoxLayout[3]->setContentsMargins(0, 0, 0, 0);
+    mHBoxLayout[3]->setAlignment(Qt::AlignHCenter);
 
-    hWidget[3]->setLayout(hBoxLayout[3]);
+    mHWidget[3]->setLayout(mHBoxLayout[3]);
 
-    // hWidget[0]->setStyleSheet("background-color:red");
-    // hWidget[1]->setStyleSheet("background-color:#ff5599");
-    // hWidget[2]->setStyleSheet("background-color:#ff55ff");
-    // hWidget[3]->setStyleSheet("background-color:black");
-    // vWidget[0]->setStyleSheet("background-color:#555555");
-    // vWidget[1]->setStyleSheet("background-color:green");
-    // vWidget[2]->setStyleSheet("background-color:gray");
+    // mHWidget[0]->setStyleSheet("background-color:red");
+    // mHWidget[1]->setStyleSheet("background-color:#ff5599");
+    // mHWidget[2]->setStyleSheet("background-color:#ff55ff");
+    // mHWidget[3]->setStyleSheet("background-color:black");
+    // mVWidget[0]->setStyleSheet("background-color:#555555");
+    // mVWidget[1]->setStyleSheet("background-color:green");
+    // mVWidget[2]->setStyleSheet("background-color:gray");
 }
 
 MainWindow::~MainWindow() { }
 
 void MainWindow::btn_play_clicked()
 {
-    MusicPlayerState state = musicPlayer->state();
+    MusicPlayerState state = mMusicPlayer->state();
     switch (state) {
     case MusicPlayerState::StoppedState:
         /* 媒体播放 */
-        musicPlayer->play();
+        mMusicPlayer->play();
         break;
 
     case MusicPlayerState::PlayingState:
         /* 媒体暂停 */
-        musicPlayer->pause();
+        mMusicPlayer->pause();
         break;
 
     case MusicPlayerState::PausedState:
-        musicPlayer->play();
+        mMusicPlayer->play();
         break;
     }
 }
 
 void MainWindow::btn_next_clicked()
 {
-    musicPlayer->stop();
-    int count = musicPlayer->getMusicCount();
+    mMusicPlayer->stop();
+    int count = mMusicPlayer->getMusicCount();
     if (0 == count)
         return;
 
     /* 列表下一个 */
-    musicPlayer->next();
-    musicPlayer->play();
+    mMusicPlayer->next();
+    mMusicPlayer->play();
 }
 
 void MainWindow::btn_previous_clicked()
 {
-    musicPlayer->stop();
-    int count = musicPlayer->getMusicCount();
+    mMusicPlayer->stop();
+    int count = mMusicPlayer->getMusicCount();
     if (0 == count)
         return;
 
     /* 列表上一个 */
-    musicPlayer->previous();
-    musicPlayer->play();
+    mMusicPlayer->previous();
+    mMusicPlayer->play();
 }
 
 void MainWindow::btn_favorite_clicked()
@@ -337,23 +337,23 @@ void MainWindow::btn_volume_clicked()
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
-    qDebug() << "listWidgetCliked:" << listWidget->row(item) << endl;
-    musicPlayer->stop();
-    musicPlayer->setCurrentIndex(listWidget->row(item));
-    musicPlayer->play();
+    qDebug() << "listWidgetCliked:" << mListWidget->row(item) << endl;
+    mMusicPlayer->stop();
+    mMusicPlayer->setCurrentIndex(mListWidget->row(item));
+    mMusicPlayer->play();
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     Q_UNUSED(event);
-    listMask->setGeometry(0, listWidget->height() - 50, 310, 50);
+    mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
 }
 
 void MainWindow::durationSliderReleased()
 {
     /* 设置媒体播放的位置 */
-    qDebug() << "durationSliderReleased:" << durationSlider->value() << endl;
-    musicPlayer->setPosition(durationSlider->value() * 1000);
+    qDebug() << "durationSliderReleased:" << mDurationSlider->value() << endl;
+    mMusicPlayer->setPosition(mDurationSlider->value() * 1000);
 }
 
 void MainWindow::scanSongs()
@@ -381,15 +381,15 @@ void MainWindow::scanSongs()
         //     /* 媒体列表添加歌曲 */
         //     if (mediaPlaylist->addMedia(QUrl::fromLocalFile(info.filePath))) {
         //         /* 添加到容器数组里储存 */
-        //         mediaObjectInfo.append(info);
+        //         mMediaObjectInfo.append(info);
         //         /* 添加歌曲名字至列表 */
-        //         listWidget->addItem(info.fileName);
+        //         mListWidget->addItem(info.fileName);
         //     } else {
         //         qDebug() << mediaPlaylist->errorString().toUtf8().data() << endl;
         //         qDebug() << "  Error number:" << mediaPlaylist->error() << endl;
         //     }
         // }
-        musicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
+        mMusicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
     } else {
         qDebug() << "dir not exist" << endl;
         qDebug() << "dir is" << QCoreApplication::applicationDirPath() << endl;
@@ -398,45 +398,45 @@ void MainWindow::scanSongs()
 
 void MainWindow::mediaPlayerInit()
 {
-    appDir = QCoreApplication::applicationDirPath().toStdString();
+    mAppDir = QCoreApplication::applicationDirPath().toStdString();
 #ifdef _WIN32
-    logDir = appDir + "/log";
+    mLogDir = mAppDir + "/log";
 #else
 #define TONAME1(x) #x
 #define TONAME(x) TONAME1(x)
-    logDir = "/var/log/";
-    logDir += TONAME(EXE_NAME);
+    mLogDir = "/var/log/";
+    mLogDir += TONAME(EXE_NAME);
 #endif // _WIN32
-    QDir dir(logDir.c_str());
+    QDir dir(mLogDir.c_str());
     if (!dir.exists())
-        dir.mkdir(logDir.c_str());
-    musicPlayer = std::make_shared<MusicPlayer>(this, logDir);
+        dir.mkdir(mLogDir.c_str());
+    mMusicPlayer = std::make_shared<MusicPlayer>(this, mLogDir);
     /* 确保列表是空的 */
     // mediaPlaylist->clear();
     /* 设置音乐播放器的列表为mediaPlaylist */
-    // musicPlayer->setPlaylist(mediaPlaylist);
+    // mMusicPlayer->setPlaylist(mediaPlaylist);
     /* 设置播放模式，Loop是列循环 */
-    // musicPlayer->setPlaybackMode(QMediaPlaylist::Loop);
+    // mMusicPlayer->setPlaybackMode(QMediaPlaylist::Loop);
 }
 
 void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
 {
-    if (m_state == state)
+    if (mState == state)
         return;
     switch (state) {
     case sdk::MusicPlayerState::StoppedState:
-        pushButton[1]->setChecked(false);
+        mPushButton[1]->setChecked(false);
         break;
 
     case sdk::MusicPlayerState::PlayingState:
-        pushButton[1]->setChecked(true);
+        mPushButton[1]->setChecked(true);
         break;
 
     case sdk::MusicPlayerState::PausedState:
-        pushButton[1]->setChecked(false);
+        mPushButton[1]->setChecked(false);
         break;
     }
-    m_state = state;
+    mState = state;
 }
 
 void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
@@ -445,13 +445,13 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
         return;
     qDebug() << "onListCurIndex:" << index << endl;
     /* 设置列表正在播放的项 */
-    listWidget->setCurrentRow(index);
+    mListWidget->setCurrentRow(index);
 }
 
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 {
     qDebug() << "duration" << duration << endl;
-    durationSlider->setRange(0, duration / 1000);
+    mDurationSlider->setRange(0, duration / 1000);
     int second  = duration / 1000;
     int minute  = second / 60;
     second     %= 60;
@@ -470,13 +470,13 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
         mediaDuration = mediaDuration + ":0" + QString::number(second, 10);
 
     /* 显示媒体总长度时间 */
-    label[3]->setText(mediaDuration);
+    mLabel[3]->setText(mediaDuration);
 }
 
 void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 {
-    if (!durationSlider->isSliderDown())
-        durationSlider->setValue(position / 1000);
+    if (!mDurationSlider->isSliderDown())
+        mDurationSlider->setValue(position / 1000);
 
     int second  = position / 1000;
     int minute  = second / 60;
@@ -496,15 +496,15 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
         mediaPosition = mediaPosition + ":0" + QString::number(second, 10);
 
     /* 显示现在播放的时间 */
-    label[2]->setText(mediaPosition);
+    mLabel[2]->setText(mediaPosition);
 }
 
 void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
 {
-    listWidget->clear();
+    mListWidget->clear();
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
-        listWidget->addItem(QString::fromStdString(name));
+        mListWidget->addItem(QString::fromStdString(name));
         qDebug() << "onMusicList: " << index.index << " " << name.c_str();
     }
 }

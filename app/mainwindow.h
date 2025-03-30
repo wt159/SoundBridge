@@ -40,41 +40,41 @@ public:
 
 private:
     /* 媒体播放器，用于播放音乐 */
-    std::shared_ptr<MusicPlayer> musicPlayer;
+    std::shared_ptr<MusicPlayer> mMusicPlayer;
 
     /* 音乐列表 */
-    QListWidget *listWidget;
+    QListWidget *mListWidget;
 
     /* 播放进度条 */
-    QSlider *durationSlider;
+    QSlider *mDurationSlider;
 
     /* 音乐播放器按钮 */
-    QPushButton *pushButton[7];
+    QPushButton *mPushButton[7];
 
     /* 垂直布局 */
-    QVBoxLayout *vBoxLayout[3];
+    QVBoxLayout *mVBoxLayout[3];
 
     /* 水平布局 */
-    QHBoxLayout *hBoxLayout[4];
+    QHBoxLayout *mHBoxLayout[4];
 
     /* 垂直容器 */
-    QWidget *vWidget[3];
+    QWidget *mVWidget[3];
 
     /* 水平容器 */
-    QWidget *hWidget[4];
+    QWidget *mHWidget[4];
 
     /* 标签文本 */
-    QLabel *label[4];
+    QLabel *mLabel[4];
 
     /* 用于遮罩 */
-    QWidget *listMask;
+    QWidget *mListMask;
 
     /* 媒体信息存储 */
-    QVector<MediaObjectInfo> mediaObjectInfo;
+    QVector<MediaObjectInfo> mMediaObjectInfo;
 
-    std::string appDir;
-    std::string logDir;
-    MusicPlayerState m_state;
+    std::string mAppDir;
+    std::string mLogDir;
+    MusicPlayerState mState;
 
 protected:
     /* 音乐布局函数 */
