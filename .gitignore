@@ -1,0 +1,3 @@
+*.exe
+*.jam
+sdk/3rdparty/ffmpeg-4.4.4/**
