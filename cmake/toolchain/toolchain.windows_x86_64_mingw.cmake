@@ -17,3 +17,7 @@ set(CMAKE_CXX_COMPILER "${QT_ROOT_PATH}/Tools/mingw730_64/bin/g++.exe")
 # 设置编译选项
 set(CMAKE_C_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS "-Wall")
+
+set(BUILD_OPTION_G3SINKS ON)
+set(BUILD_OPTION_BOOST ON)
+set(BUILD_OPTION_FFMPEG ON)

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.2)
 project(Extractor)
 
 include_directories(${3RDPARTY_DIST_DIR}/include)
+include_directories(${3RDPARTY_DIST_DIR}/include/boost-1_81)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/common)
 
