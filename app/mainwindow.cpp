@@ -362,33 +362,6 @@ void MainWindow::scanSongs()
     QDir dirbsolutePath(dir.absolutePath());
     /* 如果目录存在 */
     if (dirbsolutePath.exists()) {
-        // /* 定义过滤器 */
-        // QStringList filter;
-        // /* 包含所有.mp3后缀的文件 */
-        // filter << "*.mp3";
-        // /* 获取该目录下的所有文件 */
-        // QFileInfoList files = dirbsolutePath.entryInfoList(filter, QDir::Files);
-        // /* 遍历 */
-        // for (int i = 0; i < files.count(); i++) {
-        //     MediaObjectInfo info;
-        //     /* 使用utf-8编码 */
-        //     QString fileName
-        //         = QString::fromUtf8(files.at(i).fileName().replace(".mp3",
-        //         "").toUtf8().data());
-        //     info.fileName = fileName + "\n" + fileName.split("-").at(1);
-        //     info.filePath =
-        //     QString::fromUtf8(files.at(i).filePath().toUtf8().data());
-        //     /* 媒体列表添加歌曲 */
-        //     if (mediaPlaylist->addMedia(QUrl::fromLocalFile(info.filePath))) {
-        //         /* 添加到容器数组里储存 */
-        //         mMediaObjectInfo.append(info);
-        //         /* 添加歌曲名字至列表 */
-        //         mListWidget->addItem(info.fileName);
-        //     } else {
-        //         qDebug() << mediaPlaylist->errorString().toUtf8().data() << endl;
-        //         qDebug() << "  Error number:" << mediaPlaylist->error() << endl;
-        //     }
-        // }
         mMusicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
     } else {
         qDebug() << "dir not exist" << endl;
