@@ -41,7 +41,7 @@ endif()
 if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "8.0.0")
     message(WARNING "C++ compiler version (${CMAKE_CXX_COMPILER_VERSION})")
 else()
-    list(APPEND COMMON_FLAGS "-Wno-format")
+    set(COMMON_FLAGS "${COMMON_FLAGS} -Wno-format")
     
 endif()
 message(INFO "common flags: ${COMMON_FLAGS}")
