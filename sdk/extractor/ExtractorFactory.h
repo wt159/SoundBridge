@@ -21,9 +21,13 @@ public:
 };
 
 // 简化注册写法：在 cpp 文件中一行完成“扩展名 -> 提取器类型”的静态注册。
+#define SB_EXTRACTOR_CONCAT_IMPL(A, B) A##B
+#define SB_EXTRACTOR_CONCAT(A, B) SB_EXTRACTOR_CONCAT_IMPL(A, B)
+
 #define SB_REGISTER_EXTRACTOR_IMPL(ID, EXTENSION, TYPE)                                      \
     namespace {                                                                                \
-    const bool g_registered_extractor_##ID = ExtractorFactory::registerExtractor(             \
+    const bool SB_EXTRACTOR_CONCAT(g_registered_extractor_, ID) =                             \
+        ExtractorFactory::registerExtractor(                                                   \
         EXTENSION,                                                                             \
         [](DataSourceBase *source) -> ExtractorHelper * { return new TYPE(source); });        \
     }
