@@ -18,11 +18,7 @@ include_directories(${SDK_ROOT_DIR}/cosmos)
 
 add_subdirectory(${SDK_ROOT_DIR}/utils)
 
-if(CMAKE_TARGET_SYSTEM_PROCESSOR STREQUAL "arm_gnueabihf")
-    set(LOG_WRAPPER_DIR ${SDK_ROOT_DIR}/log/boost_log)
-else()
-    set(LOG_WRAPPER_DIR ${SDK_ROOT_DIR}/log)
-endif()
+set(LOG_WRAPPER_DIR ${SDK_ROOT_DIR}/log/boost_log)
 add_subdirectory(${LOG_WRAPPER_DIR})
 
 add_subdirectory(${SDK_ROOT_DIR}/audio)
