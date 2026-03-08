@@ -8,6 +8,7 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 * @date          2021-04-20
 *******************************************************************/
 #include "mainwindow.h"
+#include "LogApi.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfoList>
@@ -15,11 +16,15 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QScreen>
 #include <QSettings>
 
+namespace {
+constexpr const char* kTag = "MainWindow";
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , mState(MusicPlayerState::StoppedState)
 {
-    /* 布局初始�?*/
+    /* Initialize UI layout */
     musicLayout();
     applyWindowPolicy();
     restoreWindowState();
@@ -27,10 +32,10 @@ MainWindow::MainWindow(QWidget *parent)
     /* 媒体播放器初始化 */
     mediaPlayerInit();
 
-    /* 扫描歌曲 */
+    /* Scan songs */
     scanSongs();
 
-    /* 按钮信号槽连�?*/
+    /* Connect button signals */
     connect(mPushButton[0], SIGNAL(clicked()), this, SLOT(btn_previous_clicked()));
     connect(mPushButton[1], SIGNAL(clicked()), this, SLOT(btn_play_clicked()));
     connect(mPushButton[2], SIGNAL(clicked()), this, SLOT(btn_next_clicked()));
@@ -38,7 +43,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(mPushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
     connect(mPushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
     connect(mPushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
-    /* 媒体信号槽连�?*/
+    /* 媒体信坷槽连�?*/
     // connect(mMusicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
     //         SLOT(mediaPlayerStateChanged(QMediaPlayer::State)));
     // connect(mediaPlaylist, SIGNAL(currentIndexChanged(int)), this,
@@ -48,11 +53,11 @@ MainWindow::MainWindow(QWidget *parent)
     // connect(mMusicPlayer, SIGNAL(positionChanged(qint64)), this,
     //         SLOT(mediaPlayerPositionChanged(qint64)));
 
-    /* 列表信号槽连�?*/
+    /* 列表信坷槽连�?*/
     connect(mListWidget, SIGNAL(itemClicked(QListWidgetItem *)), this,
             SLOT(listWidgetCliked(QListWidgetItem *)));
 
-    /* slider信号槽连�?*/
+    /* slider信坷槽连�?*/
     connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
 
     /* 失去焦点 */
@@ -87,27 +92,27 @@ void MainWindow::musicLayout()
         mHBoxLayout[i] = new QHBoxLayout();
     }
 
-    /* 播放进度�?*/
+    /* 播放进度�?*/
     mDurationSlider = new QSlider(Qt::Horizontal);
     mDurationSlider->setMinimumSize(300, 15);
     mDurationSlider->setMaximumHeight(15);
     mDurationSlider->setObjectName("mDurationSlider");
 
-    /* 音乐列表 */
+    /* 音九列表 */
     mListWidget = new QListWidget();
     mListWidget->setObjectName("mListWidget");
     mListWidget->resize(310, 265);
     mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    /* 列表遮罩 */
+    /* 列表靮罩 */
     mListMask = new QWidget(mListWidget);
     mListMask->setMinimumSize(310, 50);
     mListMask->setMinimumHeight(50);
     mListMask->setObjectName("mListMask");
     mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
 
-    /* 设置对象名称 */
+    /* 设置对象坝称 */
     mPushButton[0]->setObjectName("btn_previous");
     mPushButton[1]->setObjectName("btn_play");
     mPushButton[2]->setObjectName("btn_next");
@@ -116,7 +121,7 @@ void MainWindow::musicLayout()
     mPushButton[5]->setObjectName("btn_menu");
     mPushButton[6]->setObjectName("btn_volume");
 
-    /* 设置按钮属�?*/
+    /* 设置按钮属�?*/
     mPushButton[1]->setCheckable(true);
     mPushButton[3]->setCheckable(true);
 
@@ -325,7 +330,7 @@ void MainWindow::btn_play_clicked()
         break;
 
     case MusicPlayerState::PlayingState:
-        /* 媒体暂停 */
+        /* 媒体暂坜 */
         mMusicPlayer->pause();
         break;
 
@@ -342,7 +347,7 @@ void MainWindow::btn_next_clicked()
     if (0 == count)
         return;
 
-    /* 列表下一�?*/
+    /* 列表下一�?*/
     mMusicPlayer->next();
     mMusicPlayer->play();
 }
@@ -354,7 +359,7 @@ void MainWindow::btn_previous_clicked()
     if (0 == count)
         return;
 
-    /* 列表上一�?*/
+    /* 列表上一�?*/
     mMusicPlayer->previous();
     mMusicPlayer->play();
 }
@@ -381,7 +386,7 @@ void MainWindow::btn_volume_clicked()
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
-    qDebug() << "listWidgetCliked:" << mListWidget->row(item) << endl;
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "listWidgetCliked: %d", mListWidget->row(item));
     mMusicPlayer->stop();
     mMusicPlayer->setCurrentIndex(mListWidget->row(item));
     mMusicPlayer->play();
@@ -395,8 +400,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::durationSliderReleased()
 {
-    /* 设置媒体播放的位�?*/
-    qDebug() << "durationSliderReleased:" << mDurationSlider->value() << endl;
+    /* Seek playback to slider position */
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "durationSliderReleased: %d", mDurationSlider->value());
     mMusicPlayer->setPosition(mDurationSlider->value() * 1000);
 }
 
@@ -408,8 +413,8 @@ void MainWindow::scanSongs()
     if (dirbsolutePath.exists()) {
         mMusicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
     } else {
-        qDebug() << "dir not exist" << endl;
-        qDebug() << "dir is" << QCoreApplication::applicationDirPath() << endl;
+        sdk::LogMessage(sdk::SdkLogLevel::Warning, kTag, "dir not exist");
+        sdk::LogPrintf(sdk::SdkLogLevel::Warning, kTag, "dir is %s", QCoreApplication::applicationDirPath().toUtf8().constData());
     }
 }
 
@@ -428,11 +433,11 @@ void MainWindow::mediaPlayerInit()
     if (!dir.exists())
         dir.mkdir(mLogDir.c_str());
     mMusicPlayer = std::make_shared<MusicPlayer>(this, mLogDir);
-    /* 确保列表是空�?*/
+    /* Ensure playlist is empty before refill */
     // mediaPlaylist->clear();
-    /* 设置音乐播放器的列表为mediaPlaylist */
+    /* Legacy QMedia playlist wiring (kept for reference) */
     // mMusicPlayer->setPlaylist(mediaPlaylist);
-    /* 设置播放模式，Loop是列循环 */
+    /* Legacy playback mode wiring (kept for reference) */
     // mMusicPlayer->setPlaybackMode(QMediaPlaylist::Loop);
 }
 
@@ -460,14 +465,14 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 {
     if (-1 == index)
         return;
-    qDebug() << "onListCurIndex:" << index << endl;
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onListCurIndex: %d", index);
     /* 设置列表正在播放的项 */
     mListWidget->setCurrentRow(index);
 }
 
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 {
-    qDebug() << "duration" << duration << endl;
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "duration %llu", duration);
     mDurationSlider->setRange(0, duration / 1000);
     int second  = duration / 1000;
     int minute  = second / 60;
@@ -486,7 +491,7 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
     else
         mediaDuration = mediaDuration + ":0" + QString::number(second, 10);
 
-    /* 显示媒体总长度时�?*/
+    /* Update total duration label */
     mLabel[3]->setText(mediaDuration);
 }
 
@@ -512,7 +517,7 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
     else
         mediaPosition = mediaPosition + ":0" + QString::number(second, 10);
 
-    /* 显示现在播放的时�?*/
+    /* Update current position label */
     mLabel[2]->setText(mediaPosition);
 }
 
@@ -522,9 +527,11 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
         mListWidget->addItem(QString::fromStdString(name));
-        qDebug() << "onMusicList: " << index.index << " " << name.c_str();
+        sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s", index.index, name.c_str());
     }
 }
+
+
 
 
 

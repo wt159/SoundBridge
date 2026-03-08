@@ -11,6 +11,8 @@
 
 namespace {
 
+constexpr const char *kTag = "App.Main";
+
 sdk::SdkLogLevel toSdkLevel(QtMsgType type)
 {
     switch (type) {
@@ -38,7 +40,7 @@ void qtToSdkMessageHandler(QtMsgType type, const QMessageLogContext &context, co
                                      .arg(functionName)
                                      .arg(msg);
 
-    sdk::LogMessage(toSdkLevel(type), "Qt", finalMessage.toUtf8().constData());
+    sdk::LogMessage(toSdkLevel(type), kTag, finalMessage.toUtf8().constData());
 
     if (type == QtFatalMsg) {
         abort();
@@ -58,6 +60,7 @@ void initSdkLogSystem()
     sdk::InitializeLogging(config);
 
     qInstallMessageHandler(qtToSdkMessageHandler);
+    sdk::LogMessage(sdk::SdkLogLevel::Info, kTag, "sdk log system initialized");
 }
 
 } // namespace
@@ -79,10 +82,11 @@ int main(int argc, char *argv[])
             a.setStyleSheet(styleSheet);
             file.close();
         } else {
-            qWarning() << "Failed to open style sheet:" << file.errorString();
+            sdk::LogPrintf(sdk::SdkLogLevel::Warning, "App", "Failed to open style sheet: %s",
+                           file.errorString().toUtf8().constData());
         }
     } else {
-        qWarning() << "Style sheet not found";
+        sdk::LogMessage(sdk::SdkLogLevel::Warning, "App", "Style sheet not found");
     }
 
     MainWindow w;
@@ -90,5 +94,6 @@ int main(int argc, char *argv[])
 
     return a.exec();
 }
+
 
 
