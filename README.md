@@ -1,4 +1,4 @@
-# SoundBridge_MusicPlayer
+﻿# SoundBridge_MusicPlayer
 
 一款跨平台的音乐播放器, 用来学习各类音频文件格式(aac ogg wav aiff mp3 flac m4a asf wma)的解析, 及相应的解码流程。
 
@@ -96,3 +96,25 @@ cmake --build .
 ### 待办
 
 * m4a解码失败
+
+## Windows 打包（Portable）
+
+在完成编译后，可将可执行文件和运行依赖打包到 `package` 目录。
+
+### 在 `cmd.exe` 中执行
+
+```bat
+powershell -NoProfile -Command "$pkg='E:\flushbonad\github\SoundBridge\package\SoundBridge_portable_v3'; if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }; New-Item -ItemType Directory -Path $pkg | Out-Null; Copy-Item 'E:\flushbonad\github\SoundBridge\build\app\SoundBridge.exe' $pkg; & 'F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe' --force --compiler-runtime \"$pkg\SoundBridge.exe\"; Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll' $pkg -Force; if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' \"$pkg\music\" -Recurse -Force }"
+```
+
+### 在 `PowerShell` 中执行
+
+```powershell
+$pkg='E:\flushbonad\github\SoundBridge\package\SoundBridge_portable_v3'
+if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
+New-Item -ItemType Directory -Path $pkg | Out-Null
+Copy-Item 'E:\flushbonad\github\SoundBridge\build\app\SoundBridge.exe' $pkg
+& 'F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe' --force --compiler-runtime "$pkg\SoundBridge.exe"
+Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll' $pkg -Force
+if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' "$pkg\music" -Recurse -Force }
+```
