@@ -33,7 +33,7 @@ set(DECODE_LIBS
     LogWrapper
     )
 
-target_link_libraries(AudioDecode PRIVATE ${DECODE_LIBS})
+target_link_libraries(AudioDecode PUBLIC ${DECODE_LIBS})
 target_include_directories(AudioDecode
                             PUBLIC
                             ${CMAKE_CURRENT_SOURCE_DIR}

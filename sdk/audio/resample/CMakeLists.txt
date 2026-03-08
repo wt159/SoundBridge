@@ -10,7 +10,7 @@ link_directories(${3RDPARTY_DIST_DIR}/bin)
 
 add_library(AudioResample AudioResample.cpp AudioResample.h)
 
-target_link_libraries(AudioResample swresample avutil LogWrapper)
+target_link_libraries(AudioResample PUBLIC swresample avutil LogWrapper)
 target_include_directories(AudioResample
                             PUBLIC
                             ${CMAKE_CURRENT_SOURCE_DIR}

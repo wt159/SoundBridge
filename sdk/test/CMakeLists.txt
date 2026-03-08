@@ -1,27 +1,57 @@
 cmake_minimum_required(VERSION 3.2)
 
-project(test)
+project(sdk_tests)
 
-include_directories(${SDK_ROOT_DIR}/utils)
-include_directories(${SDK_ROOT_DIR}/log)
-include_directories(${3RDPARTY_DIST_DIR}/include)
-link_directories(${3RDPARTY_DIST_DIR}/bin)
 link_directories(${3RDPARTY_DIST_DIR}/lib)
+link_directories(${3RDPARTY_DIST_DIR}/bin)
 
-add_executable(TestLogWrapper TestLogWrapper.cpp)
-target_link_libraries(TestLogWrapper LogWrapper)
+set(SDK_TEST_SOURCES
+    TestSdkSuite.cpp
+)
 
-add_executable(TestAudioDevice TestAudioDevice.cpp)
-target_link_libraries(TestAudioDevice AudioDevice LogWrapper)
+add_executable(TestSdkSuite ${SDK_TEST_SOURCES})
 
-add_executable(TestAudioResample TestAudioResample.cpp)
-target_link_libraries(TestAudioResample AudioResample LogWrapper)
+target_link_libraries(TestSdkSuite
+    PRIVATE
+    LogWrapper
+    Extractor
+    AudioResample
+    AudioDecode
+    utils
+)
 
-add_executable(TestAudioDecode TestAudioDecode.cpp)
-target_link_libraries(TestAudioDecode AudioDecode LogWrapper)
+target_include_directories(TestSdkSuite
+    PRIVATE
+    ${SDK_ROOT_DIR}
+    ${SDK_ROOT_DIR}/extractor
+    ${SDK_ROOT_DIR}/utils
+    ${SDK_ROOT_DIR}/audio/common
+    ${SDK_ROOT_DIR}/audio/resample
+    ${SDK_ROOT_DIR}/audio/decode
+)
 
-add_executable(TestMusicPlayer TestMusicPlayer.cpp)
-target_link_libraries(TestMusicPlayer sdk)
+set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;F:/Qt/Qt5.14.2/Tools/mingw730_64/bin;$ENV{PATH}")
 
-add_executable(TestFFmpegAudioDecode TestFFmpegAudioDecode.cpp)
-target_link_libraries(TestFFmpegAudioDecode avformat avcodec avutil swresample avdevice)
+add_test(
+    NAME sdk_core_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> core
+)
+set_tests_properties(sdk_core_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(
+    NAME sdk_resample_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> resample
+)
+set_tests_properties(sdk_resample_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(
+    NAME sdk_decode_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> decode
+)
+set_tests_properties(sdk_decode_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(
+    NAME sdk_all_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> all
+)
+set_tests_properties(sdk_all_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
