@@ -15,6 +15,7 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QCloseEvent>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpacerItem>
@@ -23,9 +24,9 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 
 using namespace sdk;
 
-/* 媒体信息结构体 */
+/* 媒体信息结构�?*/
 struct MediaObjectInfo {
-    /* 用于保存歌曲文件名 */
+    /* 用于保存歌曲文件�?*/
     QString fileName;
     /* 用于保存歌曲文件路径 */
     QString filePath;
@@ -45,10 +46,10 @@ private:
     /* 音乐列表 */
     QListWidget *mListWidget;
 
-    /* 播放进度条 */
+    /* 播放进度�?*/
     QSlider *mDurationSlider;
 
-    /* 音乐播放器按钮 */
+    /* 音乐播放器按�?*/
     QPushButton *mPushButton[7];
 
     /* 垂直布局 */
@@ -80,23 +81,27 @@ protected:
     /* 音乐布局函数 */
     void musicLayout();
 
-    /* 主窗体大小重设大小函数重写 */
+    /* 主窗体大小重设大小函数重�?*/
     void resizeEvent(QResizeEvent *event);
+    void closeEvent(QCloseEvent *event);
 
     /* 扫描歌曲 */
     void scanSongs();
 
-    /* 媒体播放器类初始化 */
+    /* 媒体播放器类初始�?*/
     void mediaPlayerInit();
+    void applyWindowPolicy();
+    void restoreWindowState();
+    void persistWindowState();
 
 protected:
-    /* 媒体状态改变 */
+    /* 媒体状态改�?*/
     virtual void onMusicPlayerStateChanged(MusicPlayerState state);
 
-    /* 媒体列表项改变 */
+    /* 媒体列表项改�?*/
     virtual void onMusicPlayerListCurrentIndexChanged(int index);
 
-    /* 媒体总长度改变 */
+    /* 媒体总长度改�?*/
     virtual void onMusicPlayerDurationChanged(uint64_t duration);
 
     /* 媒体播放位置改变 */
@@ -109,10 +114,10 @@ private slots:
     /* 播放按钮点击 */
     void btn_play_clicked();
 
-    /* 下一曲按钮点击*/
+    /* 下一曲按钮点�?*/
     void btn_next_clicked();
 
-    /* 上一曲按钮点击 */
+    /* 上一曲按钮点�?*/
     void btn_previous_clicked();
 
     /* 收藏按钮点击 */
@@ -134,3 +139,7 @@ private slots:
     void durationSliderReleased();
 };
 #endif // MAINWINDOW_H
+
+
+
+

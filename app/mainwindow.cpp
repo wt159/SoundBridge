@@ -11,13 +11,18 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfoList>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QSettings>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , mState(MusicPlayerState::StoppedState)
 {
-    /* 布局初始化 */
+    /* 布局初始�?*/
     musicLayout();
+    applyWindowPolicy();
+    restoreWindowState();
 
     /* 媒体播放器初始化 */
     mediaPlayerInit();
@@ -25,7 +30,7 @@ MainWindow::MainWindow(QWidget *parent)
     /* 扫描歌曲 */
     scanSongs();
 
-    /* 按钮信号槽连接 */
+    /* 按钮信号槽连�?*/
     connect(mPushButton[0], SIGNAL(clicked()), this, SLOT(btn_previous_clicked()));
     connect(mPushButton[1], SIGNAL(clicked()), this, SLOT(btn_play_clicked()));
     connect(mPushButton[2], SIGNAL(clicked()), this, SLOT(btn_next_clicked()));
@@ -33,7 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(mPushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
     connect(mPushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
     connect(mPushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
-    /* 媒体信号槽连接 */
+    /* 媒体信号槽连�?*/
     // connect(mMusicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
     //         SLOT(mediaPlayerStateChanged(QMediaPlayer::State)));
     // connect(mediaPlaylist, SIGNAL(currentIndexChanged(int)), this,
@@ -43,11 +48,11 @@ MainWindow::MainWindow(QWidget *parent)
     // connect(mMusicPlayer, SIGNAL(positionChanged(qint64)), this,
     //         SLOT(mediaPlayerPositionChanged(qint64)));
 
-    /* 列表信号槽连接 */
+    /* 列表信号槽连�?*/
     connect(mListWidget, SIGNAL(itemClicked(QListWidgetItem *)), this,
             SLOT(listWidgetCliked(QListWidgetItem *)));
 
-    /* slider信号槽连接 */
+    /* slider信号槽连�?*/
     connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
 
     /* 失去焦点 */
@@ -56,8 +61,6 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::musicLayout()
 {
-    /* 设置位置与大小,这里固定为800, 480 */
-    this->setGeometry(0, 0, 800, 480);
     QPalette pal;
 
     /* 按钮 */
@@ -84,7 +87,7 @@ void MainWindow::musicLayout()
         mHBoxLayout[i] = new QHBoxLayout();
     }
 
-    /* 播放进度条 */
+    /* 播放进度�?*/
     mDurationSlider = new QSlider(Qt::Horizontal);
     mDurationSlider->setMinimumSize(300, 15);
     mDurationSlider->setMaximumHeight(15);
@@ -113,7 +116,7 @@ void MainWindow::musicLayout()
     mPushButton[5]->setObjectName("btn_menu");
     mPushButton[6]->setObjectName("btn_volume");
 
-    /* 设置按钮属性 */
+    /* 设置按钮属�?*/
     mPushButton[1]->setCheckable(true);
     mPushButton[3]->setCheckable(true);
 
@@ -213,7 +216,7 @@ void MainWindow::musicLayout()
     font.setPixelSize(10);
 
     /* 设置标签文本 */
-    mLabel[0]->setText("Q Music，Enjoy it！");
+    mLabel[0]->setText("Q Music, Enjoy it!");
     mLabel[2]->setText("00:00");
     mLabel[3]->setText("00:00");
     mLabel[2]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -270,6 +273,47 @@ void MainWindow::musicLayout()
 }
 
 MainWindow::~MainWindow() { }
+void MainWindow::applyWindowPolicy()
+{
+    setWindowFlags(Qt::Window);
+    setWindowTitle("SoundBridge");
+    setMinimumSize(960, 540);
+    resize(1200, 720);
+}
+
+void MainWindow::restoreWindowState()
+{
+    QSettings settings;
+    const QByteArray geometry = settings.value("window/geometry").toByteArray();
+    const bool maximized = settings.value("window/maximized", false).toBool();
+
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    } else {
+        QScreen *screen = QGuiApplication::primaryScreen();
+        if (screen != nullptr) {
+            const QRect area = screen->availableGeometry();
+            move(area.center() - rect().center());
+        }
+    }
+
+    if (maximized) {
+        setWindowState(windowState() | Qt::WindowMaximized);
+    }
+}
+
+void MainWindow::persistWindowState()
+{
+    QSettings settings;
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/maximized", isMaximized());
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    persistWindowState();
+    QMainWindow::closeEvent(event);
+}
 
 void MainWindow::btn_play_clicked()
 {
@@ -298,7 +342,7 @@ void MainWindow::btn_next_clicked()
     if (0 == count)
         return;
 
-    /* 列表下一个 */
+    /* 列表下一�?*/
     mMusicPlayer->next();
     mMusicPlayer->play();
 }
@@ -310,7 +354,7 @@ void MainWindow::btn_previous_clicked()
     if (0 == count)
         return;
 
-    /* 列表上一个 */
+    /* 列表上一�?*/
     mMusicPlayer->previous();
     mMusicPlayer->play();
 }
@@ -351,7 +395,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::durationSliderReleased()
 {
-    /* 设置媒体播放的位置 */
+    /* 设置媒体播放的位�?*/
     qDebug() << "durationSliderReleased:" << mDurationSlider->value() << endl;
     mMusicPlayer->setPosition(mDurationSlider->value() * 1000);
 }
@@ -384,7 +428,7 @@ void MainWindow::mediaPlayerInit()
     if (!dir.exists())
         dir.mkdir(mLogDir.c_str());
     mMusicPlayer = std::make_shared<MusicPlayer>(this, mLogDir);
-    /* 确保列表是空的 */
+    /* 确保列表是空�?*/
     // mediaPlaylist->clear();
     /* 设置音乐播放器的列表为mediaPlaylist */
     // mMusicPlayer->setPlaylist(mediaPlaylist);
@@ -442,7 +486,7 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
     else
         mediaDuration = mediaDuration + ":0" + QString::number(second, 10);
 
-    /* 显示媒体总长度时间 */
+    /* 显示媒体总长度时�?*/
     mLabel[3]->setText(mediaDuration);
 }
 
@@ -468,7 +512,7 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
     else
         mediaPosition = mediaPosition + ":0" + QString::number(second, 10);
 
-    /* 显示现在播放的时间 */
+    /* 显示现在播放的时�?*/
     mLabel[2]->setText(mediaPosition);
 }
 
@@ -481,3 +525,8 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
         qDebug() << "onMusicList: " << index.index << " " << name.c_str();
     }
 }
+
+
+
+
+

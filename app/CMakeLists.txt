@@ -29,6 +29,6 @@ link_directories(${3RDPARTY_DIST_DIR}/bin)
 set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${QT_LIB_PATH})
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
-add_executable(${PROJECT_NAME} ${APP_SOURCES})
+add_executable(${PROJECT_NAME} WIN32 ${APP_SOURCES})
 
 target_link_libraries(${PROJECT_NAME} Qt5::Widgets sdk)
