@@ -1,4 +1,4 @@
-#include "LogWrapper.h"
+﻿#include "LogWrapper.h"
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/log/attributes.hpp>
@@ -13,7 +13,6 @@
 #include <boost/make_shared.hpp>
 
 #include <cstdarg>
-#include <cstdio>
 #include <cstring>
 
 namespace logging = boost::log;
@@ -73,37 +72,31 @@ public:
     void write(int level, const char* tag, const char* format, va_list args)
     {
         char buf[1024] = {0};
-        const int tagLen = static_cast<int>(strlen(tag));
-        strncpy(buf, tag, tagLen);
-        buf[tagLen] = ' ';
-        buf[tagLen + 1] = ':';
-        buf[tagLen + 2] = ' ';
-        vsnprintf(buf + tagLen + 3, 1024 - tagLen - 3, format, args);
+        const char *safeTag = (tag == nullptr || tag[0] == '\0') ? "SDK" : tag;
+        const int written = snprintf(buf, sizeof(buf), "[%s] ", safeTag);
+        const int prefixLen = (written > 0 && written < static_cast<int>(sizeof(buf)))
+            ? written
+            : static_cast<int>(sizeof(buf)) - 1;
+        vsnprintf(buf + prefixLen, sizeof(buf) - prefixLen, format, args);
 
         switch (level) {
         case logLevel::INFO:
             BOOST_LOG_SEV(m_slg, normal) << buf;
-            printf("INFO    %s\n", buf);
             break;
         case logLevel::ERROR:
             BOOST_LOG_SEV(m_slg, error) << buf;
-            printf("ERROR   %s\n", buf);
             break;
         case logLevel::WARNING:
             BOOST_LOG_SEV(m_slg, warning) << buf;
-            printf("WARNING %s\n", buf);
             break;
         case logLevel::FATAL:
             BOOST_LOG_SEV(m_slg, fatal) << buf;
-            printf("FATAL   %s\n", buf);
             break;
         case logLevel::DEBUG:
             BOOST_LOG_SEV(m_slg, debug) << buf;
-            printf("DEBUG   %s\n", buf);
             break;
         case logLevel::VERBOSE:
             BOOST_LOG_SEV(m_slg, verbose) << buf;
-            printf("VERBOSE %s\n", buf);
             break;
         default:
             break;
@@ -113,12 +106,14 @@ public:
 private:
     void init()
     {
-        std::string fileNamePattern = m_logDir + "/%Y%m%d_%H%M%S_%5N.log";
+        std::string fileNamePattern = m_logDir + "/" + m_logFileName + "_%Y%m%d_%H%M%S_%5N.log";
+        std::string targetPattern = m_logFileName + "_%Y%m%d_%H%M%S_%5N.log";
 
         auto sink = boost::make_shared<file_sink>(
             keywords::file_name = fileNamePattern.c_str(),
-            keywords::target_file_name = "%Y%m%d_%H%M%S_%5N.log",
+            keywords::target_file_name = targetPattern.c_str(),
             keywords::rotation_size = m_singleFileSizeInBytes);
+        sink->locked_backend()->auto_flush(true);
 
         sink->locked_backend()->set_file_collector(sinks::file::make_collector(
             keywords::target = m_logDir,
@@ -180,3 +175,4 @@ void LogWrapper::log(int level, const char* tag, const char* format, ...)
     m_impl->write(level, tag, format, args);
     va_end(args);
 }
+

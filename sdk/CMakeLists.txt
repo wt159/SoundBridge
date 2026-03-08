@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.2)
+﻿cmake_minimum_required(VERSION 3.2)
 
 project(sdk)
 
@@ -25,14 +25,15 @@ add_subdirectory(${SDK_ROOT_DIR}/audio)
 
 add_subdirectory(${SDK_ROOT_DIR}/extractor)
 
-set(SDK_SOURCES MusicPlayList.cpp MusicPlayer.cpp)
+set(SDK_SOURCES MusicPlayList.cpp MusicPlayer.cpp LogApi.cpp)
 
 add_library(sdk ${SDK_SOURCES})
 
-target_link_libraries(sdk Extractor AudioDevice AudioResample)
+target_link_libraries(sdk Extractor AudioDevice AudioResample LogWrapper)
 
 target_include_directories(sdk PUBLIC ${SDK_ROOT_DIR})
 
 if(BUILD_TESTING)
     add_subdirectory(${SDK_ROOT_DIR}/test)
 endif()
+

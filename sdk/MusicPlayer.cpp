@@ -1,6 +1,7 @@
-#include "AudioBuffer.h"
+﻿#include "AudioBuffer.h"
 #include "AudioDevice.h"
 #include "FileSearch.h"
+#include "LogApi.h"
 #include "LogWrapper.h"
 #include "MusicPlayList.h"
 #include "MusicPlayer.h"
@@ -65,11 +66,12 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
 {
-    std::string rotateFileLog  = "music_player";
-    std::string directory      = logDir;
-    constexpr int k10MBInBytes = 10 * 1024 * 1024;
-    constexpr int k20InCounts  = 20;
-    LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
+    SdkLogConfig logConfig;
+    logConfig.directory = logDir;
+    logConfig.filePrefix = "soundbridge";
+    logConfig.singleFileSizeBytes = 10 * 1024 * 1024;
+    logConfig.maxFileCount = 20;
+    InitializeLogging(logConfig);
     LOG_INFO(LOG_TAG, "Log init success");
 
     m_audioDev = std::make_shared<AudioDevice>(this);
@@ -328,3 +330,4 @@ int MusicPlayer::getMusicCount()
     return m_impl->getMusicCount();
 }
 }
+
