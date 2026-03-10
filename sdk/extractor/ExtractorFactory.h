@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ExtractorHelper.hpp"
 #include "DataSource.hpp"
 #include "NonCopyable.hpp"
@@ -14,8 +14,8 @@ public:
     ExtractorFactory() = delete;
     ~ExtractorFactory() = delete;
 
-    // 娉ㄥ唽鎵╁睍鍚嶅埌鎻愬彇鍣ㄦ瀯閫犲嚱鏁般€?
-    // 杩斿洖 false 琛ㄧず璇ユ墿灞曞悕宸叉敞鍐岋紙涓嶄細瑕嗙洊鏃у疄鐜帮級銆?
+    // Register an extractor by extension.
+    // Returns false if the extension already exists or registration failed.
     static bool registerExtractor(const std::string &extensionName, ExtractorCreator creator);
     static bool registerExtractor(const std::string &extensionName, ExtractorCreator creator, ExtractorSniffer sniffer);
 
@@ -25,7 +25,7 @@ public:
                                             bool enableSniff);
 };
 
-// 绠€鍖栨敞鍐屽啓娉曪細鍦?cpp 鏂囦欢涓竴琛屽畬鎴愨€滄墿灞曞悕 -> 鎻愬彇鍣ㄧ被鍨嬧€濈殑闈欐€佹敞鍐屻€?
+// Helper macros for static registration from the extractor implementation files.
 #define SB_EXTRACTOR_CONCAT_IMPL(A, B) A##B
 #define SB_EXTRACTOR_CONCAT(A, B) SB_EXTRACTOR_CONCAT_IMPL(A, B)
 
@@ -50,6 +50,8 @@ public:
 
 #define REGISTER_EXTRACTOR_WITH_SNIFF(EXTENSION, TYPE)                                        \
     SB_REGISTER_EXTRACTOR_WITH_SNIFF_IMPL(__COUNTER__, EXTENSION, TYPE)
+
+
 
 
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "AudioDecode.h"
 #include "DataSource.hpp"
@@ -43,7 +43,7 @@ struct CommonChunk : public Chunk {
     uint16_t numChannels;
     uint32_t numSampleFrames;
     uint16_t sampleSize;
-    uint32_t sampleRate; /* 80bits, 娴偣 */
+    uint32_t sampleRate; /* 80-bit floating point */
 };
 
 struct SoundDataChunk : public Chunk {
@@ -78,4 +78,6 @@ private:
     AudioBuffer::AudioBufferPtr m_metaBuf;
     AIFF::FormAiffChunk m_formChunk;
 };
+
+
 

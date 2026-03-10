@@ -1,4 +1,4 @@
-#include "ByteUtils.h"
+﻿#include "ByteUtils.h"
 #include <cmath>
 #include <stdint.h>
 
@@ -7,11 +7,11 @@ namespace sdk_utils {
 extern "C" {
 typedef char char_t;
 /**
- * @brief 用于进行判断主机字节序的联合体。
+ * @brief Union used to detect host byte order.
  * @note
- * 小端：低地址存放低字节，高地址存放高字节；
- * 大端：高地址存放低字节，低地址存放高字节；
- * 网络字节序是大端。
+ * Little-endian: low address stores low byte, high address stores high byte.
+ * Big-endian: high address stores low byte, low address stores high byte.
+ * Network byte order is big-endian.
  */
 static union {
     char_t xct_order[4];
@@ -23,7 +23,7 @@ static union {
 
 /**********************************************************/
 /**
- * @brief 字节序转换：16 位整数从 网络字节序 转成 主机字节序。
+ * @brief Byte order conversion: 16-bit integer from network to host order.
  */
 uint16_t vx_ntohs(uint16_t xut_short)
 {
@@ -34,7 +34,7 @@ uint16_t vx_ntohs(uint16_t xut_short)
 
 /**********************************************************/
 /**
- * @brief 字节序转换：16 位整数从 主机字节序 转成 网络字节序。
+ * @brief Byte order conversion: 16-bit integer from host to network order.
  */
 uint16_t vx_htons(uint16_t xut_short)
 {
@@ -45,7 +45,7 @@ uint16_t vx_htons(uint16_t xut_short)
 
 /**********************************************************/
 /**
- * @brief 字节序转换：32 位整数从 网络字节序 转成 主机字节序。
+ * @brief Byte order conversion: 32-bit integer from network to host order.
  */
 uint32_t vx_ntohl(uint32_t xut_long)
 {
@@ -57,7 +57,7 @@ uint32_t vx_ntohl(uint32_t xut_long)
 
 /**********************************************************/
 /**
- * @brief 字节序转换：32 位整数从 主机字节序 转成 网络字节序。
+ * @brief Byte order conversion: 32-bit integer from host to network order.
  */
 uint32_t vx_htonl(uint32_t xut_long)
 {
@@ -69,7 +69,7 @@ uint32_t vx_htonl(uint32_t xut_long)
 
 /**********************************************************/
 /**
- * @brief 字节序转换：64 位整数从 网络字节序 转成 主机字节序。
+ * @brief Byte order conversion: 64-bit integer from network to host order.
  */
 uint64_t vx_ntohll(uint64_t xult_llong)
 {
@@ -139,9 +139,9 @@ uint64_t hton64(uint64_t x)
 
 long double ieee754_80bits_to_long_double(const uint8_t *ptr)
 {
-    // 解析 80 位浮点数的字节数组
-    // IEEE 754 格式的 80 位浮点数
-    // IEEE 754 格式：1 位符号位，15 位指数位，64 位尾数位
+    // Parse 80-bit floating-point byte array
+    // IEEE 754 80-bit floating-point format
+    // IEEE 754 layout: 1 sign bit, 15 exponent bits, 64 significand bits
 
     uint8_t sign         = (ptr[0] & 0x80) >> 7;
     uint16_t exponent    = ((ptr[0] & 0x7F) << 8) | ptr[1];
@@ -152,11 +152,11 @@ long double ieee754_80bits_to_long_double(const uint8_t *ptr)
     }
     long double floatValue = 1.0L;
 
-    // 设置指数
-    int bias           = 16383; // IEEE 754 80位浮点数的指数偏移量
+    // Compute exponent
+    int bias           = 16383; // Exponent bias for IEEE 754 80-bit format
     int actualExponent = static_cast<int>(exponent) - bias;
 
-    // 计算整数
+    // Compute integer part
     auto setNumBit = [](int &num, int bit) { num |= (1 << bit); };
 
     auto clearNumBit = [](int &num, int bit) { num &= ~(1 << bit); };
@@ -172,12 +172,12 @@ long double ieee754_80bits_to_long_double(const uint8_t *ptr)
         }
     }
 
-    // 计算小数
+    // Compute fractional part
     long double decimal = 0.0L;
     bool valid          = false;
     for (int i = 0; i < endPos; i++) {
         int bit = (significand & (1ULL << i)) ? 1 : 0;
-        // 去掉尾部无效零
+        // Skip trailing invalid zeros
         if (!valid && bit) {
             valid = true;
         }
@@ -189,7 +189,7 @@ long double ieee754_80bits_to_long_double(const uint8_t *ptr)
         }
     }
     floatValue  = inter + decimal;
-    // 设置符号
+    // Apply sign
     floatValue *= (sign == 1) ? -1.0L : 1.0L;
     return floatValue;
 }

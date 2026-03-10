@@ -1,4 +1,4 @@
-#include "AudioDevice.h"
+﻿#include "AudioDevice.h"
 #include "LogWrapper.h"
 #include <SDL.h>
 #include <iostream>
@@ -85,13 +85,13 @@ AudioDevice::Impl::~Impl()
 
 int AudioDevice::Impl::getDeviceList(std::vector<AudDevPair> &devList)
 {
-    // TODO: 待实现
+    // TODO: implement
     return 0;
 }
 
 int AudioDevice::Impl::selectDevice(uint64_t id)
 {
-    // TODO: 待实现
+    // TODO: implement
     return 0;
 }
 
@@ -329,3 +329,4 @@ int AudioDevice::stop()
     m_impl->stop();
     return 0;
 }
+

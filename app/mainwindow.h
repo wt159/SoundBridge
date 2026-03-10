@@ -1,5 +1,5 @@
-/******************************************************************
-Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
+﻿/******************************************************************
+Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 * @projectName   14_musicplayer
 * @brief         mainwindow.h
 * @author        Deng Zhimao
@@ -24,11 +24,11 @@ Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 
 using namespace sdk;
 
-/* 媒体信息结构�?*/
+/* Media information struct. */
 struct MediaObjectInfo {
-    /* 用于保存歌曲文件�?*/
+    /* Stores the song file name. */
     QString fileName;
-    /* 用于保存歌曲文件路径 */
+    /* Stores the song file path. */
     QString filePath;
 };
 
@@ -40,37 +40,37 @@ public:
     ~MainWindow();
 
 private:
-    /* 媒体播放器，用于播放音乐 */
+    /* Music player instance. */
     std::shared_ptr<MusicPlayer> mMusicPlayer;
 
-    /* 音乐列表 */
+    /* Music list. */
     QListWidget *mListWidget;
 
-    /* 播放进度�?*/
+    /* Playback progress slider. */
     QSlider *mDurationSlider;
 
-    /* 音乐播放器按�?*/
+    /* Player control buttons. */
     QPushButton *mPushButton[7];
 
-    /* 垂直布局 */
+    /* Vertical layouts. */
     QVBoxLayout *mVBoxLayout[3];
 
-    /* 水平布局 */
+    /* Horizontal layouts. */
     QHBoxLayout *mHBoxLayout[4];
 
-    /* 垂直容器 */
+    /* Vertical containers. */
     QWidget *mVWidget[3];
 
-    /* 水平容器 */
+    /* Horizontal containers. */
     QWidget *mHWidget[4];
 
-    /* 标签文本 */
+    /* Label text. */
     QLabel *mLabel[4];
 
-    /* 用于遮罩 */
+    /* Mask for list overlay. */
     QWidget *mListMask;
 
-    /* 媒体信息存储 */
+    /* Media info storage. */
     QVector<MediaObjectInfo> mMediaObjectInfo;
 
     std::string mAppDir;
@@ -78,68 +78,64 @@ private:
     MusicPlayerState mState;
 
 protected:
-    /* 音乐布局函数 */
+    /* Build the music UI layout. */
     void musicLayout();
 
-    /* 主窗体大小重设大小函数重�?*/
+    /* Handle window resize. */
     void resizeEvent(QResizeEvent *event);
     void closeEvent(QCloseEvent *event);
 
-    /* 扫描歌曲 */
+    /* Scan local songs. */
     void scanSongs();
 
-    /* 媒体播放器类初始�?*/
+    /* Initialize media player. */
     void mediaPlayerInit();
     void applyWindowPolicy();
     void restoreWindowState();
     void persistWindowState();
 
 protected:
-    /* 媒体状态改�?*/
+    /* Media player state changed. */
     virtual void onMusicPlayerStateChanged(MusicPlayerState state);
 
-    /* 媒体列表项改�?*/
+    /* Current playlist index changed. */
     virtual void onMusicPlayerListCurrentIndexChanged(int index);
 
-    /* 媒体总长度改�?*/
+    /* Total duration changed. */
     virtual void onMusicPlayerDurationChanged(uint64_t duration);
 
-    /* 媒体播放位置改变 */
+    /* Playback position changed. */
     virtual void onMusicPlayerPositionChanged(uint64_t position);
 
-    /* 媒体列表改变 */
+    /* Playlist changed. */
     virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex> list);
 
 private slots:
-    /* 播放按钮点击 */
+    /* Play button clicked. */
     void btn_play_clicked();
 
-    /* 下一曲按钮点�?*/
+    /* Next track button clicked. */
     void btn_next_clicked();
 
-    /* 上一曲按钮点�?*/
+    /* Previous track button clicked. */
     void btn_previous_clicked();
 
-    /* 收藏按钮点击 */
+    /* Favorite button clicked. */
     void btn_favorite_clicked();
 
-    /* 播放模式按钮点击 */
+    /* Play mode button clicked. */
     void btn_playMode_clicked();
 
-    /* 播放列表按钮点击 */
+    /* Playlist button clicked. */
     void btn_playList_clicked();
 
-    /* 播放音量按钮点击 */
+    /* Volume button clicked. */
     void btn_volume_clicked();
 
-    /* 列表单击 */
+    /* List item clicked. */
     void listWidgetCliked(QListWidgetItem *);
 
-    /* 播放进度条松开 */
+    /* Duration slider released. */
     void durationSliderReleased();
 };
 #endif // MAINWINDOW_H
-
-
-
-

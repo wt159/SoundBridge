@@ -1,4 +1,4 @@
-#include "ExtractorFactory.h"
+﻿#include "ExtractorFactory.h"
 #include "LogWrapper.h"
 #include "FileSource.h"
 #include "aac/AACExtractor.h"
@@ -208,8 +208,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
     return nullptr;
 }
 
-// 鏂瑰悜涓€锛堟彃浠跺寲涓庤嚜鍔ㄦ敞鍐岋級鐨勭涓€姝ワ細
-// 鎶娾€滄牸寮?>鏋勯€犲櫒鈥濅粠 switch 杩佺Щ鎴愨€滈潤鎬佹敞鍐岃〃鈥濄€?
+// Register built-in extractors, enabling sniffing when possible.
 REGISTER_EXTRACTOR_WITH_SNIFF(".wav", WAVExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".aac", AACExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".mp3", MP3Extractor);
@@ -220,6 +219,8 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".aiff", AIFFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
 REGISTER_EXTRACTOR(".amr", ASFExtractor);
+
+
 
 
 

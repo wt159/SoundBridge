@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
@@ -22,28 +22,27 @@ struct FileProperties {
     std::string extensionName;
     std::string fileDir;
 
-    void parseFileName()
+        void parseFileName()
     {
         if (fullPath.empty())
             return;
-        // 查找最后一个斜杠的位置
+        // Find the last slash position.
         size_t lastSlashPos = fullPath.find_last_of("/");
         if (lastSlashPos != std::string::npos) {
-            // 提取文件目录
+            // Extract the directory path.
             fileDir           = fullPath.substr(0, lastSlashPos + 1);
-            // 提取文件名
+            // Extract the file name.
             fileName          = fullPath.substr(lastSlashPos + 1);
-            // 查找最后一个点的位置
+            // Find the last dot position.
             size_t lastDotPos = fileName.find_last_of(".");
             if (lastDotPos != std::string::npos) {
-                // 提取扩展名
+                // Extract the extension.
                 extensionName = fileName.substr(lastDotPos);
-                // 去除扩展名后的文件名
+                // Remove the extension from the file name.
                 fileName      = fileName.substr(0, lastDotPos);
             }
         }
-    }
-};
+    }};
 
 struct SignalProperties {
     AudioSpec spec;
@@ -109,3 +108,4 @@ protected:
     void _updateList();
 };
 }
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <NonCopyable.hpp>
 #include <AudioCommon.hpp>
 #include <memory>
@@ -12,8 +12,8 @@ public:
 };
 
 /**
- * @brief 音频设备类：用于音频设备的选择、打开、关闭、启动、停止等操作
- * @details 支持音频格式：44100Hz，16bit，双声道
+ * @brief Audio device class: select, open, close, start, and stop audio devices.
+ * @details Supported audio format: 44100 Hz, 16-bit, stereo.
   * 
  * @version 0.1
  * @author wtp (wtp0727@gmail.com)

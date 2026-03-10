@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "NonCopyable.hpp"
 #include "SyncQueue.hpp"
 #include <atomic>
@@ -246,7 +246,7 @@ protected:
     std::list<ThreadWrapperPtr> m_coreThreadGroup;
     std::mutex m_coreThreadMutex;
     std::condition_variable m_coreThreadCond;
-    std::list<ThreadWrapperPtr> m_cacheThreadGroup; // 空闲线程组
+    std::list<ThreadWrapperPtr> m_cacheThreadGroup; // cached idle threads
     std::mutex m_cacheThreadMutex;
     std::condition_variable m_cacheThreadCond;
     SyncQueue<Task> m_queue;
@@ -258,3 +258,4 @@ protected:
     std::atomic<bool> m_shutdownNow;
     std::once_flag m_flag;
 };
+

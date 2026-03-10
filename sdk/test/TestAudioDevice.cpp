@@ -1,4 +1,4 @@
-#include "AudioDevice.h"
+﻿#include "AudioDevice.h"
 #include "LogWrapper.h"
 #include <algorithm>
 #include <cstring>
@@ -80,7 +80,7 @@ private:
         m_file.seekg(0, std::ios::beg);
 
         m_file.read((char *)&header, sizeof(header));
-        // 输出文件头信息
+        // Output WAV header info
         std::cout << "Chunk ID: " << std::string(header.chunkID, 4) << std::endl;
         std::cout << "Chunk Size: " << header.chunkSize << " bytes" << std::endl;
         std::cout << "Format: " << std::string(header.format, 4) << std::endl;

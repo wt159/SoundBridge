@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <type_traits>
 #include <typeinfo>
 #ifndef _MSC_VER
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-//获取类型易读的名称
+// Get a human-readable type name.
 template <class T>
 std::string type_name()
 {
@@ -32,3 +32,4 @@ std::string type_name()
         r += "&&";
     return r;
 }
+

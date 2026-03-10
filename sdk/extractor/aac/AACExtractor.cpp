@@ -1,4 +1,4 @@
-#include "AACExtractor.h"
+﻿#include "AACExtractor.h"
 #include "LogWrapper.h"
 #include <cstring>
 
@@ -54,7 +54,7 @@ AACExtractor::~AACExtractor()
 
 status_t AACExtractor::init()
 {
-    //(1)銆€鍒ゆ柇鏂囦欢鏍煎紡锛岀‘瀹氫负ADIF鎴朅DTS
+    // Check file format: ADIF or ADTS
     uint32_t id;
     if (m_dataSource->readAt(0, &id, sizeof id) < 2) {
         return NO_INIT;
@@ -103,4 +103,5 @@ status_t AACExtractor::init()
              m_spec.numChannel, m_spec.bytesPerSample);
     return NO_ERROR;
 }
+
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "AudioBuffer.h"
 #include "AudioDecode.h"
@@ -7,11 +7,11 @@
 #include "NonCopyable.hpp"
 #include <vector>
 
-// 杩欐槸 FLAC 姣旂壒娴佺殑姒傝堪銆?
+// Overview of the FLAC bitstream.
 
-// fLaC 鏍囪锛氭鏍囪琚坊鍔犲埌娴佺殑寮€澶淬€傚畠鍚庨潰鏄竴涓垨澶氫釜鍏冩暟鎹潡銆?
+// fLaC marker: added at the start of the stream, followed by one or more metadata blocks.
 
-// 鍏冩暟鎹潡锛欶LAC鏀寔128绉嶅厓鏁版嵁鍧楋紱鐩墠瀹氫箟浜嗕互涓嬪唴瀹广€?
+// Metadata blocks: FLAC supports 128 block types; currently defined below.
 
 //     STREAMINFO: Contains the information about the whole stream.
 //     APPLICATION: This is used by third-party applications for identification.
@@ -21,7 +21,7 @@
 //     VORBIS_COMMENT: Used to store human-readable key/value pairs.
 //     CUESHEET: Used to store cue sheet information.
 //     PICTURE: Used to store pictures.
-// FRAME锛氶煶棰戞暟鎹敱涓€涓垨澶氫釜闊抽甯х粍鎴愩€?
+// FRAME: audio data is composed of one or more audio frames.
 
 //     FRAME_HEADER: Contains the basic information about the stream.
 //     SUBFRAME: To decrease the complexity, individual subframes are coded separately within a
@@ -235,4 +235,5 @@ private:
     AudioSpec m_spec;
     FLACHeader m_header;
 };
+
 

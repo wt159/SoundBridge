@@ -1,5 +1,5 @@
-/******************************************************************
-Copyright © Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
+﻿/******************************************************************
+Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 * @projectName   14_musicplayer
 * @brief         mainwindow.cpp
 * @author        Deng Zhimao
@@ -29,7 +29,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyWindowPolicy();
     restoreWindowState();
 
-    /* 媒体播放器初始化 */
+    /* Initialize media player */
     mediaPlayerInit();
 
     /* Scan songs */
@@ -43,7 +43,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(mPushButton[4], SIGNAL(clicked()), this, SLOT(btn_playMode_clicked()));
     connect(mPushButton[5], SIGNAL(clicked()), this, SLOT(btn_playList_clicked()));
     connect(mPushButton[6], SIGNAL(clicked()), this, SLOT(btn_volume_clicked()));
-    /* 媒体信坷槽连�?*/
+    /* Legacy media signals (kept for reference) */
     // connect(mMusicPlayer, SIGNAL(stateChanged(QMediaPlayer::State)), this,
     //         SLOT(mediaPlayerStateChanged(QMediaPlayer::State)));
     // connect(mediaPlaylist, SIGNAL(currentIndexChanged(int)), this,
@@ -53,14 +53,14 @@ MainWindow::MainWindow(QWidget *parent)
     // connect(mMusicPlayer, SIGNAL(positionChanged(qint64)), this,
     //         SLOT(mediaPlayerPositionChanged(qint64)));
 
-    /* 列表信坷槽连�?*/
+    /* List signals */
     connect(mListWidget, SIGNAL(itemClicked(QListWidgetItem *)), this,
             SLOT(listWidgetCliked(QListWidgetItem *)));
 
-    /* slider信坷槽连�?*/
+    /* Slider signals */
     connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
 
-    /* 失去焦点 */
+    /* Remove focus */
     this->setFocus();
 }
 
@@ -68,51 +68,51 @@ void MainWindow::musicLayout()
 {
     QPalette pal;
 
-    /* 按钮 */
+    /* Buttons */
     for (int i = 0; i < 7; i++)
         mPushButton[i] = new QPushButton();
 
-    /* 标签 */
+    /* Labels */
     for (int i = 0; i < 4; i++)
         mLabel[i] = new QLabel();
 
     for (int i = 0; i < 3; i++) {
-        /* 垂直容器 */
+        /* Vertical containers */
         mVWidget[i] = new QWidget();
         mVWidget[i]->setAutoFillBackground(true);
-        /* 垂直布局 */
+        /* Vertical layouts */
         mVBoxLayout[i] = new QVBoxLayout();
     }
 
     for (int i = 0; i < 4; i++) {
-        /* 水平容器 */
+        /* Horizontal containers */
         mHWidget[i] = new QWidget();
         mHWidget[i]->setAutoFillBackground(true);
-        /* 水平布局 */
+        /* Horizontal layouts */
         mHBoxLayout[i] = new QHBoxLayout();
     }
 
-    /* 播放进度�?*/
+    /* Playback progress */
     mDurationSlider = new QSlider(Qt::Horizontal);
     mDurationSlider->setMinimumSize(300, 15);
     mDurationSlider->setMaximumHeight(15);
     mDurationSlider->setObjectName("mDurationSlider");
 
-    /* 音九列表 */
+    /* Music list */
     mListWidget = new QListWidget();
     mListWidget->setObjectName("mListWidget");
     mListWidget->resize(310, 265);
     mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    /* 列表靮罩 */
+    /* List mask overlay */
     mListMask = new QWidget(mListWidget);
     mListMask->setMinimumSize(310, 50);
     mListMask->setMinimumHeight(50);
     mListMask->setObjectName("mListMask");
     mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
 
-    /* 设置对象坝称 */
+    /* Set object names */
     mPushButton[0]->setObjectName("btn_previous");
     mPushButton[1]->setObjectName("btn_play");
     mPushButton[2]->setObjectName("btn_next");
@@ -121,11 +121,11 @@ void MainWindow::musicLayout()
     mPushButton[5]->setObjectName("btn_menu");
     mPushButton[6]->setObjectName("btn_volume");
 
-    /* 设置按钮属�?*/
+    /* Set button state */
     mPushButton[1]->setCheckable(true);
     mPushButton[3]->setCheckable(true);
 
-    /* H0布局 */
+    /* H0 layout */
     mVWidget[0]->setMinimumSize(310, 480);
     mVWidget[0]->setMaximumWidth(310);
     mVWidget[1]->setMinimumSize(320, 480);
@@ -145,7 +145,7 @@ void MainWindow::musicLayout()
     mHWidget[0]->setLayout(mHBoxLayout[0]);
     setCentralWidget(mHWidget[0]);
 
-    /* V0布局 */
+    /* V0 layout */
     mListWidget->setMinimumSize(310, 265);
     mListWidget->setFont(QFont("ANSI"));
     mHWidget[1]->setMinimumSize(310, 80);
@@ -163,7 +163,7 @@ void MainWindow::musicLayout()
 
     mVWidget[0]->setLayout(mVBoxLayout[0]);
 
-    /* H1布局 */
+    /* H1 layout */
     for (int i = 0; i < 3; i++) {
         mPushButton[i]->setMinimumSize(80, 80);
     }
@@ -178,7 +178,7 @@ void MainWindow::musicLayout()
 
     mHWidget[1]->setLayout(mHBoxLayout[1]);
 
-    /* V1布局 */
+    /* V1 layout */
     QSpacerItem *vSpacer2 = new QSpacerItem(320, 40, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer3 = new QSpacerItem(320, 20, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer4 = new QSpacerItem(320, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
@@ -204,7 +204,7 @@ void MainWindow::musicLayout()
 
     mVWidget[1]->setLayout(mVBoxLayout[1]);
 
-    /* V2布局 */
+    /* V2 layout */
     QSpacerItem *vSpacer5 = new QSpacerItem(300, 10, QSizePolicy::Minimum, QSizePolicy::Maximum);
     mHWidget[2]->setMinimumSize(320, 20);
     mHWidget[3]->setMinimumSize(320, 60);
@@ -215,12 +215,12 @@ void MainWindow::musicLayout()
 
     mVWidget[2]->setLayout(mVBoxLayout[2]);
 
-    /* H2布局 */
+    /* H2 layout */
     QFont font;
 
     font.setPixelSize(10);
 
-    /* 设置标签文本 */
+    /* Set label text */
     mLabel[0]->setText("Q Music, Enjoy it!");
     mLabel[2]->setText("00:00");
     mLabel[3]->setText("00:00");
@@ -242,7 +242,7 @@ void MainWindow::musicLayout()
     mHBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
     mHWidget[2]->setLayout(mHBoxLayout[2]);
 
-    /* H3布局 */
+    /* H3 layout */
     QSpacerItem *hSpacer5 = new QSpacerItem(0, 60, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *hSpacer6 = new QSpacerItem(80, 60, QSizePolicy::Maximum, QSizePolicy::Maximum);
     QSpacerItem *hSpacer7 = new QSpacerItem(80, 60, QSizePolicy::Maximum, QSizePolicy::Maximum);
@@ -325,12 +325,12 @@ void MainWindow::btn_play_clicked()
     MusicPlayerState state = mMusicPlayer->state();
     switch (state) {
     case MusicPlayerState::StoppedState:
-        /* 媒体播放 */
+        /* Start playback */
         mMusicPlayer->play();
         break;
 
     case MusicPlayerState::PlayingState:
-        /* 媒体暂坜 */
+        /* Pause playback */
         mMusicPlayer->pause();
         break;
 
@@ -347,7 +347,7 @@ void MainWindow::btn_next_clicked()
     if (0 == count)
         return;
 
-    /* 列表下一�?*/
+    /* Next track in list */
     mMusicPlayer->next();
     mMusicPlayer->play();
 }
@@ -359,7 +359,7 @@ void MainWindow::btn_previous_clicked()
     if (0 == count)
         return;
 
-    /* 列表上一�?*/
+    /* Previous track in list */
     mMusicPlayer->previous();
     mMusicPlayer->play();
 }
@@ -409,7 +409,7 @@ void MainWindow::scanSongs()
 {
     QDir dir(QCoreApplication::applicationDirPath() + "/../../music");
     QDir dirbsolutePath(dir.absolutePath());
-    /* 如果目录存在 */
+    /* If directory exists */
     if (dirbsolutePath.exists()) {
         mMusicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
     } else {
@@ -466,7 +466,7 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
     if (-1 == index)
         return;
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onListCurIndex: %d", index);
-    /* 设置列表正在播放的项 */
+    /* Highlight currently playing item */
     mListWidget->setCurrentRow(index);
 }
 
@@ -530,10 +530,4 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
         sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s", index.index, name.c_str());
     }
 }
-
-
-
-
-
-
 

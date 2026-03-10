@@ -1,4 +1,4 @@
-#include "FLACExtractor.h"
+﻿#include "FLACExtractor.h"
 #include "LogWrapper.h"
 #include <cstring>
 
@@ -36,7 +36,7 @@ FLACExtractor::~FLACExtractor() { }
 
 status_t FLACExtractor::init()
 {
-    //(1)銆€鍒ゆ柇鏂囦欢鏍煎紡
+    // Check file format
     uint8_t id[4];
     int offset = 0;
     if (m_dataSource->readAt(0, &id, 4) < 4) {
@@ -170,4 +170,5 @@ status_t FLACExtractor::init()
     LOGI("durationMs: %lu", m_spec.durationMs);
     return NO_ERROR;
 }
+
 
