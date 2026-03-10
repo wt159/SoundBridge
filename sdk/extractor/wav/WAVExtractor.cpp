@@ -6,6 +6,23 @@
 #define LOG_TAG "WAVExtractor"
 
 using namespace sdk_utils;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool WAVExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[12] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    return memcmp(buf, "RIFF", 4) == 0 && memcmp(buf + 8, "WAVE", 4) == 0;
+}
+
 
 #define CHANNEL_MASK_USE_CHANNEL_ORDER 0
 
@@ -220,3 +237,4 @@ status_t WAVExtractor::init()
 
     return NO_INIT;
 }
+

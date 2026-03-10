@@ -43,7 +43,7 @@ struct CommonChunk : public Chunk {
     uint16_t numChannels;
     uint32_t numSampleFrames;
     uint16_t sampleSize;
-    uint32_t sampleRate; /* 80bits, 浮点 */
+    uint32_t sampleRate; /* 80bits, 娴偣 */
 };
 
 struct SoundDataChunk : public Chunk {
@@ -57,6 +57,7 @@ struct SoundDataChunk : public Chunk {
 class AIFFExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit AIFFExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -77,3 +78,4 @@ private:
     AudioBuffer::AudioBufferPtr m_metaBuf;
     AIFF::FormAiffChunk m_formChunk;
 };
+

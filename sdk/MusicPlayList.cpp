@@ -66,7 +66,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     }
     processProperties.source = source;
     std::shared_ptr<ExtractorHelper> extractor(
-        ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName));
+        ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName, true));
     if (extractor == nullptr || extractor->initCheck() != OK) {
         LOG_ERROR(LOG_TAG, "createExtractor failed or initCheck failed");
         return;
@@ -190,3 +190,4 @@ void MusicPlayList::_updateList()
     }
 }
 }
+

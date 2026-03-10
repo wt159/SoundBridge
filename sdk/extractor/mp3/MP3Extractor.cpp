@@ -9,6 +9,26 @@
 #define __unused __attribute__((unused))
 
 using namespace sdk_utils;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool MP3Extractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[3] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    if (memcmp(buf, "ID3", 3) == 0) {
+        return true;
+    }
+    return (buf[0] == 0xFF && (buf[1] & 0xE0) == 0xE0);
+}
+
 // Everything must match except for
 // protection, bitrate, padding, private bits, mode, mode extension,
 // copyright bit, original bit and emphasis.

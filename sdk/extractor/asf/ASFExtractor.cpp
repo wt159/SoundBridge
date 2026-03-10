@@ -7,6 +7,30 @@
 
 using namespace sdk_utils;
 using namespace ASF;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool ASFExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[16] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    const uint8_t asfGuid[16]
+        = {0x30,0x26,0xB2,0x75,0x8E,0x66,0xCF,0x11,0xA6,0xD9,0x00,0xAA,0x00,0x62,0xCE,0x6C};
+    for (int i = 0; i < 16; ++i) {
+        if (buf[i] != asfGuid[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 constexpr GUID guidHeader = {
     .v1 = 0x75B22630,
@@ -429,3 +453,4 @@ void ASF::PayloadParsingInfomation::dump()
     LOGD("sendTime=%u", sendTime);
     LOGD("duration=%u", duration);
 }
+

@@ -5,6 +5,23 @@
 #define LOG_TAG "FLACExtractor"
 
 using namespace sdk_utils;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool FLACExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[4] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    return memcmp(buf, "fLaC", 4) == 0;
+}
+
 
 FLACExtractor::FLACExtractor(DataSourceBase *source)
     : m_dataSource(source)
@@ -19,7 +36,7 @@ FLACExtractor::~FLACExtractor() { }
 
 status_t FLACExtractor::init()
 {
-    //(1)　判断文件格式
+    //(1)銆€鍒ゆ柇鏂囦欢鏍煎紡
     uint8_t id[4];
     int offset = 0;
     if (m_dataSource->readAt(0, &id, 4) < 4) {
@@ -153,3 +170,4 @@ status_t FLACExtractor::init()
     LOGI("durationMs: %lu", m_spec.durationMs);
     return NO_ERROR;
 }
+

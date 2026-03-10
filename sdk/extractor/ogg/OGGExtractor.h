@@ -46,6 +46,7 @@ struct Page {
 class OGGExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit OGGExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -64,3 +65,4 @@ private:
     AudioSpec m_spec;
     std::vector<OGG::Page> m_pageVec;
 };
+

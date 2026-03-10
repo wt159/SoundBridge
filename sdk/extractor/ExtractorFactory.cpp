@@ -11,11 +11,100 @@
 #include "wav/WAVExtractor.h"
 #include <mutex>
 #include <unordered_map>
+#include <vector>
+#include <utility>
 
 #define LOG_TAG "ExtractorFactory"
 
 namespace {
-using RegistryMap = std::unordered_map<std::string, ExtractorFactory::ExtractorCreator>;
+
+std::string normalizeExtension(const std::string &extensionName)
+{
+    if (extensionName.empty()) {
+        return std::string();
+    }
+    std::string out = extensionName;
+    if (out[0] != '.') {
+        out = "." + out;
+    }
+    for (char &ch : out) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    const ssize_t n = source->readAt(0, buf, size);
+    return n >= static_cast<ssize_t>(size);
+}
+
+bool matchAscii(const uint8_t *buf, size_t offset, const char *text)
+{
+    for (size_t i = 0; text[i] != '\0'; ++i) {
+        if (buf[offset + i] != static_cast<uint8_t>(text[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string sniffExtensionByMagic(DataSourceBase *source)
+{
+    uint8_t buf[16] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return std::string();
+    }
+
+    if (matchAscii(buf, 0, "RIFF") && matchAscii(buf, 8, "WAVE")) {
+        return ".wav";
+    }
+    if (matchAscii(buf, 0, "FORM") && (matchAscii(buf, 8, "AIFF") || matchAscii(buf, 8, "AIFC"))) {
+        return ".aiff";
+    }
+    if (matchAscii(buf, 0, "fLaC")) {
+        return ".flac";
+    }
+    if (matchAscii(buf, 0, "OggS")) {
+        return ".ogg";
+    }
+    if (matchAscii(buf, 0, "ID3")) {
+        return ".mp3";
+    }
+    if (buf[0] == 0xFF && (buf[1] & 0xF0) == 0xF0) {
+        return ".aac"; // ADTS
+    }
+    // ASF/WMA magic GUID
+    const uint8_t asfGuid[16] = {0x30,0x26,0xB2,0x75,0x8E,0x66,0xCF,0x11,0xA6,0xD9,0x00,0xAA,0x00,0x62,0xCE,0x6C};
+    bool asfMatch = true;
+    for (int i = 0; i < 16; ++i) {
+        if (buf[i] != asfGuid[i]) { asfMatch = false; break; }
+    }
+    if (asfMatch) {
+        return ".asf";
+    }
+    if (matchAscii(buf, 4, "ftyp")) {
+        return ".m4a"; // treat mp4 container as m4a
+    }
+    if (matchAscii(buf, 0, "#!AMR")) {
+        return ".amr";
+    }
+    return std::string();
+}
+
+} // namespace
+namespace {
+struct ExtractorEntry {
+    ExtractorFactory::ExtractorCreator creator;
+    ExtractorFactory::ExtractorSniffer sniffer;
+};
+
+using RegistryMap = std::unordered_map<std::string, ExtractorEntry>;
 
 RegistryMap &extractorRegistry()
 {
@@ -32,18 +121,27 @@ std::mutex &extractorRegistryMutex()
 
 bool ExtractorFactory::registerExtractor(const std::string &extensionName, ExtractorCreator creator)
 {
-    // 避免空扩展名或空 creator 被加入注册表，防止 create 时崩溃。
-    if (extensionName.empty() || !creator) {
+    return registerExtractor(extensionName, std::move(creator), nullptr);
+}
+
+bool ExtractorFactory::registerExtractor(const std::string &extensionName,
+                                         ExtractorCreator creator,
+                                         ExtractorSniffer sniffer)
+{
+    const std::string normalized = normalizeExtension(extensionName);
+    if (normalized.empty() || !creator) {
         LOGW("registerExtractor ignore invalid extensionName/creator");
         return false;
     }
 
     std::lock_guard<std::mutex> guard(extractorRegistryMutex());
     auto &registry = extractorRegistry();
-    std::pair<RegistryMap::iterator, bool> insertResult =
-        registry.emplace(extensionName, std::move(creator));
+    ExtractorEntry entry;
+    entry.creator = std::move(creator);
+    entry.sniffer = std::move(sniffer);
+    std::pair<RegistryMap::iterator, bool> insertResult = registry.emplace(normalized, std::move(entry));
     if (!insertResult.second) {
-        LOGW("registerExtractor duplicate extension: %s", extensionName.c_str());
+        LOGW("registerExtractor duplicate extension: %s", normalized.c_str());
         return false;
     }
     return true;
@@ -52,26 +150,80 @@ bool ExtractorFactory::registerExtractor(const std::string &extensionName, Extra
 ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
                                                    const std::string &extensionName)
 {
-    std::lock_guard<std::mutex> guard(extractorRegistryMutex());
-    auto &registry = extractorRegistry();
-    auto search = registry.find(extensionName);
-    if (search == registry.end()) {
-        LOGW("createExtractor unsupported extension: %s", extensionName.c_str());
+    return createExtractor(source, extensionName, false);
+}
+
+ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
+                                                   const std::string &extensionName,
+                                                   bool enableSniff)
+{
+    const std::string normalized = normalizeExtension(extensionName);
+    {
+        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+        auto &registry = extractorRegistry();
+        auto search = registry.find(normalized);
+        if (search != registry.end()) {
+            return search->second.creator(source);
+        }
+    }
+
+    if (!enableSniff) {
+        LOGW("createExtractor unsupported extension: %s", normalized.c_str());
         return nullptr;
     }
 
-    return search->second(source);
+    const std::string sniffed = sniffExtensionByMagic(source);
+    if (!sniffed.empty()) {
+        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+        auto &registry = extractorRegistry();
+        auto search = registry.find(sniffed);
+        if (search != registry.end()) {
+            LOGI("createExtractor sniff hit: %s", sniffed.c_str());
+            return search->second.creator(source);
+        }
+        LOGW("createExtractor unsupported sniffed extension: %s", sniffed.c_str());
+    }
+
+    std::vector<std::pair<std::string, ExtractorEntry> > entries;
+    {
+        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+        auto &registry = extractorRegistry();
+        entries.reserve(registry.size());
+        for (const auto &it : registry) {
+            entries.push_back(it);
+        }
+    }
+
+    for (const auto &entry : entries) {
+        if (!entry.second.sniffer) {
+            continue;
+        }
+        if (entry.second.sniffer(source)) {
+            LOGI("createExtractor sniffer hit: %s", entry.first.c_str());
+            return entry.second.creator(source);
+        }
+    }
+
+    LOGW("createExtractor sniff failed: %s", normalized.c_str());
+    return nullptr;
 }
 
-// 方向一（插件化与自动注册）的第一步：
-// 把“格式->构造器”从 switch 迁移成“静态注册表”。
-REGISTER_EXTRACTOR(".wav", WAVExtractor);
-REGISTER_EXTRACTOR(".aac", AACExtractor);
-REGISTER_EXTRACTOR(".mp3", MP3Extractor);
-REGISTER_EXTRACTOR(".flac", FLACExtractor);
-REGISTER_EXTRACTOR(".m4a", M4AExtractor);
-REGISTER_EXTRACTOR(".ogg", OGGExtractor);
-REGISTER_EXTRACTOR(".aiff", AIFFExtractor);
-REGISTER_EXTRACTOR(".asf", ASFExtractor);
+// 鏂瑰悜涓€锛堟彃浠跺寲涓庤嚜鍔ㄦ敞鍐岋級鐨勭涓€姝ワ細
+// 鎶娾€滄牸寮?>鏋勯€犲櫒鈥濅粠 switch 杩佺Щ鎴愨€滈潤鎬佹敞鍐岃〃鈥濄€?
+REGISTER_EXTRACTOR_WITH_SNIFF(".wav", WAVExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".aac", AACExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".mp3", MP3Extractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".flac", FLACExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".m4a", M4AExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".ogg", OGGExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".aiff", AIFFExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
 REGISTER_EXTRACTOR(".amr", ASFExtractor);
+
+
+
+
+
+
+

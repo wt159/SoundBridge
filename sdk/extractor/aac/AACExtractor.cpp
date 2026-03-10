@@ -5,6 +5,26 @@
 #define LOG_TAG "AACExtractor"
 
 using namespace sdk_utils;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool AACExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[4] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    if (memcmp(buf, "ADIF", 4) == 0) {
+        return true;
+    }
+    return (buf[0] == 0xFF && (buf[1] & 0xF0) == 0xF0);
+}
+
 
 // Returns the sample rate based on the sampling frequency index
 uint32_t getSampleRate(const uint8_t sfIndex)
@@ -34,7 +54,7 @@ AACExtractor::~AACExtractor()
 
 status_t AACExtractor::init()
 {
-    //(1)　判断文件格式，确定为ADIF或ADTS
+    //(1)銆€鍒ゆ柇鏂囦欢鏍煎紡锛岀‘瀹氫负ADIF鎴朅DTS
     uint32_t id;
     if (m_dataSource->readAt(0, &id, sizeof id) < 2) {
         return NO_INIT;
@@ -83,3 +103,4 @@ status_t AACExtractor::init()
              m_spec.numChannel, m_spec.bytesPerSample);
     return NO_ERROR;
 }
+

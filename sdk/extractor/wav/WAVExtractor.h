@@ -8,6 +8,7 @@
 class WAVExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit WAVExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -29,3 +30,4 @@ private:
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
 };
+

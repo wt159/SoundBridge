@@ -57,6 +57,7 @@ struct MetaDataBox {
 class M4AExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit M4AExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     ~M4AExtractor();
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
@@ -75,3 +76,5 @@ private:
     AudioSpec m_spec;
     std::vector<M4A::MetaDataBox> m_headerVec;
 };
+
+

@@ -29,6 +29,7 @@ private:
 
 public:
     explicit MP3Extractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     ~MP3Extractor() = default;
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
@@ -38,3 +39,5 @@ public:
 private:
     sdk_utils::status_t init();
 };
+
+

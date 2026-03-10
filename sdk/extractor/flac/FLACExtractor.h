@@ -7,11 +7,11 @@
 #include "NonCopyable.hpp"
 #include <vector>
 
-// 这是 FLAC 比特流的概述。
+// 杩欐槸 FLAC 姣旂壒娴佺殑姒傝堪銆?
 
-// fLaC 标记：此标记被添加到流的开头。它后面是一个或多个元数据块。
+// fLaC 鏍囪锛氭鏍囪琚坊鍔犲埌娴佺殑寮€澶淬€傚畠鍚庨潰鏄竴涓垨澶氫釜鍏冩暟鎹潡銆?
 
-// 元数据块：FLAC支持128种元数据块；目前定义了以下内容。
+// 鍏冩暟鎹潡锛欶LAC鏀寔128绉嶅厓鏁版嵁鍧楋紱鐩墠瀹氫箟浜嗕互涓嬪唴瀹广€?
 
 //     STREAMINFO: Contains the information about the whole stream.
 //     APPLICATION: This is used by third-party applications for identification.
@@ -21,7 +21,7 @@
 //     VORBIS_COMMENT: Used to store human-readable key/value pairs.
 //     CUESHEET: Used to store cue sheet information.
 //     PICTURE: Used to store pictures.
-// FRAME：音频数据由一个或多个音频帧组成。
+// FRAME锛氶煶棰戞暟鎹敱涓€涓垨澶氫釜闊抽甯х粍鎴愩€?
 
 //     FRAME_HEADER: Contains the basic information about the stream.
 //     SUBFRAME: To decrease the complexity, individual subframes are coded separately within a
@@ -216,6 +216,7 @@ struct FLACHeader {
 class FLACExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit FLACExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -234,3 +235,4 @@ private:
     AudioSpec m_spec;
     FLACHeader m_header;
 };
+

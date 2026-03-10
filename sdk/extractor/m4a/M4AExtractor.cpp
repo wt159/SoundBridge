@@ -1,10 +1,28 @@
 #include "ByteUtils.h"
 #include "LogWrapper.h"
 #include "M4AExtractor.h"
+#include <cstring>
 
 #define LOG_TAG "M4AExtractor"
 
 using namespace sdk_utils;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool M4AExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[12] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    return memcmp(buf + 4, "ftyp", 4) == 0;
+}
+
 
 namespace M4A {
 std::unordered_map<std::string, MetaDataBoxType> MetaDataBlockTypeMap = {
@@ -93,3 +111,7 @@ status_t M4AExtractor::init()
 #endif
     return OK;
 }
+
+
+
+

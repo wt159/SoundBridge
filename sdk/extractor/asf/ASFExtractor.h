@@ -208,6 +208,7 @@ struct DataObject : public Object {
 class ASFExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit ASFExtractor(DataSourceBase *source);
+    static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -234,3 +235,4 @@ private:
     ASF::HeaderObject m_headerObj;
     ASF::DataObject m_dataObj;
 };
+

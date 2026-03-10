@@ -9,6 +9,23 @@
 
 using namespace sdk_utils;
 using namespace OGG;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool OGGExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[4] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    return memcmp(buf, "OggS", 4) == 0;
+}
+
 
 constexpr uint16_t kMaxCodecParameterNum = 15;
 
@@ -140,3 +157,4 @@ status_t OGGExtractor::init()
 
     return OK;
 }
+

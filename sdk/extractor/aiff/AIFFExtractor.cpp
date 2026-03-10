@@ -7,6 +7,26 @@
 
 using namespace sdk_utils;
 using namespace AIFF;
+static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+{
+    if (source == nullptr || buf == nullptr || size == 0) {
+        return false;
+    }
+    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+}
+
+bool AIFFExtractor::sniff(DataSourceBase *source)
+{
+    uint8_t buf[12] = {0};
+    if (!readHeader(source, buf, sizeof(buf))) {
+        return false;
+    }
+    if (memcmp(buf, "FORM", 4) != 0) {
+        return false;
+    }
+    return (memcmp(buf + 8, "AIFF", 4) == 0) || (memcmp(buf + 8, "AIFC", 4) == 0);
+}
+
 
 AIFFExtractor::AIFFExtractor(DataSourceBase *source)
     : m_dataSource(source)
@@ -167,3 +187,4 @@ void AIFFExtractor::AudioBuffer2HostEndian(AudioBuffer::AudioBufferPtr &audioBuf
         }
     }
 }
+

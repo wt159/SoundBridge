@@ -118,3 +118,19 @@ Copy-Item 'E:\flushbonad\github\SoundBridge\build\app\SoundBridge.exe' $pkg
 Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll' $pkg -Force
 if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' "$pkg\music" -Recurse -Force }
 ```
+
+## SDK 测试（Windows）
+
+测试依赖样本文件和 DLL，请使用一键脚本准备运行目录并执行测试。
+
+### PowerShell 一键执行
+
+```powershell
+.\scripts\run_sdk_tests.ps1
+```
+
+### 自定义 windeployqt 路径（可选）
+
+```powershell
+.\scripts\run_sdk_tests.ps1 -QtDeploy "F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe"
+```
