@@ -203,7 +203,7 @@ int VorbisDecode::decode(const char *data, ssize_t size)
                                     /* convert floats to 16 bit signed ints (host order) and
                                        interleave */
                                     for (i = 0; i < vi.channels; i++) {
-                                        ogg_int16_t *ptr = (ogg_int16_t *)m_decSpec.lineData[i] + i;
+                                        ogg_int16_t *ptr = (ogg_int16_t *)m_decSpec.lineData[i];
                                         float *mono      = pcm[i];
                                         for (j = 0; j < bout; j++) {
 #if 1
@@ -220,7 +220,7 @@ int VorbisDecode::decode(const char *data, ssize_t size)
                                                 val      = -32768;
                                                 clipflag = 1;
                                             }
-                                            *ptr = val;
+                                            *ptr++ = val;
                                         }
                                     }
 
@@ -239,7 +239,7 @@ int VorbisDecode::decode(const char *data, ssize_t size)
                 }
                 if (!eos) {
                     buffer = ogg_sync_buffer(&oy, 4096);
-                    bytes  = fread(buffer, 1, 4096, stdin);
+                    bytes  = readFormData(buffer, 4096);
                     ogg_sync_wrote(&oy, bytes);
                     if (bytes == 0)
                         eos = 1;
