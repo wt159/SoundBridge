@@ -104,6 +104,25 @@ void MainWindow::musicLayout()
     mListWidget->resize(310, 265);
     mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    {
+        QFont listFont = mListWidget->font();
+        listFont.setPixelSize(16);
+        listFont.setWeight(QFont::Medium);
+        mListWidget->setFont(listFont);
+        mListWidget->setSpacing(0);
+        mListWidget->setUniformItemSizes(true);
+        mListWidget->setTextElideMode(Qt::ElideRight);
+        const int rowHeight = QFontMetrics(listFont).height() + 10;
+        mListWidget->setGridSize(QSize(0, rowHeight));
+        mListWidget->setStyleSheet(
+            "QListWidget{background:transparent;}"
+            "QListWidget::item{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,16);}"
+            "QListWidget::item:hover{background:rgba(255,255,255,8);}"
+            "QListWidget::item:selected{background:rgba(255,255,255,14);color:#ffffff;}"
+            "QListWidget::item:selected:active{background:rgba(255,255,255,14);color:#ffffff;}"
+            "QListWidget::item:selected:inactive{background:rgba(255,255,255,14);color:#ffffff;}"
+        );
+    }
 
     /* List mask overlay */
     mListMask = new QWidget(mListWidget);

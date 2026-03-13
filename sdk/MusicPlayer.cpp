@@ -255,7 +255,7 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 
 void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
 {
-    LOG_INFO(LOG_TAG, "updateMusicList");
+    LOG_INFO(LOG_TAG, "updateMusicList list size:%d", list.size());
     m_musicListIndex.clear();
     for(auto &property : list) {
         MusicIndex index;

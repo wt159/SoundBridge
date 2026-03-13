@@ -95,7 +95,8 @@ cmake --build .
 
 ### 待办
 
-* m4a解码失败
+* m4a
+* amr
 
 ## Windows 打包（Portable）
 
