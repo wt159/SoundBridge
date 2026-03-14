@@ -10,6 +10,7 @@
 #include "NonCopyable.hpp"
 #include "WorkQueue.hpp"
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -94,6 +95,7 @@ public:
     ~MusicPlayList();
 
     void addMusic(const std::string &musicPath);
+    void addMusicWithNotify(const std::string &musicPath, std::function<void()> onDone);
     void next();
     void pervious();
     void setCurrentIndex(int index);

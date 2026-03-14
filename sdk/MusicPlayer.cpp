@@ -57,6 +57,7 @@ private:
     MusicPlayerState m_state;
     MusicPropertiesPtr m_curMusicProperties;
     std::list<MusicIndex> m_musicListIndex;
+    std::atomic<int> m_pendingAdd;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
@@ -65,6 +66,7 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_musicList(nullptr)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
+    , m_pendingAdd(0)
 {
     SdkLogConfig logConfig;
     logConfig.directory = logDir;
@@ -84,10 +86,18 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
 {
     LOG_INFO(LOG_TAG, "addMusicDir : %s", dir.data());
     std::vector<std::string> musicList = recursiveFileSearch(dir);
-    for (auto &path : musicList) {
-        m_musicList->addMusic(path);
+    m_pendingAdd.store(static_cast<int>(musicList.size()));
+    if (musicList.empty()) {
+        m_musicList->updateList();
+        return;
     }
-    m_musicList->updateList();
+    for (auto &path : musicList) {
+        m_musicList->addMusicWithNotify(path, [this]() {
+            if (m_pendingAdd.fetch_sub(1) == 1) {
+                m_musicList->updateList();
+            }
+        });
+    }
 }
 
 void MusicPlayer::Impl::play()

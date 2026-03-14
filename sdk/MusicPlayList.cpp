@@ -27,6 +27,16 @@ void MusicPlayList::addMusic(const std::string &musicPath)
     LOG_INFO(LOG_TAG, "addMusic : %s", musicPath.data());
     m_workQueue->asyncRunTask(&MusicPlayList::_addMusic, this, musicPath);
 }
+void MusicPlayList::addMusicWithNotify(const std::string &musicPath, std::function<void()> onDone)
+{
+    LOG_INFO(LOG_TAG, "addMusicWithNotify : %s", musicPath.data());
+    m_workQueue->asyncRunTask([this, musicPath, onDone]() {
+        _addMusic(musicPath);
+        if (onDone) {
+            onDone();
+        }
+    });
+}
 void MusicPlayList::next()
 {
     m_workQueue->asyncRunTask([this]() { _next(); });
