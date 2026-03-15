@@ -19,6 +19,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QPushButton>
 #include <QSlider>
 #include <QSpacerItem>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
 

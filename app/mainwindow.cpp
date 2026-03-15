@@ -115,7 +115,8 @@ void MainWindow::musicLayout()
         const int rowHeight = QFontMetrics(listFont).height() + 10;
         mListWidget->setGridSize(QSize(0, rowHeight));
         mListWidget->setStyleSheet(
-            "QListWidget{background:transparent;}"
+            "QListWidget{background:transparent;border:1px solid rgba(255,255,255,32);}"
+            "QListWidget::item{border-right:none;}"
             "QListWidget::item{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,16);}"
             "QListWidget::item:hover{background:rgba(255,255,255,8);}"
             "QListWidget::item:selected{background:rgba(255,255,255,14);color:#ffffff;}"
@@ -125,11 +126,17 @@ void MainWindow::musicLayout()
     }
 
     /* List mask overlay */
-    mListMask = new QWidget(mListWidget);
+    mListMask = new QWidget(mListWidget->viewport());
     mListMask->setMinimumSize(310, 50);
     mListMask->setMinimumHeight(50);
     mListMask->setObjectName("mListMask");
-    mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
+    mListMask->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    const int maskInset  = 1;
+    const int maskHeight = 50 - maskInset;
+    mListMask->setGeometry(maskInset,
+                           mListWidget->viewport()->height() - 50 - maskInset,
+                           mListWidget->viewport()->width() - maskInset * 2,
+                           maskHeight);
 
     /* Set object names */
     mPushButton[0]->setObjectName("btn_previous");
@@ -294,6 +301,17 @@ void MainWindow::musicLayout()
     // mVWidget[0]->setStyleSheet("background-color:#555555");
     // mVWidget[1]->setStyleSheet("background-color:green");
     // mVWidget[2]->setStyleSheet("background-color:gray");
+
+    QTimer::singleShot(0, this, [this]() {
+        const int maskInset  = 1;
+        const int maskHeight = 50 - maskInset;
+        mListMask->setGeometry(maskInset,
+                           mListWidget->viewport()->height() - 50 - maskInset,
+                           mListWidget->viewport()->width() - maskInset * 2,
+                           maskHeight);
+        mListWidget->doItemsLayout();
+        mListWidget->viewport()->update();
+    });
 }
 
 MainWindow::~MainWindow() { }
@@ -414,7 +432,12 @@ void MainWindow::listWidgetCliked(QListWidgetItem *item)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     Q_UNUSED(event);
-    mListMask->setGeometry(0, mListWidget->height() - 50, 310, 50);
+    const int maskInset  = 1;
+    const int maskHeight = 50 - maskInset;
+    mListMask->setGeometry(maskInset,
+                           mListWidget->viewport()->height() - 50 - maskInset,
+                           mListWidget->viewport()->width() - maskInset * 2,
+                           maskHeight);
 }
 
 void MainWindow::durationSliderReleased()
@@ -546,7 +569,10 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
         mListWidget->addItem(QString::fromStdString(name));
-        sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s", index.index, name.c_str());
+        sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s",
+                       index.index, name.c_str());
     }
+    mListWidget->doItemsLayout();
+    mListWidget->updateGeometry();
+    mListWidget->viewport()->update();
 }
-
