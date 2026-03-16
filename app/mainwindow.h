@@ -77,6 +77,7 @@ private:
     std::string mAppDir;
     std::string mLogDir;
     MusicPlayerState mState;
+    int mPlayingIndex = -1;
 
 protected:
     /* Build the music UI layout. */

@@ -13,11 +13,52 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QDir>
 #include <QFileInfoList>
 #include <QGuiApplication>
+#include <QPainter>
+#include <QApplication>
 #include <QScreen>
 #include <QSettings>
+#include <QStyledItemDelegate>
 
 namespace {
 constexpr const char* kTag = "MainWindow";
+constexpr int kRolePlaying = Qt::UserRole + 1;
+
+class MusicItemDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        QStyleOptionViewItem opt(option);
+        initStyleOption(&opt, index);
+
+        const bool isSelected = (opt.state & QStyle::State_Selected);
+        const bool isPlaying  = index.data(kRolePlaying).toBool();
+
+        painter->save();
+
+        if (isSelected || isPlaying) {
+            QColor bg(94, 220, 243, 40);
+            if (isPlaying) {
+                bg = QColor(94, 220, 243, isSelected ? 90 : 70);
+                QRect bar(opt.rect.left(), opt.rect.top(), 3, opt.rect.height());
+                painter->fillRect(bar, QColor(94, 220, 243, 200));
+            } else {
+                bg = QColor(94, 220, 243, 48);
+            }
+            painter->fillRect(opt.rect, bg);
+        }
+
+        opt.state &= ~QStyle::State_Selected;
+        opt.backgroundBrush = Qt::NoBrush;
+
+        QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
+        style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
+
+        painter->restore();
+    }
+};
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -104,6 +145,9 @@ void MainWindow::musicLayout()
     mListWidget->resize(310, 265);
     mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    mListWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mListWidget->setItemDelegate(new MusicItemDelegate(mListWidget));
     {
         QFont listFont = mListWidget->font();
         listFont.setPixelSize(16);
@@ -119,9 +163,6 @@ void MainWindow::musicLayout()
             "QListWidget::item{border-right:none;}"
             "QListWidget::item{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,16);}"
             "QListWidget::item:hover{background:rgba(255,255,255,8);}"
-            "QListWidget::item:selected{background:rgba(255,255,255,14);color:#ffffff;}"
-            "QListWidget::item:selected:active{background:rgba(255,255,255,14);color:#ffffff;}"
-            "QListWidget::item:selected:inactive{background:rgba(255,255,255,14);color:#ffffff;}"
         );
     }
 
@@ -509,7 +550,21 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
         return;
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onListCurIndex: %d", index);
     /* Highlight currently playing item */
-    mListWidget->setCurrentRow(index);
+    const int prevIndex = mPlayingIndex;
+    if (prevIndex >= 0 && prevIndex < mListWidget->count()) {
+        QListWidgetItem *prev = mListWidget->item(prevIndex);
+        if (prev != nullptr) {
+            prev->setData(kRolePlaying, false);
+        }
+    }
+    QListWidgetItem *item = mListWidget->item(index);
+    if (item != nullptr) {
+        item->setData(kRolePlaying, true);
+        mListWidget->setCurrentItem(item);
+        item->setSelected(true);
+        mListWidget->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    }
+    mPlayingIndex = index;
 }
 
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
@@ -571,6 +626,21 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
         mListWidget->addItem(QString::fromStdString(name));
         sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s",
                        index.index, name.c_str());
+    }
+    for (int i = 0; i < mListWidget->count(); ++i) {
+        QListWidgetItem *item = mListWidget->item(i);
+        if (item != nullptr) {
+            item->setData(kRolePlaying, false);
+        }
+    }
+    if (mPlayingIndex >= 0 && mPlayingIndex < mListWidget->count()) {
+        QListWidgetItem *item = mListWidget->item(mPlayingIndex);
+        if (item != nullptr) {
+            item->setData(kRolePlaying, true);
+            mListWidget->setCurrentItem(item);
+            item->setSelected(true);
+            mListWidget->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+        }
     }
     mListWidget->doItemsLayout();
     mListWidget->updateGeometry();
