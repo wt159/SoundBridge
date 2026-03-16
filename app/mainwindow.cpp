@@ -300,7 +300,7 @@ void MainWindow::musicLayout()
     font.setPixelSize(10);
 
     /* Set label text */
-    mLabel[0]->setText("Q Music, Enjoy it!");
+    mLabel[0]->setText("SoundBridge");
     mNowPlayingSubtitle->setText("NOW PLAYING");
     mNowPlayingTitle->setText("—");
     mLabel[2]->setText("00:00");
@@ -321,6 +321,14 @@ void MainWindow::musicLayout()
     subPal.setColor(QPalette::WindowText, QColor(255, 255, 255, 160));
     mNowPlayingSubtitle->setPalette(subPal);
 
+    QFont headerFont;
+    headerFont.setPixelSize(12);
+    headerFont.setWeight(QFont::Medium);
+    headerFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.6);
+    mLabel[0]->setFont(headerFont);
+    mLabel[0]->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    mLabel[0]->setContentsMargins(0, 0, 0, 6);
+
     QFont nowTitleFont;
     nowTitleFont.setPixelSize(18);
     nowTitleFont.setWeight(QFont::DemiBold);
@@ -331,6 +339,8 @@ void MainWindow::musicLayout()
     mNowPlayingSubtitle->setFont(nowSubFont);
     mNowPlayingSubtitle->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     mNowPlayingTitle->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    mNowPlayingSubtitle->setContentsMargins(0, 2, 0, 0);
+    mNowPlayingTitle->setContentsMargins(0, 0, 0, 8);
 
     mHBoxLayout[2]->addWidget(mLabel[2]);
     mHBoxLayout[2]->addWidget(mLabel[3]);
