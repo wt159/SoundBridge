@@ -120,6 +120,8 @@ void MainWindow::musicLayout()
     /* Labels */
     for (int i = 0; i < 4; i++)
         mLabel[i] = new QLabel();
+    mNowPlayingTitle = new QLabel();
+    mNowPlayingSubtitle = new QLabel();
 
     for (int i = 0; i < 3; i++) {
         /* Vertical containers */
@@ -223,9 +225,15 @@ void MainWindow::musicLayout()
     mHWidget[1]->setMaximumHeight(80);
     mLabel[0]->setMinimumSize(310, 95);
     mLabel[0]->setMaximumHeight(95);
+    mNowPlayingTitle->setMinimumSize(310, 28);
+    mNowPlayingSubtitle->setMinimumSize(310, 18);
+    mNowPlayingTitle->setMaximumHeight(28);
+    mNowPlayingSubtitle->setMaximumHeight(18);
     QSpacerItem *vSpacer0 = new QSpacerItem(310, 10, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer1 = new QSpacerItem(310, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
     mVBoxLayout[0]->addWidget(mLabel[0]);
+    mVBoxLayout[0]->addWidget(mNowPlayingSubtitle);
+    mVBoxLayout[0]->addWidget(mNowPlayingTitle);
     mVBoxLayout[0]->addWidget(mListWidget);
     mVBoxLayout[0]->addSpacerItem(vSpacer0);
     mVBoxLayout[0]->addWidget(mHWidget[1]);
@@ -293,6 +301,8 @@ void MainWindow::musicLayout()
 
     /* Set label text */
     mLabel[0]->setText("Q Music, Enjoy it!");
+    mNowPlayingSubtitle->setText("NOW PLAYING");
+    mNowPlayingTitle->setText("—");
     mLabel[2]->setText("00:00");
     mLabel[3]->setText("00:00");
     mLabel[2]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -306,6 +316,21 @@ void MainWindow::musicLayout()
     mLabel[0]->setPalette(pal);
     mLabel[2]->setPalette(pal);
     mLabel[3]->setPalette(pal);
+    mNowPlayingTitle->setPalette(pal);
+    QPalette subPal = pal;
+    subPal.setColor(QPalette::WindowText, QColor(255, 255, 255, 160));
+    mNowPlayingSubtitle->setPalette(subPal);
+
+    QFont nowTitleFont;
+    nowTitleFont.setPixelSize(18);
+    nowTitleFont.setWeight(QFont::DemiBold);
+    mNowPlayingTitle->setFont(nowTitleFont);
+    QFont nowSubFont;
+    nowSubFont.setPixelSize(10);
+    nowSubFont.setWeight(QFont::Medium);
+    mNowPlayingSubtitle->setFont(nowSubFont);
+    mNowPlayingSubtitle->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    mNowPlayingTitle->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
     mHBoxLayout[2]->addWidget(mLabel[2]);
     mHBoxLayout[2]->addWidget(mLabel[3]);
@@ -567,6 +592,7 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
         mListWidget->setCurrentItem(item);
         item->setSelected(true);
         mListWidget->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+        mNowPlayingTitle->setText(item->text());
     }
     mPlayingIndex = index;
 }
@@ -644,6 +670,7 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
             mListWidget->setCurrentItem(item);
             item->setSelected(true);
             mListWidget->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            mNowPlayingTitle->setText(item->text());
         }
     }
     mListWidget->doItemsLayout();

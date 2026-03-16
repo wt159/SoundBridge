@@ -73,6 +73,8 @@ private:
 
     /* Label text. */
     QLabel *mLabel[4];
+    QLabel *mNowPlayingTitle;
+    QLabel *mNowPlayingSubtitle;
 
     /* Mask for list overlay. */
     QWidget *mListMask;
