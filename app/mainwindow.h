@@ -16,6 +16,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QListWidget>
 #include <QMainWindow>
 #include <QCloseEvent>
+#include <QColor>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpacerItem>
@@ -39,6 +40,11 @@ class MainWindow : public QMainWindow, public MusicPlayerListener {
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    static const QColor kSelectBg;
+    static const QColor kPlayBg;
+    static const QColor kPlayBgSelected;
+    static const QColor kPlayBar;
 
 private:
     /* Music player instance. */

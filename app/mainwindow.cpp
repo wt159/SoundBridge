@@ -39,15 +39,14 @@ public:
         painter->save();
 
         if (isSelected || isPlaying) {
-            QColor bg(94, 220, 243, 40);
             if (isPlaying) {
-                bg = QColor(94, 220, 243, isSelected ? 90 : 70);
+                const QColor bg = isSelected ? MainWindow::kPlayBgSelected : MainWindow::kPlayBg;
                 QRect bar(opt.rect.left(), opt.rect.top(), 3, opt.rect.height());
-                painter->fillRect(bar, QColor(94, 220, 243, 200));
+                painter->fillRect(bar, MainWindow::kPlayBar);
+                painter->fillRect(opt.rect, bg);
             } else {
-                bg = QColor(94, 220, 243, 48);
+                painter->fillRect(opt.rect, MainWindow::kSelectBg);
             }
-            painter->fillRect(opt.rect, bg);
         }
 
         opt.state &= ~QStyle::State_Selected;
@@ -60,6 +59,11 @@ public:
     }
 };
 }
+
+const QColor MainWindow::kSelectBg(94, 220, 243, 48);
+const QColor MainWindow::kPlayBg(94, 220, 243, 70);
+const QColor MainWindow::kPlayBgSelected(94, 220, 243, 90);
+const QColor MainWindow::kPlayBar(94, 220, 243, 200);
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
