@@ -19,3 +19,33 @@ endif()
 add_subdirectory(${SDK_DIR})
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/app)
+
+if(WIN32)
+    set(SOUNDBRIDGE_PACKAGE_DIR
+        "${CMAKE_CURRENT_LIST_DIR}/package/SoundBridge_portable_v3"
+        CACHE PATH "Portable package output directory"
+    )
+    if(DEFINED QT_MINGW_PATH)
+        set(_qt_bin_hint "${QT_MINGW_PATH}/bin")
+    endif()
+    find_program(SOUNDBRIDGE_WINDEPLOYQT
+        NAMES windeployqt
+        HINTS "${_qt_bin_hint}" "${QT_LIB_PATH}/../bin"
+    )
+    set(SOUNDBRIDGE_WINDEPLOYQT
+        "${SOUNDBRIDGE_WINDEPLOYQT}"
+        CACHE FILEPATH "Path to windeployqt"
+    )
+
+    add_custom_target(package_portable
+        COMMAND ${CMAKE_COMMAND}
+            -DAPP_EXE="$<TARGET_FILE:SoundBridge>"
+            -DPACKAGE_DIR="${SOUNDBRIDGE_PACKAGE_DIR}"
+            -DWINDEPLOYQT_EXECUTABLE="${SOUNDBRIDGE_WINDEPLOYQT}"
+            -DTHIRD_PARTY_DLL_DIR="${3RDPARTY_DIST_DIR}/bin"
+            -DMUSIC_DIR="${CMAKE_CURRENT_LIST_DIR}/music"
+            -P "${CMAKE_CURRENT_LIST_DIR}/cmake/package_portable.cmake"
+        DEPENDS SoundBridge
+        COMMENT "Create portable Windows package"
+    )
+endif()

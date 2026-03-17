@@ -102,6 +102,21 @@ cmake --build .
 
 在完成编译后，可将可执行文件和运行依赖打包到 `package` 目录。
 
+### 使用 CMake 目标（推荐）
+
+```shell
+# 生成后执行
+cmake --build . --target package_portable
+```
+
+可选参数（首次配置时传入）：
+
+```shell
+# 自定义输出目录与 windeployqt 路径
+cmake .. -DSOUNDBRIDGE_PACKAGE_DIR="E:/flushbonad/github/SoundBridge/package/SoundBridge_portable_v3" ^
+         -DSOUNDBRIDGE_WINDEPLOYQT="F:/Qt/Qt5.14.2/5.14.2/mingw73_64/bin/windeployqt.exe"
+```
+
 ### 在 `cmd.exe` 中执行
 
 ```bat
