@@ -22,6 +22,7 @@ private:
     AVPacket *m_pkt;
     char m_error[AV_ERROR_MAX_STRING_SIZE];
     AudioDecodeCallback *m_callback;
+    AudioCodecConfig m_config;
     std::string m_versionInfo;
     int m_deviceVersion;
     std::string m_configuration;
@@ -29,7 +30,7 @@ private:
     status_t m_initCheck;
 
 public:
-    Impl(AudioCodecID codec, AudioDecodeCallback *callback);
+    Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config);
     ~Impl();
     int decode(const char *data, ssize_t size);
     status_t initCheck() { return m_initCheck; }
@@ -39,7 +40,7 @@ private:
     int decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame);
 };
 
-AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
+AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config)
     : m_codecID(codec)
     , m_avCodecID((AVCodecID)codec)
     , m_codec(nullptr)
@@ -48,6 +49,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
     , m_frame(nullptr)
     , m_pkt(nullptr)
     , m_callback(callback)
+    , m_config(config)
     , m_versionInfo(av_version_info())
     , m_deviceVersion(avcodec_version())
     , m_configuration(avcodec_configuration())
@@ -101,13 +103,33 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
     LOG_INFO(LOG_TAG, "avcodec_find_decoder success: %s", avcodec_get_name(m_avCodecID));
     m_parserCtx = av_parser_init(m_codec->id);
     if (!m_parserCtx) {
-        LOG_ERROR(LOG_TAG, "av_parser_init failed: %s", avcodec_get_name(m_avCodecID));
-        return;
+        LOG_WARNING(LOG_TAG, "av_parser_init failed: %s, fallback to packet decode",
+                    avcodec_get_name(m_avCodecID));
     }
     m_ctx = avcodec_alloc_context3(m_codec);
     if (!m_ctx) {
         LOG_ERROR(LOG_TAG, "avcodec_alloc_context3 failed: %s", avcodec_get_name(m_avCodecID));
         return;
+    }
+    if (m_config.channels > 0) {
+        m_ctx->channels = m_config.channels;
+        m_ctx->channel_layout = av_get_default_channel_layout(m_config.channels);
+    }
+    if (m_config.sampleRate > 0) {
+        m_ctx->sample_rate = m_config.sampleRate;
+    }
+    if (m_config.bitRate > 0) {
+        m_ctx->bit_rate = m_config.bitRate;
+    }
+    if (m_config.blockAlign > 0) {
+        m_ctx->block_align = m_config.blockAlign;
+    }
+    if (m_config.extraData && m_config.extraData->size() > 0) {
+        m_ctx->extradata_size = (int)m_config.extraData->size();
+        m_ctx->extradata = (uint8_t *)av_mallocz(m_ctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+        if (m_ctx->extradata) {
+            memcpy(m_ctx->extradata, m_config.extraData->data(), m_ctx->extradata_size);
+        }
     }
     m_pkt = av_packet_alloc();
     if (!m_pkt) {
@@ -130,6 +152,11 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback)
 
 AudioDecode::Impl::~Impl()
 {
+    if (m_ctx && m_ctx->extradata) {
+        av_free(m_ctx->extradata);
+        m_ctx->extradata = nullptr;
+        m_ctx->extradata_size = 0;
+    }
     if (m_pkt) {
         av_packet_free(&m_pkt);
         m_pkt = nullptr;
@@ -177,6 +204,26 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
 #define IN_DATA_SIZE        20480
 #define AUDIO_REFILL_THRESH 4096
     int ret = 0, len = 0;
+    if (!m_parserCtx) {
+        if (!srcData || srcSize <= 0) {
+            return 0;
+        }
+        m_pkt->data = (uint8_t *)srcData;
+        m_pkt->size = (int)srcSize;
+        ret = decode(m_ctx, m_pkt, m_frame);
+        if (ret < 0) {
+            LOG_ERROR(LOG_TAG, "decode failed: %d", ret);
+            return ret;
+        }
+        m_pkt->data = nullptr;
+        m_pkt->size = 0;
+        ret = decode(m_ctx, m_pkt, m_frame);
+        if (ret < 0) {
+            LOG_ERROR(LOG_TAG, "decode flush failed: %s", getAVErrorString(ret));
+            return ret;
+        }
+        return 0;
+    }
     int inSize = IN_DATA_SIZE > srcSize ? srcSize : IN_DATA_SIZE;
     char inBuf[IN_DATA_SIZE + AV_INPUT_BUFFER_PADDING_SIZE] = { 0 };
     uint8_t *inPtr                                          = (uint8_t *)inBuf;
@@ -265,7 +312,12 @@ end:
 }
 
 AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback)
-    : m_impl(new Impl(codec, callback))
+    : m_impl(new Impl(codec, callback, AudioCodecConfig()))
+{
+}
+
+AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config)
+    : m_impl(new Impl(codec, callback, config))
 {
 }
 

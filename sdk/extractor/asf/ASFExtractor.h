@@ -213,16 +213,31 @@ public:
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
+    virtual int getBitRate() { return m_bitRate; }
+    virtual int getBlockAlign() { return m_blockAlign; }
     virtual ~ASFExtractor();
 
 private:
     sdk_utils::status_t init();
+    sdk_utils::status_t initWithFFmpegDemux();
+    struct AvioData {
+        DataSourceBase *source;
+        int64_t pos;
+        int64_t size;
+    };
+    static int avioRead(void *opaque, uint8_t *buf, int buf_size);
+    static int64_t avioSeek(void *opaque, int64_t offset, int whence);
     void getGuidObjByArray(const uint8_t *array, ASF::Object &obj);
     void getGuidByArray(const uint8_t *array, ASF::GUID &guid);
     sdk_utils::status_t parseHeaderObject(off64_t offset, ASF::HeaderObject &headerObj);
     sdk_utils::status_t parseDataObject(off64_t offset, ASF::DataObject &dataObj);
     sdk_utils::status_t parseOpaqueData(off64_t offset, ASF::DataPacket &dataPacket);
-    sdk_utils::status_t parsePayloadData(off64_t offset, ASF::DataPacket &dataPacket);
+    sdk_utils::status_t parsePayloadData(off64_t offset,
+                                         ASF::DataPacket &dataPacket,
+                                         off64_t packetStart,
+                                         uint32_t packetLen,
+                                         std::vector<uint8_t> &audioData);
     sdk_utils::status_t parseIndexObject(off64_t offset, ASF::Object &indexObj);
 
 private:
@@ -234,5 +249,9 @@ private:
     AudioBuffer::AudioBufferPtr m_metaBuf;
     ASF::HeaderObject m_headerObj;
     ASF::DataObject m_dataObj;
+    uint8_t m_audioStreamNumber;
+    int m_bitRate;
+    int m_blockAlign;
+    AudioBuffer::AudioBufferPtr m_codecExtraData;
 };
 

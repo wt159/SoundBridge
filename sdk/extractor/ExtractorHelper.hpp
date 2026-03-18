@@ -44,6 +44,9 @@ public:
     virtual AudioSpec getAudioSpec()                  = 0;
     virtual AudioCodecID getAudioCodecID()            = 0;
     virtual AudioBuffer::AudioBufferPtr getMetaData() = 0;
+    virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return nullptr; }
+    virtual int getBitRate() { return 0; }
+    virtual int getBlockAlign() { return 0; }
 
 protected:
     ExtractorHelper() { }
