@@ -108,6 +108,10 @@ protected:
     void _pervious();
     void _setCurrentIndex(int index);
     void _updateList();
+
+private:
+    bool ensureDecoded(const MusicPropertiesPtr &musicProperties);
+    void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
 };
 }
 

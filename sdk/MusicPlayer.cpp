@@ -7,6 +7,8 @@
 #include "MusicPlayer.h"
 #include "WorkQueue.hpp"
 #include <list>
+#include <mutex>
+#include <cstring>
 
 namespace sdk {
 
@@ -56,6 +58,7 @@ private:
     MusicPlayerListener *m_listener;
     MusicPlayerState m_state;
     MusicPropertiesPtr m_curMusicProperties;
+    std::mutex m_curMusicMutex;
     std::list<MusicIndex> m_musicListIndex;
     std::atomic<int> m_pendingAdd;
 };
@@ -157,7 +160,12 @@ void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
 void MusicPlayer::Impl::_play()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -169,7 +177,12 @@ void MusicPlayer::Impl::_play()
 void MusicPlayer::Impl::_pause()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -180,7 +193,12 @@ void MusicPlayer::Impl::_pause()
 void MusicPlayer::Impl::_stop()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -192,11 +210,15 @@ void MusicPlayer::Impl::_stop()
 void MusicPlayer::Impl::_setPosition(uint64_t pos)
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties && pos >= 0
-        && pos <= m_curMusicProperties->signalProperties.durationMs) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur && pos >= 0 && pos <= cur->signalProperties.durationMs) {
         AudioSpec &spec                                      = m_devSpec;
-        m_curMusicProperties->signalProperties.curPositionMs = pos;
-        m_curMusicProperties->signalProperties.curDataOffset
+        cur->signalProperties.curPositionMs = pos;
+        cur->signalProperties.curDataOffset
             = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
         m_listener->onMusicPlayerPositionChanged(pos);
     }
@@ -205,7 +227,12 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
 void MusicPlayer::Impl::_next()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -215,7 +242,12 @@ void MusicPlayer::Impl::_next()
 void MusicPlayer::Impl::_previous()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -225,7 +257,12 @@ void MusicPlayer::Impl::_previous()
 void MusicPlayer::Impl::_setCurrentIndex(int index)
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    if (m_curMusicProperties == nullptr) {
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         return;
     }
@@ -234,9 +271,14 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
 
 void MusicPlayer::Impl::getAudioData(void *data, int len)
 {
-    if (m_curMusicProperties) {
-        SignalProperties &signalProperties = m_curMusicProperties->signalProperties;
-        m_curMusicProperties->rawBuffer->getData(signalProperties.curDataOffset, len, (char *)data);
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    if (cur && cur->rawBuffer) {
+        SignalProperties &signalProperties = cur->signalProperties;
+        cur->rawBuffer->getData(signalProperties.curDataOffset, len, (char *)data);
         AudioSpec &spec                 = m_devSpec;
         signalProperties.curDataOffset += len;
         signalProperties.curPositionMs
@@ -251,13 +293,20 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
             signalProperties.curPositionMs = 0;
             next();
         }
+    } else {
+        if (data && len > 0) {
+            std::memset(data, 0, len);
+        }
     }
 }
 
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
     LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d(%s)", property->index, property->fileProperties.fileName.data());
-    m_curMusicProperties = property;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        m_curMusicProperties = property;
+    }
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
     m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
