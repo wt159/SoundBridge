@@ -1,4 +1,4 @@
-#include "M4AExtractor.h"
+#include "APEExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
 #include <climits>
@@ -9,92 +9,9 @@ extern "C" {
 #include "libavutil/avutil.h"
 }
 
-#define LOG_TAG "M4AExtractor"
+#define LOG_TAG "APEExtractor"
 
 using namespace sdk_utils;
-
-static int sampleRateToIndex(int sampleRate)
-{
-    static const int kSampleRates[] = {
-        96000, 88200, 64000, 48000, 44100, 32000, 24000,
-        22050, 16000, 12000, 11025, 8000, 7350
-    };
-    for (int i = 0; i < (int)(sizeof(kSampleRates) / sizeof(kSampleRates[0])); ++i) {
-        if (kSampleRates[i] == sampleRate) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static bool parseAudioSpecificConfig(const uint8_t *data, int size,
-                                     int &audioObjectType, int &sampleRateIndex, int &channelConfig)
-{
-    if (!data || size < 2) {
-        return false;
-    }
-    int bitpos = 0;
-    auto getBits = [&](int n) -> int {
-        int out = 0;
-        for (int i = 0; i < n; ++i) {
-            int byte = (bitpos >> 3);
-            int bit = 7 - (bitpos & 7);
-            if (byte >= size) {
-                return -1;
-            }
-            out = (out << 1) | ((data[byte] >> bit) & 1);
-            bitpos++;
-        }
-        return out;
-    };
-
-    int aot = getBits(5);
-    if (aot < 0) {
-        return false;
-    }
-    if (aot == 31) {
-        int ext = getBits(6);
-        if (ext < 0) {
-            return false;
-        }
-        aot = 32 + ext;
-    }
-    int srIndex = getBits(4);
-    if (srIndex < 0) {
-        return false;
-    }
-    if (srIndex == 0x0F) {
-        int sr = getBits(24);
-        if (sr < 0) {
-            return false;
-        }
-        srIndex = sampleRateToIndex(sr);
-    }
-    int ch = getBits(4);
-    if (ch < 0) {
-        return false;
-    }
-
-    audioObjectType = aot;
-    sampleRateIndex = srIndex;
-    channelConfig = ch;
-    return true;
-}
-
-static void buildAdtsHeader(uint8_t *out, int profile, int sampleRateIndex, int channelConfig, int frameLen)
-{
-    // profile: 0 = Main, 1 = LC, 2 = SSR, 3 = LTP
-    if (profile < 0) {
-        profile = 1;
-    }
-    out[0] = 0xFF;
-    out[1] = 0xF1;
-    out[2] = (uint8_t)(((profile & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01));
-    out[3] = (uint8_t)(((channelConfig & 0x03) << 6) | ((frameLen >> 11) & 0x03));
-    out[4] = (uint8_t)((frameLen >> 3) & 0xFF);
-    out[5] = (uint8_t)(((frameLen & 0x07) << 5) | 0x1F);
-    out[6] = 0xFC;
-}
 
 static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 {
@@ -104,32 +21,31 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
     return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
 }
 
-bool M4AExtractor::sniff(DataSourceBase *source)
+bool APEExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[12] = {0};
+    uint8_t buf[4] = {0};
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
-    return memcmp(buf + 4, "ftyp", 4) == 0;
+    return memcmp(buf, "MAC ", 4) == 0;
 }
 
-M4AExtractor::M4AExtractor(DataSourceBase *source)
+APEExtractor::APEExtractor(DataSourceBase *source)
     : m_dataSource(source)
+    , m_initCheck(NO_INIT)
+    , m_validFormat(false)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
     , m_metaBuf(nullptr)
     , m_codecExtraData(nullptr)
-    , m_initCheck(NO_INIT)
-    , m_validFormat(false)
-    , m_audioSpec()
     , m_bitRate(0)
     , m_blockAlign(0)
 {
     m_initCheck = initWithFFmpegDemux();
 }
 
-M4AExtractor::~M4AExtractor() { }
+APEExtractor::~APEExtractor() { }
 
-int M4AExtractor::avioRead(void *opaque, uint8_t *buf, int buf_size)
+int APEExtractor::avioRead(void *opaque, uint8_t *buf, int buf_size)
 {
     if (!opaque || !buf || buf_size <= 0) {
         return AVERROR_EOF;
@@ -146,7 +62,7 @@ int M4AExtractor::avioRead(void *opaque, uint8_t *buf, int buf_size)
     return static_cast<int>(n);
 }
 
-int64_t M4AExtractor::avioSeek(void *opaque, int64_t offset, int whence)
+int64_t APEExtractor::avioSeek(void *opaque, int64_t offset, int whence)
 {
     if (!opaque) {
         return -1;
@@ -184,7 +100,7 @@ int64_t M4AExtractor::avioSeek(void *opaque, int64_t offset, int whence)
     return ctx->pos;
 }
 
-status_t M4AExtractor::initWithFFmpegDemux()
+status_t APEExtractor::initWithFFmpegDemux()
 {
     off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
@@ -206,8 +122,8 @@ status_t M4AExtractor::initWithFFmpegDemux()
     }
 
     AVIOContext *avioCtx = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData,
-                                              &M4AExtractor::avioRead, nullptr,
-                                              &M4AExtractor::avioSeek);
+                                              &APEExtractor::avioRead, nullptr,
+                                              &APEExtractor::avioSeek);
     if (!avioCtx) {
         av_free(ioBuffer);
         LOGE("initWithFFmpegDemux avio_alloc_context failed");
@@ -268,6 +184,15 @@ status_t M4AExtractor::initWithFFmpegDemux()
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
     m_bitRate    = static_cast<int>(par->bit_rate);
     m_blockAlign = static_cast<int>(par->block_align);
+    if (m_blockAlign == 0 && m_audioSpec.numChannel > 0 && m_audioSpec.bitsPerSample > 0) {
+        m_blockAlign = m_audioSpec.numChannel * (m_audioSpec.bitsPerSample / 8);
+    }
+    if (m_bitRate == 0 && fmt->duration > 0 && fileSize > 0) {
+        double seconds = static_cast<double>(fmt->duration) / AV_TIME_BASE;
+        if (seconds > 0.0) {
+            m_bitRate = static_cast<int>((fileSize * 8.0) / seconds);
+        }
+    }
     if (par->extradata && par->extradata_size > 0) {
         m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
@@ -285,45 +210,11 @@ status_t M4AExtractor::initWithFFmpegDemux()
         return NO_MEMORY;
     }
 
-    bool useAdts = (par->codec_id == AV_CODEC_ID_AAC);
-    int aot = 2;
-    int srIndex = sampleRateToIndex(par->sample_rate);
-    int chCfg = par->channels;
-    if (useAdts && par->extradata && par->extradata_size > 0) {
-        int paot = 0, psr = -1, pch = 0;
-        if (parseAudioSpecificConfig(par->extradata, par->extradata_size, paot, psr, pch)) {
-            aot = paot;
-            if (psr >= 0) {
-                srIndex = psr;
-            }
-            if (pch > 0) {
-                chCfg = pch;
-            }
-        }
-    }
-    if (useAdts && srIndex < 0) {
-        useAdts = false;
-    }
-
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            if (useAdts) {
-                int profile = aot - 1;
-                if (aot == 5 || aot == 29) {
-                    profile = 1; // use AAC LC in ADTS
-                }
-                uint8_t adts[7];
-                int frameLen = pkt->size + 7;
-                buildAdtsHeader(adts, profile, srIndex, chCfg, frameLen);
-                size_t oldSize = audioData.size();
-                audioData.resize(oldSize + 7 + static_cast<size_t>(pkt->size));
-                memcpy(audioData.data() + oldSize, adts, 7);
-                memcpy(audioData.data() + oldSize + 7, pkt->data, pkt->size);
-            } else {
-                size_t oldSize = audioData.size();
-                audioData.resize(oldSize + static_cast<size_t>(pkt->size));
-                memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
-            }
+            size_t oldSize = audioData.size();
+            audioData.resize(oldSize + static_cast<size_t>(pkt->size));
+            memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
         }
         av_packet_unref(pkt);
     }

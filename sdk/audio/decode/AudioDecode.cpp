@@ -98,6 +98,8 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
     m_codec = avcodec_find_decoder(m_avCodecID);
     if (!m_codec) {
         LOG_ERROR(LOG_TAG, "avcodec_find_decoder failed: %s", avcodec_get_name(m_avCodecID));
+        std::fprintf(stderr, "AudioDecode: avcodec_find_decoder failed: %s\n",
+                     avcodec_get_name(m_avCodecID));
         return;
     }
     LOG_INFO(LOG_TAG, "avcodec_find_decoder success: %s", avcodec_get_name(m_avCodecID));
@@ -144,6 +146,16 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
     int ret = avcodec_open2(m_ctx, m_codec, nullptr);
     if (ret < 0) {
         LOG_ERROR(LOG_TAG, "avcodec_open2 failed rc:%d, %s", ret, getAVErrorString(ret));
+        std::fprintf(stderr,
+                     "AudioDecode: avcodec_open2 failed rc:%d (%s) codec=%s sr=%d ch=%d blka=%d br=%lld extra=%d\n",
+                     ret,
+                     getAVErrorString(ret),
+                     avcodec_get_name(m_avCodecID),
+                     m_ctx->sample_rate,
+                     m_ctx->channels,
+                     m_ctx->block_align,
+                     static_cast<long long>(m_ctx->bit_rate),
+                     m_ctx->extradata_size);
         return;
     }
     m_initCheck = OK;

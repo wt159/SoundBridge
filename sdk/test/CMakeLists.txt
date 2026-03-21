@@ -55,3 +55,10 @@ add_test(
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> all
 )
 set_tests_properties(sdk_all_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+set(SB_MEDIA_DIR "${SDK_ROOT_DIR}/../music")
+add_test(
+    NAME sdk_media_smoke
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" "SB_MEDIA_DIR=${SB_MEDIA_DIR}" $<TARGET_FILE:TestSdkSuite> media
+)
+set_tests_properties(sdk_media_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

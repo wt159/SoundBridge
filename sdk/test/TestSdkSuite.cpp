@@ -1,14 +1,19 @@
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
+#include "AudioDecodeProcess.h"
 #include "AudioResample.h"
 #include "ErrorUtils.h"
+#include "ExtractorFactory.h"
 #include "FileSearch.h"
+#include "FileSource.h"
 #include "LogWrapper.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -156,6 +161,140 @@ bool test_decode()
     return ok;
 }
 
+std::string get_env_or_default(const char *name, const std::string &fallback)
+{
+    const char *val = std::getenv(name);
+    if (val && val[0] != '\0') {
+        return std::string(val);
+    }
+    return fallback;
+}
+
+int get_env_int(const char *name, int fallback)
+{
+    const char *val = std::getenv(name);
+    if (!val || val[0] == '\0') {
+        return fallback;
+    }
+    return std::atoi(val);
+}
+
+std::string lower_ext(std::string ext)
+{
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        if (c >= 'A' && c <= 'Z') {
+            return static_cast<char>(c - 'A' + 'a');
+        }
+        return static_cast<char>(c);
+    });
+    return ext;
+}
+
+std::string normalize_ext_filter(const std::string &raw)
+{
+    if (raw.empty()) {
+        return std::string();
+    }
+    std::string out = lower_ext(raw);
+    if (out[0] != '.') {
+        out = "." + out;
+    }
+    return out;
+}
+
+bool test_media_smoke()
+{
+    std::string media_dir = get_env_or_default("SB_MEDIA_DIR", "../../music");
+    int limit = get_env_int("SB_MEDIA_LIMIT", 0);
+    std::string filter = normalize_ext_filter(get_env_or_default("SB_MEDIA_FILTER", ""));
+    std::vector<std::string> files = recursiveFileSearch(media_dir);
+    if (!check(!files.empty(), "MediaSmoke found media files")) {
+        return false;
+    }
+    std::sort(files.begin(), files.end());
+
+    bool ok = true;
+    int count = 0;
+    struct FailItem {
+        std::string path;
+        std::string stage;
+    };
+    std::vector<FailItem> fails;
+    for (const auto &path : files) {
+        std::string ext;
+        size_t dot = path.rfind('.');
+        if (dot != std::string::npos) {
+            ext = path.substr(dot);
+        }
+        ext = lower_ext(ext);
+        if (!filter.empty() && ext != filter) {
+            continue;
+        }
+        if (limit > 0 && count >= limit) {
+            break;
+        }
+        count++;
+
+        std::shared_ptr<FileSource> source(new FileSource(path.c_str()));
+        if (!check(source && source->initCheck() == sdk_utils::OK,
+                   ("MediaSmoke open file " + path).c_str())) {
+            fails.push_back({path, "open"});
+            ok = false;
+            continue;
+        }
+
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(source.get(), ext, true));
+        if (!check(extractor != nullptr, ("MediaSmoke extractor " + path).c_str())) {
+            fails.push_back({path, "extractor"});
+            ok = false;
+            continue;
+        }
+        if (!check(extractor->initCheck() == sdk_utils::OK,
+                   ("MediaSmoke extractor init " + path).c_str())) {
+            fails.push_back({path, "extractor_init"});
+            ok = false;
+            continue;
+        }
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        if (!check(decode && decode->initCheck() == sdk_utils::OK,
+                   ("MediaSmoke decode init " + path).c_str())) {
+            AudioSpec spec = extractor->getAudioSpec();
+            AudioBuffer::AudioBufferPtr extra = extractor->getCodecExtraData();
+            std::printf("DecodeInit info: codec=%#x, sr=%d, ch=%d, bits=%d, bitrate=%d, blockAlign=%d, extra=%zu\n",
+                        extractor->getAudioCodecID(),
+                        spec.sampleRate,
+                        spec.numChannel,
+                        spec.bitsPerSample,
+                        extractor->getBitRate(),
+                        extractor->getBlockAlign(),
+                        extra ? extra->size() : 0);
+            fails.push_back({path, "decode_init"});
+            ok = false;
+            continue;
+        }
+
+        AudioBuffer::AudioBufferPtr out = decode->getDecodeBuffer();
+        if (!check(out != nullptr && out->size() > 0,
+                   ("MediaSmoke decoded bytes " + path).c_str())) {
+            fails.push_back({path, "decoded_bytes"});
+            ok = false;
+            continue;
+        }
+    }
+
+    std::printf("MediaSmoke decoded files: %d (filter=%s)\n",
+                count, filter.empty() ? "<none>" : filter.c_str());
+    if (!fails.empty()) {
+        std::printf("MediaSmoke failures: %zu\n", fails.size());
+        for (const auto &f : fails) {
+            std::printf("FAIL: %s | stage=%s\n", f.path.c_str(), f.stage.c_str());
+        }
+    }
+    return ok;
+}
+
 bool run_group(const std::string &group)
 {
     bool ok = init_logger();
@@ -176,6 +315,11 @@ bool run_group(const std::string &group)
         return ok;
     }
 
+    if (group == "media") {
+        ok &= test_media_smoke();
+        return ok;
+    }
+
     if (group == "all") {
         ok &= test_audio_common();
         ok &= test_file_search();
@@ -185,7 +329,7 @@ bool run_group(const std::string &group)
     }
 
     std::printf("Unknown group: %s\n", group.c_str());
-    std::printf("Valid groups: core | resample | decode | all\n");
+    std::printf("Valid groups: core | resample | decode | media | all\n");
     return false;
 }
 
@@ -196,6 +340,22 @@ int main(int argc, char **argv)
     std::string group = "all";
     if (argc >= 2 && argv[1] != nullptr) {
         group = argv[1];
+    }
+    if (group == "media") {
+        if (argc >= 3 && argv[2] != nullptr) {
+#if defined(_WIN32)
+            _putenv_s("SB_MEDIA_FILTER", argv[2]);
+#else
+            setenv("SB_MEDIA_FILTER", argv[2], 1);
+#endif
+        }
+        if (argc >= 4 && argv[3] != nullptr) {
+#if defined(_WIN32)
+            _putenv_s("SB_MEDIA_LIMIT", argv[3]);
+#else
+            setenv("SB_MEDIA_LIMIT", argv[3], 1);
+#endif
+        }
     }
 
     bool ok = run_group(group);

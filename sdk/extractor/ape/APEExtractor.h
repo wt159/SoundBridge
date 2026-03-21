@@ -1,15 +1,16 @@
 #pragma once
+
 #include "AudioDecode.h"
 #include "DataSource.hpp"
 #include "ExtractorHelper.hpp"
 #include "NonCopyable.hpp"
 #include <memory>
+#include <string>
 
-class M4AExtractor : public ExtractorHelper, public NonCopyable {
+class APEExtractor : public ExtractorHelper, public NonCopyable {
 public:
-    explicit M4AExtractor(DataSourceBase *source);
+    explicit APEExtractor(DataSourceBase *source);
     static bool sniff(DataSourceBase *source);
-    ~M4AExtractor();
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
@@ -17,6 +18,7 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    virtual ~APEExtractor();
 
 private:
     sdk_utils::status_t initWithFFmpegDemux();
@@ -30,12 +32,12 @@ private:
 
 private:
     DataSourceBase *m_dataSource;
-    AudioCodecID m_audioCodecID;
-    AudioBuffer::AudioBufferPtr m_metaBuf;
-    AudioBuffer::AudioBufferPtr m_codecExtraData;
     sdk_utils::status_t m_initCheck;
     bool m_validFormat;
     AudioSpec m_audioSpec;
+    AudioCodecID m_audioCodecID;
+    AudioBuffer::AudioBufferPtr m_metaBuf;
+    AudioBuffer::AudioBufferPtr m_codecExtraData;
     int m_bitRate;
     int m_blockAlign;
 };

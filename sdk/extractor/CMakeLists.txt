@@ -9,7 +9,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../audio/common)
 
 find_package(Boost_filesystem REQUIRED)
 
-file(GLOB_RECURSE SOURCES "*.cpp")
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "*.cpp")
 # message(STATUS "Extractor sources: ${SOURCES}")
 add_library(Extractor ${SOURCES})
 

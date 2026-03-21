@@ -150,3 +150,30 @@ if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbon
 ```powershell
 .\scripts\run_sdk_tests.ps1 -QtDeploy "F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe"
 ```
+
+### 轻量解封装/解码冒烟测试
+
+针对 `music` 目录的媒体文件进行快速验证（无需整编 APP）：
+
+```bat
+cmake --build . --target TestSdkSuite
+ctest -R sdk_media_smoke --output-on-failure
+```
+
+#### 过滤扩展名（ctest 3.25+）
+
+```bat
+ctest -R sdk_media_smoke --output-on-failure --test-action-env=SB_MEDIA_FILTER=.m4a
+```
+
+如果环境变量方式不生效，可用命令行直跑：
+
+```bat
+E:\flushbonad\github\SoundBridge\build\sdk\test\TestSdkSuite.exe media .m4a
+```
+
+#### 限制测试数量
+
+```bat
+ctest -R sdk_media_smoke --output-on-failure --test-action-env=SB_MEDIA_LIMIT=5
+```

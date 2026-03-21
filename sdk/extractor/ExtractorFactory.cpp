@@ -3,6 +3,7 @@
 #include "FileSource.h"
 #include "aac/AACExtractor.h"
 #include "aiff/AIFFExtractor.h"
+#include "ape/APEExtractor.h"
 #include "asf/ASFExtractor.h"
 #include "flac/FLACExtractor.h"
 #include "m4a/M4AExtractor.h"
@@ -75,6 +76,9 @@ std::string sniffExtensionByMagic(DataSourceBase *source)
     }
     if (matchAscii(buf, 0, "ID3")) {
         return ".mp3";
+    }
+    if (matchAscii(buf, 0, "MAC ")) {
+        return ".ape";
     }
     if (buf[0] == 0xFF && (buf[1] & 0xF0) == 0xF0) {
         return ".aac"; // ADTS
@@ -217,6 +221,7 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".m4a", M4AExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".ogg", OGGExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".aiff", AIFFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".ape", APEExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
 REGISTER_EXTRACTOR(".amr", ASFExtractor);
 
