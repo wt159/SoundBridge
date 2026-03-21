@@ -5,6 +5,7 @@
 #include "AudioDecode.h"
 #include "AudioDecodeProcess.h"
 #include "AudioResample.h"
+#include "ErrorCode.hpp"
 #include "ExtractorHelper.hpp"
 #include "FileSource.h"
 #include "NonCopyable.hpp"
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -77,6 +79,8 @@ public:
     virtual ~MusicPlayListCallback()                                    = default;
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property)    = 0;
     virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list) = 0;
+    virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
+                                      const std::string &path)          = 0;
 };
 
 class MusicPlayList : public NonCopyable {
@@ -88,6 +92,8 @@ private:
     AudioSpec m_devSpec;
     MusicPropertiesPtr m_selectMusicProperties;
     std::vector<MusicPropertiesPtr> m_musicListProperties;
+    mutable std::mutex m_traceMutex;
+    std::string m_traceId;
 
 public:
     MusicPlayList() = delete;
@@ -101,6 +107,8 @@ public:
     void setCurrentIndex(int index);
     void updateList();
     int getMusicCount();
+    void setTraceId(const std::string &traceId);
+    bool skipToNextPlayable();
 
 protected:
     void _addMusic(const std::string &musicPath);
@@ -112,6 +120,8 @@ protected:
 private:
     bool ensureDecoded(const MusicPropertiesPtr &musicProperties);
     void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
+    void reportError(ErrorCode code, const std::string &detail, const MusicPropertiesPtr &musicProperties);
+    std::string currentTraceId() const;
 };
 }
 

@@ -18,6 +18,8 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QScreen>
 #include <QSettings>
 #include <QStyledItemDelegate>
+#include <QMessageBox>
+#include <QThread>
 
 namespace {
 constexpr const char* kTag = "MainWindow";
@@ -104,6 +106,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     /* Slider signals */
     connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
+    connect(mAutoSkipCheck, SIGNAL(toggled(bool)), this, SLOT(autoSkipToggled(bool)));
 
     /* Remove focus */
     this->setFocus();
@@ -122,6 +125,8 @@ void MainWindow::musicLayout()
         mLabel[i] = new QLabel();
     mNowPlayingTitle = new QLabel();
     mNowPlayingSubtitle = new QLabel();
+    mAutoSkipCheck = new QCheckBox("Auto skip on error");
+    mAutoSkipCheck->setObjectName("mAutoSkipCheck");
 
     for (int i = 0; i < 3; i++) {
         /* Vertical containers */
@@ -236,6 +241,7 @@ void MainWindow::musicLayout()
     mVBoxLayout[0]->addWidget(mNowPlayingTitle);
     mVBoxLayout[0]->addWidget(mListWidget);
     mVBoxLayout[0]->addSpacerItem(vSpacer0);
+    mVBoxLayout[0]->addWidget(mAutoSkipCheck);
     mVBoxLayout[0]->addWidget(mHWidget[1]);
     mVBoxLayout[0]->addSpacerItem(vSpacer1);
     mVBoxLayout[0]->setContentsMargins(0, 0, 0, 0);
@@ -342,6 +348,12 @@ void MainWindow::musicLayout()
     mNowPlayingSubtitle->setContentsMargins(0, 2, 0, 0);
     mNowPlayingTitle->setContentsMargins(0, 0, 0, 8);
 
+    QFont autoSkipFont = mAutoSkipCheck->font();
+    autoSkipFont.setPixelSize(10);
+    mAutoSkipCheck->setFont(autoSkipFont);
+    mAutoSkipCheck->setChecked(true);
+    mAutoSkipCheck->setStyleSheet("QCheckBox{color:rgba(255,255,255,180);}");
+
     mHBoxLayout[2]->addWidget(mLabel[2]);
     mHBoxLayout[2]->addWidget(mLabel[3]);
 
@@ -408,6 +420,10 @@ void MainWindow::restoreWindowState()
     QSettings settings;
     const QByteArray geometry = settings.value("window/geometry").toByteArray();
     const bool maximized = settings.value("window/maximized", false).toBool();
+    mAutoSkipOnError = settings.value("playback/auto_skip_on_error", true).toBool();
+    if (mAutoSkipCheck != nullptr) {
+        mAutoSkipCheck->setChecked(mAutoSkipOnError);
+    }
 
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
@@ -429,6 +445,7 @@ void MainWindow::persistWindowState()
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/maximized", isMaximized());
+    settings.setValue("playback/auto_skip_on_error", mAutoSkipOnError);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -527,6 +544,14 @@ void MainWindow::durationSliderReleased()
     mMusicPlayer->setPosition(mDurationSlider->value() * 1000);
 }
 
+void MainWindow::autoSkipToggled(bool checked)
+{
+    mAutoSkipOnError = checked;
+    if (mMusicPlayer) {
+        mMusicPlayer->setAutoSkipOnError(checked);
+    }
+}
+
 void MainWindow::scanSongs()
 {
     QDir dir(QCoreApplication::applicationDirPath() + "/../../music");
@@ -555,6 +580,7 @@ void MainWindow::mediaPlayerInit()
     if (!dir.exists())
         dir.mkdir(mLogDir.c_str());
     mMusicPlayer = std::make_shared<MusicPlayer>(this, mLogDir);
+    mMusicPlayer->setAutoSkipOnError(mAutoSkipOnError);
     /* Ensure playlist is empty before refill */
     // mediaPlaylist->clear();
     /* Legacy QMedia playlist wiring (kept for reference) */
@@ -588,6 +614,7 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
     if (-1 == index)
         return;
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onListCurIndex: %d", index);
+    mNowPlayingSubtitle->setText("NOW PLAYING");
     /* Highlight currently playing item */
     const int prevIndex = mPlayingIndex;
     if (prevIndex >= 0 && prevIndex < mListWidget->count()) {
@@ -686,4 +713,41 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
     mListWidget->doItemsLayout();
     mListWidget->updateGeometry();
     mListWidget->viewport()->update();
+}
+
+void MainWindow::onMusicPlayerError(ErrorCode code, const std::string &detail, int index,
+                                    const std::string &path, const std::string &traceId)
+{
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, code, detail, index, path, traceId]() {
+            onMusicPlayerError(code, detail, index, path, traceId);
+        }, Qt::QueuedConnection);
+        return;
+    }
+    const ErrorCodeInfo &info = GetErrorInfo(code);
+    QString title = "Playback Error";
+    QString message;
+    message += "Message: " + QString::fromStdString(FormatError(code, detail)) + "\n";
+    message += "Module: " + QString::fromUtf8(ToString(info.module)) + "\n";
+    message += "Severity: " + QString::fromUtf8(ToString(info.severity)) + "\n";
+    message += "Action: " + QString::fromUtf8(ToString(info.action)) + "\n";
+    if (index >= 0) {
+        message += "Index: " + QString::number(index) + "\n";
+    }
+    if (!path.empty()) {
+        message += "File: " + QString::fromStdString(path) + "\n";
+    }
+    if (!traceId.empty()) {
+        message += "TraceId: " + QString::fromStdString(traceId) + "\n";
+    }
+
+    if (mAutoSkipOnError) {
+        mNowPlayingSubtitle->setText("SKIPPING ERROR");
+        sdk::LogPrintf(sdk::SdkLogLevel::Warning, kTag, "auto-skip error: %s",
+                       message.trimmed().toUtf8().constData());
+        return;
+    }
+
+    mNowPlayingSubtitle->setText("PLAYBACK ERROR");
+    QMessageBox::warning(this, title, message.trimmed());
 }

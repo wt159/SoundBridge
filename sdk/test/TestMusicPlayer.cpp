@@ -58,6 +58,12 @@ protected:
     {
         LOG_INFO(LOG_TAG, "onMusicPlayerMusicListChanged : %d", list.size());
     }
+    virtual void onMusicPlayerError(ErrorCode code, const std::string &detail, int index,
+                                    const std::string &path, const std::string &traceId)
+    {
+        LOG_INFO(LOG_TAG, "onMusicPlayerError code=%d detail=%s index=%d path=%s traceId=%s",
+                 static_cast<int>(code), detail.c_str(), index, path.c_str(), traceId.c_str());
+    }
 };
 
 void TestCode()

@@ -91,4 +91,23 @@ void LogPrintf(SdkLogLevel level, const char *tag, const char *format, ...)
     LogMessage(level, tag, buffer);
 }
 
+void LogPrintfWithTrace(SdkLogLevel level, const char *tag, const std::string &traceId, const char *format, ...)
+{
+    char buffer[2048] = {0};
+
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    if (traceId.empty()) {
+        LogMessage(level, tag, buffer);
+        return;
+    }
+
+    std::string message = "traceId=" + traceId + " ";
+    message += buffer;
+    LogMessage(level, tag, message);
+}
+
 } // namespace sdk

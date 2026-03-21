@@ -24,5 +24,6 @@ bool InitializeLogging(const SdkLogConfig &config);
 bool IsLoggingInitialized();
 void LogMessage(SdkLogLevel level, const char *tag, const std::string &message);
 void LogPrintf(SdkLogLevel level, const char *tag, const char *format, ...);
+void LogPrintfWithTrace(SdkLogLevel level, const char *tag, const std::string &traceId, const char *format, ...);
 
 } // namespace sdk

@@ -9,6 +9,8 @@
 #include <list>
 #include <mutex>
 #include <cstring>
+#include <chrono>
+#include <sstream>
 
 namespace sdk {
 
@@ -31,6 +33,8 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    void setAutoSkipOnError(bool enabled);
+    bool autoSkipOnError() const;
 
 protected:
     void _addMusic(const std::string &musicPath);
@@ -46,9 +50,14 @@ protected:
     virtual void getAudioData(void *data, int len);
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property);
     virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list);
+    virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
+                                      const std::string &path);
 
 private:
     void updatePlayState(MusicPlayerState state);
+    std::string newTraceId();
+    void bumpTraceId(const char *reason);
+    bool shouldAutoSkipOnError() const;
 
 private:
     WorkQueue m_workQueue;
@@ -61,6 +70,10 @@ private:
     std::mutex m_curMusicMutex;
     std::list<MusicIndex> m_musicListIndex;
     std::atomic<int> m_pendingAdd;
+    std::string m_traceId;
+    std::atomic<uint64_t> m_traceSeq;
+    std::atomic<bool> m_autoSkipOnError;
+    std::atomic<int> m_skipFailures;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
@@ -70,6 +83,9 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
     , m_pendingAdd(0)
+    , m_traceSeq(0)
+    , m_autoSkipOnError(true)
+    , m_skipFailures(0)
 {
     SdkLogConfig logConfig;
     logConfig.directory = logDir;
@@ -82,6 +98,8 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     m_audioDev = std::make_shared<AudioDevice>(this);
     m_audioDev->getDeviceSpec(m_devSpec);
     m_musicList = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
+    m_traceId = newTraceId();
+    m_musicList->setTraceId(m_traceId);
     LOG_INFO(LOG_TAG, "Impl construct");
 }
 
@@ -155,11 +173,24 @@ int MusicPlayer::Impl::getMusicCount()
     return m_musicList->getMusicCount();
 }
 
+void MusicPlayer::Impl::setAutoSkipOnError(bool enabled)
+{
+    m_autoSkipOnError.store(enabled);
+}
+
+bool MusicPlayer::Impl::autoSkipOnError() const
+{
+    return m_autoSkipOnError.load();
+}
+
 void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
 
 void MusicPlayer::Impl::_play()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
+    if (m_state == MusicPlayerState::StoppedState) {
+        bumpTraceId("play");
+    }
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -167,10 +198,22 @@ void MusicPlayer::Impl::_play()
     }
     if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        if (m_listener != nullptr) {
+            m_listener->onMusicPlayerError(ErrorCode::PlayerNoCurrent,
+                                           "no current track", -1, "", m_traceId);
+        }
         return;
     }
-    m_audioDev->open();
-    m_audioDev->start();
+    if (m_audioDev->open() != 0) {
+        onMusicPlayListError(ErrorCode::AudioDeviceOpenFailed, "audio device open failed",
+                             static_cast<int>(cur->index), cur->fileProperties.fullPath);
+        return;
+    }
+    if (m_audioDev->start() != 0) {
+        onMusicPlayListError(ErrorCode::AudioDeviceStartFailed, "audio device start failed",
+                             static_cast<int>(cur->index), cur->fileProperties.fullPath);
+        return;
+    }
     updatePlayState(MusicPlayerState::PlayingState);
 }
 
@@ -227,6 +270,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
 void MusicPlayer::Impl::_next()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
+    bumpTraceId("next");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -242,6 +286,7 @@ void MusicPlayer::Impl::_next()
 void MusicPlayer::Impl::_previous()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
+    bumpTraceId("previous");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -257,6 +302,7 @@ void MusicPlayer::Impl::_previous()
 void MusicPlayer::Impl::_setCurrentIndex(int index)
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
+    bumpTraceId("setIndex");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -302,7 +348,10 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
 
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
-    LOG_INFO(LOG_TAG, "putMusicPlayListCurBuf : %d(%s)", property->index, property->fileProperties.fileName.data());
+    LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId,
+                       "putMusicPlayListCurBuf : %d(%s)",
+                       property->index, property->fileProperties.fileName.data());
+    m_skipFailures.store(0);
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         m_curMusicProperties = property;
@@ -325,11 +374,70 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
     m_listener->onMusicPlayerMusicListChanged(m_musicListIndex);
 }
 
+void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
+                                             const std::string &path)
+{
+    std::string message = FormatError(code, detail);
+    LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
+                       "playlist error code=%d message=%s index=%d path=%s",
+                       static_cast<int>(code), message.c_str(), index, path.c_str());
+    if (m_audioDev != nullptr) {
+        m_audioDev->stop();
+        m_audioDev->close();
+    }
+    updatePlayState(MusicPlayerState::StoppedState);
+    if (m_listener != nullptr) {
+        m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
+    }
+    if (shouldAutoSkipOnError()) {
+        m_skipFailures.fetch_add(1);
+        m_workQueue.asyncRunTask([this]() {
+            if (m_musicList->skipToNextPlayable()) {
+                _play();
+            } else {
+                LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, m_traceId,
+                                   "auto-skip failed: no playable track");
+            }
+        });
+    }
+}
+
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
 {
     m_state = state;
     m_listener->onMusicPlayerStateChanged(m_state);
+}
+
+bool MusicPlayer::Impl::shouldAutoSkipOnError() const
+{
+    if (!m_autoSkipOnError.load()) {
+        return false;
+    }
+    const int count = m_musicList ? m_musicList->getMusicCount() : 0;
+    if (count <= 1) {
+        return false;
+    }
+    const int failures = m_skipFailures.load();
+    return failures < count;
+}
+
+std::string MusicPlayer::Impl::newTraceId()
+{
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    uint64_t seq = m_traceSeq.fetch_add(1) + 1;
+    std::ostringstream oss;
+    oss << ms << "-" << seq;
+    return oss.str();
+}
+
+void MusicPlayer::Impl::bumpTraceId(const char *reason)
+{
+    m_traceId = newTraceId();
+    m_musicList->setTraceId(m_traceId);
+    LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId, "trace start reason=%s",
+                       reason ? reason : "unknown");
 }
 
 MusicPlayer::MusicPlayer(MusicPlayerListener *listener, std::string &logDir)
@@ -387,6 +495,16 @@ void MusicPlayer::setCurrentIndex(int index)
 int MusicPlayer::getMusicCount()
 {
     return m_impl->getMusicCount();
+}
+
+void MusicPlayer::setAutoSkipOnError(bool enabled)
+{
+    m_impl->setAutoSkipOnError(enabled);
+}
+
+bool MusicPlayer::autoSkipOnError() const
+{
+    return m_impl->autoSkipOnError();
 }
 }
 

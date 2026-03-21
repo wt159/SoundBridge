@@ -18,6 +18,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QCloseEvent>
 #include <QColor>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QSlider>
 #include <QSpacerItem>
 #include <QTimer>
@@ -75,6 +76,7 @@ private:
     QLabel *mLabel[4];
     QLabel *mNowPlayingTitle;
     QLabel *mNowPlayingSubtitle;
+    QCheckBox *mAutoSkipCheck;
 
     /* Mask for list overlay. */
     QWidget *mListMask;
@@ -86,6 +88,7 @@ private:
     std::string mLogDir;
     MusicPlayerState mState;
     int mPlayingIndex = -1;
+    bool mAutoSkipOnError = true;
 
 protected:
     /* Build the music UI layout. */
@@ -120,6 +123,10 @@ protected:
     /* Playlist changed. */
     virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex> list);
 
+    /* Playback error. */
+    virtual void onMusicPlayerError(ErrorCode code, const std::string &detail, int index,
+                                    const std::string &path, const std::string &traceId);
+
 private slots:
     /* Play button clicked. */
     void btn_play_clicked();
@@ -147,5 +154,8 @@ private slots:
 
     /* Duration slider released. */
     void durationSliderReleased();
+
+    /* Auto skip checkbox toggled. */
+    void autoSkipToggled(bool checked);
 };
 #endif // MAINWINDOW_H

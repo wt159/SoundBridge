@@ -25,7 +25,7 @@ add_subdirectory(${SDK_ROOT_DIR}/audio)
 
 add_subdirectory(${SDK_ROOT_DIR}/extractor)
 
-set(SDK_SOURCES MusicPlayList.cpp MusicPlayer.cpp LogApi.cpp)
+set(SDK_SOURCES MusicPlayList.cpp MusicPlayer.cpp LogApi.cpp ErrorCode.cpp Metrics.cpp)
 
 add_library(sdk ${SDK_SOURCES})
 

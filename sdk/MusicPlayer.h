@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <memory>
 #include <list>
+#include <string>
+#include "ErrorCode.hpp"
 
 namespace sdk {
 
@@ -43,6 +45,8 @@ public:
     virtual void onMusicPlayerDurationChanged(uint64_t)               = 0;
     virtual void onMusicPlayerPositionChanged(uint64_t)               = 0;
     virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex>) = 0;
+    virtual void onMusicPlayerError(ErrorCode code, const std::string &detail, int index,
+                                    const std::string &path, const std::string &traceId) = 0;
 };
 
 class MusicPlayer {
@@ -70,6 +74,8 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    void setAutoSkipOnError(bool enabled);
+    bool autoSkipOnError() const;
 
 private:
     class Impl;
