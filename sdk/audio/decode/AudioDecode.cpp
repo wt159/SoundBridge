@@ -126,6 +126,10 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
     if (m_config.blockAlign > 0) {
         m_ctx->block_align = m_config.blockAlign;
     }
+    if (m_config.bitsPerSample > 0) {
+        m_ctx->bits_per_coded_sample = m_config.bitsPerSample;
+        m_ctx->bits_per_raw_sample   = m_config.bitsPerSample;
+    }
     if (m_config.extraData && m_config.extraData->size() > 0) {
         m_ctx->extradata_size = (int)m_config.extraData->size();
         m_ctx->extradata = (uint8_t *)av_mallocz(m_ctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);

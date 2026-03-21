@@ -1,6 +1,7 @@
 #include "APEExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
+#include "ByteUtils.h"
 #include <climits>
 #include <cstring>
 #include <vector>
@@ -12,6 +13,58 @@ extern "C" {
 #define LOG_TAG "APEExtractor"
 
 using namespace sdk_utils;
+
+// APE version 3.98+ uses the descriptor/header layout we parse here.
+static const uint16_t kApeMinVersion = 3980;
+// APE descriptor is 52 bytes for v3.98+.
+static const size_t kApeDescriptorBytes = 52;
+// APE header is at least 24 bytes (fixed portion) and can include optional fields.
+static const uint32_t kApeHeaderMinBytes = 24;
+// Safety cap to avoid reading unreasonable header sizes from a corrupt file.
+static const uint32_t kApeHeaderMaxBytes = 1024;
+
+static bool parseApeHeader(DataSourceBase *source, int &sampleRate, int &channels, int &bitsPerSample)
+{
+    uint8_t desc[kApeDescriptorBytes] = { 0 };
+    if (!source || source->readAt(0, desc, sizeof(desc)) < static_cast<ssize_t>(sizeof(desc))) {
+        return false;
+    }
+    if (memcmp(desc, "MAC ", 4) != 0) {
+        return false;
+    }
+
+    uint16_t version = U16LE_AT(desc + 4);
+    if (version < kApeMinVersion) {
+        return false;
+    }
+
+    uint32_t descriptorBytes = U32LE_AT(desc + 8);
+    uint32_t headerBytes     = U32LE_AT(desc + 12);
+    if (descriptorBytes < sizeof(desc) || headerBytes < kApeHeaderMinBytes || headerBytes > kApeHeaderMaxBytes) {
+        return false;
+    }
+
+    std::vector<uint8_t> header(headerBytes);
+    if (source->readAt(descriptorBytes, header.data(), headerBytes)
+        < static_cast<ssize_t>(headerBytes)) {
+        return false;
+    }
+
+    uint16_t bits = U16LE_AT(header.data() + 16);
+    uint16_t ch   = U16LE_AT(header.data() + 18);
+    uint32_t sr   = U32LE_AT(header.data() + 20);
+
+    if (bits > 0) {
+        bitsPerSample = bits;
+    }
+    if (ch > 0) {
+        channels = ch;
+    }
+    if (sr > 0) {
+        sampleRate = static_cast<int>(sr);
+    }
+    return (bitsPerSample > 0 && channels > 0 && sampleRate > 0);
+}
 
 static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 {
@@ -178,6 +231,21 @@ status_t APEExtractor::initWithFFmpegDemux()
     m_audioSpec.bitsPerSample = par->bits_per_coded_sample > 0
         ? par->bits_per_coded_sample
         : par->bits_per_raw_sample;
+    if (m_audioSpec.bitsPerSample == 0 || m_audioSpec.sampleRate == 0 || m_audioSpec.numChannel == 0) {
+        int parsedSampleRate  = m_audioSpec.sampleRate;
+        int parsedChannels    = m_audioSpec.numChannel;
+        int parsedBitsPerSample = m_audioSpec.bitsPerSample;
+        if (parseApeHeader(m_dataSource, parsedSampleRate, parsedChannels, parsedBitsPerSample)) {
+            m_audioSpec.sampleRate   = parsedSampleRate;
+            m_audioSpec.numChannel   = parsedChannels;
+            m_audioSpec.bitsPerSample = parsedBitsPerSample;
+            LOGI("parseApeHeader ok: sr=%d ch=%d bps=%d",
+                 m_audioSpec.sampleRate, m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
+        } else {
+            LOGW("parseApeHeader failed or incomplete, sr=%d ch=%d bps=%d",
+                 m_audioSpec.sampleRate, m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
+        }
+    }
     m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample > 0
         ? (m_audioSpec.bitsPerSample + 7) / 8
         : 0;
