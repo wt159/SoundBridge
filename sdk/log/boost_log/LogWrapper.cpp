@@ -126,7 +126,7 @@ private:
         sink->set_formatter(expr::stream
                             << "["
                             << expr::format_date_time<boost::posix_time::ptime>(
-                                   "TimeStamp", "%Y-%m-%d %H:%M:%S")
+                                   "TimeStamp", "%Y-%m-%d %H:%M:%S.%f")
                             << "] [" << expr::attr<attrs::current_thread_id::value_type>("ThreadID")
                             << "] [" << expr::attr<severity_level>("Severity")
                             << "] - " << expr::smessage);
