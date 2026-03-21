@@ -6,3 +6,4 @@ package
 sdk/3rdparty/build/**
 sdk/3rdparty/dist/**
 sdk/3rdparty/ffmpeg-4.4.4/**
+sdk/test/log/**
