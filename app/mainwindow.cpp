@@ -520,9 +520,39 @@ void MainWindow::btn_volume_clicked()
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "listWidgetCliked: %d", mListWidget->row(item));
+    const int clickedIndex = mListWidget->row(item);
+    int selectedCount = 0;
+    if (mListWidget && mListWidget->selectionModel()) {
+        selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
+    }
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "thread listWidgetCliked cur=%p ui=%p",
+                   QThread::currentThread(), qApp ? qApp->thread() : nullptr);
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "listWidgetCliked idx=%d playing=%d selectedCount=%d itemSelected=%d itemPlaying=%d",
+                   clickedIndex, mPlayingIndex, selectedCount,
+                   item ? item->isSelected() : -1,
+                   item ? item->data(kRolePlaying).toBool() : -1);
+    // Optimistically update highlight to avoid double-highlight while SDK switches tracks.
+    if (mListWidget != nullptr) {
+        mListWidget->selectionModel()->clearSelection();
+        mListWidget->setCurrentRow(clickedIndex, QItemSelectionModel::ClearAndSelect);
+    }
+    if (mPlayingIndex >= 0 && mPlayingIndex < mListWidget->count()) {
+        QListWidgetItem *prev = mListWidget->item(mPlayingIndex);
+        if (prev != nullptr) {
+            prev->setData(kRolePlaying, false);
+        }
+    }
+    if (item != nullptr) {
+        item->setData(kRolePlaying, true);
+        mListWidget->setCurrentItem(item);
+        mNowPlayingTitle->setText(item->text());
+    }
+    mPlayingIndex = clickedIndex;
+
     mMusicPlayer->stop();
-    mMusicPlayer->setCurrentIndex(mListWidget->row(item));
+    mMusicPlayer->setCurrentIndex(clickedIndex);
     mMusicPlayer->play();
 }
 
@@ -591,6 +621,16 @@ void MainWindow::mediaPlayerInit()
 
 void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
 {
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, state]() { onMusicPlayerStateChanged(state); },
+                                  Qt::QueuedConnection);
+        return;
+    }
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "thread onStateChanged cur=%p ui=%p",
+                   QThread::currentThread(), qApp ? qApp->thread() : nullptr);
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onStateChanged state=%d playing=%d",
+                   static_cast<int>(state), mPlayingIndex);
     if (mState == state)
         return;
     switch (state) {
@@ -613,21 +653,44 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 {
     if (-1 == index)
         return;
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onListCurIndex: %d", index);
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, index]() { onMusicPlayerListCurrentIndexChanged(index); },
+                                  Qt::QueuedConnection);
+        return;
+    }
+    int selectedCount = 0;
+    if (mListWidget && mListWidget->selectionModel()) {
+        selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
+    }
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "thread onListCurIndex cur=%p ui=%p",
+                   QThread::currentThread(), qApp ? qApp->thread() : nullptr);
+    QString playingList;
+    for (int i = 0; i < mListWidget->count(); ++i) {
+        QListWidgetItem *it = mListWidget->item(i);
+        if (it != nullptr && it->data(kRolePlaying).toBool()) {
+            playingList += QString::number(i) + ",";
+        }
+    }
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "onListCurIndex idx=%d playing=%d selectedCount=%d playingFlags=%s",
+                   index, mPlayingIndex, selectedCount, playingList.toUtf8().constData());
     mNowPlayingSubtitle->setText("NOW PLAYING");
-    /* Highlight currently playing item */
-    const int prevIndex = mPlayingIndex;
-    if (prevIndex >= 0 && prevIndex < mListWidget->count()) {
-        QListWidgetItem *prev = mListWidget->item(prevIndex);
-        if (prev != nullptr) {
-            prev->setData(kRolePlaying, false);
+    if (mListWidget != nullptr) {
+        mListWidget->selectionModel()->clearSelection();
+        mListWidget->setCurrentRow(index, QItemSelectionModel::ClearAndSelect);
+    }
+    /* Highlight currently playing item (clear all to avoid double-highlight). */
+    for (int i = 0; i < mListWidget->count(); ++i) {
+        QListWidgetItem *it = mListWidget->item(i);
+        if (it != nullptr && it->data(kRolePlaying).toBool()) {
+            it->setData(kRolePlaying, false);
         }
     }
     QListWidgetItem *item = mListWidget->item(index);
     if (item != nullptr) {
         item->setData(kRolePlaying, true);
         mListWidget->setCurrentItem(item);
-        item->setSelected(true);
         mListWidget->scrollToItem(item, QAbstractItemView::PositionAtCenter);
         mNowPlayingTitle->setText(item->text());
     }
@@ -636,6 +699,11 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 {
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, duration]() { onMusicPlayerDurationChanged(duration); },
+                                  Qt::QueuedConnection);
+        return;
+    }
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "duration %llu", duration);
     mDurationSlider->setRange(0, duration / 1000);
     int second  = duration / 1000;
@@ -661,6 +729,11 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 
 void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 {
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, position]() { onMusicPlayerPositionChanged(position); },
+                                  Qt::QueuedConnection);
+        return;
+    }
     if (!mDurationSlider->isSliderDown())
         mDurationSlider->setValue(position / 1000);
 
@@ -687,6 +760,20 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 
 void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
 {
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this, list]() { onMusicPlayerMusicListChanged(list); },
+                                  Qt::QueuedConnection);
+        return;
+    }
+    int selectedCount = 0;
+    if (mListWidget && mListWidget->selectionModel()) {
+        selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
+    }
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
+                   "thread onMusicListChanged cur=%p ui=%p",
+                   QThread::currentThread(), qApp ? qApp->thread() : nullptr);
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicListChanged size=%d selectedCount=%d",
+                   static_cast<int>(list.size()), selectedCount);
     mListWidget->clear();
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
