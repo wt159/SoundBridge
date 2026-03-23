@@ -154,7 +154,7 @@ void MainWindow::musicLayout()
     mListWidget = new QListWidget();
     mListWidget->setObjectName("mListWidget");
     mListWidget->resize(310, 265);
-    mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mListWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     mListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     mListWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -174,6 +174,10 @@ void MainWindow::musicLayout()
             "QListWidget::item{border-right:none;}"
             "QListWidget::item{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,16);}"
             "QListWidget::item:hover{background:rgba(255,255,255,8);}"
+            "QScrollBar:vertical{background:transparent;width:6px;margin:2px 2px 2px 0;}"
+            "QScrollBar::handle:vertical{background:rgba(255,255,255,60);border-radius:3px;min-height:24px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;}"
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}"
         );
     }
 
@@ -183,10 +187,11 @@ void MainWindow::musicLayout()
     mListMask->setMinimumHeight(50);
     mListMask->setObjectName("mListMask");
     mListMask->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    mListMask->hide();
     const int maskInset  = 1;
-    const int maskHeight = 50 - maskInset;
+    const int maskHeight = 0;
     mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - 50 - maskInset,
+                           mListWidget->viewport()->height() - maskInset,
                            mListWidget->viewport()->width() - maskInset * 2,
                            maskHeight);
 
@@ -225,7 +230,6 @@ void MainWindow::musicLayout()
 
     /* V0 layout */
     mListWidget->setMinimumSize(310, 265);
-    mListWidget->setFont(QFont("ANSI"));
     mHWidget[1]->setMinimumSize(310, 80);
     mHWidget[1]->setMaximumHeight(80);
     mLabel[0]->setMinimumSize(310, 95);
@@ -395,10 +399,10 @@ void MainWindow::musicLayout()
     // mVWidget[2]->setStyleSheet("background-color:gray");
 
     QTimer::singleShot(0, this, [this]() {
-        const int maskInset  = 1;
-        const int maskHeight = 50 - maskInset;
-        mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - 50 - maskInset,
+    const int maskInset  = 1;
+    const int maskHeight = 0;
+    mListMask->setGeometry(maskInset,
+                           mListWidget->viewport()->height() - maskInset,
                            mListWidget->viewport()->width() - maskInset * 2,
                            maskHeight);
         mListWidget->doItemsLayout();
@@ -560,9 +564,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     Q_UNUSED(event);
     const int maskInset  = 1;
-    const int maskHeight = 50 - maskInset;
+    const int maskHeight = 0;
     mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - 50 - maskInset,
+                           mListWidget->viewport()->height() - maskInset,
                            mListWidget->viewport()->width() - maskInset * 2,
                            maskHeight);
 }
@@ -774,6 +778,7 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
                    QThread::currentThread(), qApp ? qApp->thread() : nullptr);
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicListChanged size=%d selectedCount=%d",
                    static_cast<int>(list.size()), selectedCount);
+    mListWidget->setUpdatesEnabled(false);
     mListWidget->clear();
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
@@ -797,8 +802,8 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
             mNowPlayingTitle->setText(item->text());
         }
     }
+    mListWidget->setUpdatesEnabled(true);
     mListWidget->doItemsLayout();
-    mListWidget->updateGeometry();
     mListWidget->viewport()->update();
 }
 
