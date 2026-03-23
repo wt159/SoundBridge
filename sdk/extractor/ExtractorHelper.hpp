@@ -16,6 +16,7 @@ enum standardExtractors {
     ASF_EXTRACTOR,
     M4A_EXTRACTOR,
     APE_EXTRACTOR,
+    MKV_EXTRACTOR,
     OPUS_EXTRACTOR,
     UNKNOWN_EXTRACTOR
 };
@@ -31,6 +32,7 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
     { ".aiff", AIFF_EXTRACTOR },
     { ".asf", ASF_EXTRACTOR },
     { ".ape", APE_EXTRACTOR },
+    { ".mkv", MKV_EXTRACTOR },
     { ".wma", ASF_EXTRACTOR },
     { ".amr", ASF_EXTRACTOR },
     { ".opus", OPUS_EXTRACTOR }

@@ -7,6 +7,7 @@
 #include "asf/ASFExtractor.h"
 #include "flac/FLACExtractor.h"
 #include "m4a/M4AExtractor.h"
+#include "mkv/MKVExtractor.h"
 #include "mp3/MP3Extractor.h"
 #include "ogg/OGGExtractor.h"
 #include "wav/WAVExtractor.h"
@@ -79,6 +80,10 @@ std::string sniffExtensionByMagic(DataSourceBase *source)
     }
     if (matchAscii(buf, 0, "MAC ")) {
         return ".ape";
+    }
+    // MKV/WEBM EBML header
+    if (buf[0] == 0x1A && buf[1] == 0x45 && buf[2] == 0xDF && buf[3] == 0xA3) {
+        return ".mkv";
     }
     if (buf[0] == 0xFF && (buf[1] & 0xF0) == 0xF0) {
         return ".aac"; // ADTS
@@ -222,6 +227,7 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".ogg", OGGExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".aiff", AIFFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".ape", APEExtractor);
+REGISTER_EXTRACTOR_WITH_SNIFF(".mkv", MKVExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
 REGISTER_EXTRACTOR(".amr", ASFExtractor);
 
