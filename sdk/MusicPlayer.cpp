@@ -74,6 +74,7 @@ private:
     std::atomic<uint64_t> m_traceSeq;
     std::atomic<bool> m_autoSkipOnError;
     std::atomic<int> m_skipFailures;
+    std::atomic<bool> m_switching;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
@@ -86,6 +87,7 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_traceSeq(0)
     , m_autoSkipOnError(true)
     , m_skipFailures(0)
+    , m_switching(false)
 {
     SdkLogConfig logConfig;
     logConfig.directory = logDir;
@@ -271,6 +273,7 @@ void MusicPlayer::Impl::_next()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
     bumpTraceId("next");
+    m_switching.store(true);
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -278,6 +281,7 @@ void MusicPlayer::Impl::_next()
     }
     if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        m_switching.store(false);
         return;
     }
     m_musicList->next();
@@ -287,6 +291,7 @@ void MusicPlayer::Impl::_previous()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
     bumpTraceId("previous");
+    m_switching.store(true);
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -294,6 +299,7 @@ void MusicPlayer::Impl::_previous()
     }
     if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        m_switching.store(false);
         return;
     }
     m_musicList->pervious();
@@ -303,6 +309,7 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
     bumpTraceId("setIndex");
+    m_switching.store(true);
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -310,6 +317,7 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
     }
     if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
+        m_switching.store(false);
         return;
     }
     m_musicList->setCurrentIndex(index);
@@ -317,6 +325,12 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
 
 void MusicPlayer::Impl::getAudioData(void *data, int len)
 {
+    if (m_switching.load()) {
+        if (data && len > 0) {
+            std::memset(data, 0, len);
+        }
+        return;
+    }
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -356,6 +370,7 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         m_curMusicProperties = property;
     }
+    m_switching.store(false);
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
     m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
@@ -377,6 +392,7 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
 void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                              const std::string &path)
 {
+    m_switching.store(false);
     std::string message = FormatError(code, detail);
     LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
                        "playlist error code=%d message=%s index=%d path=%s",
