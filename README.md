@@ -135,6 +135,33 @@ Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc
 if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' "$pkg\music" -Recurse -Force }
 ```
 
+## Linux 打包（Portable）
+
+在完成编译后，可将可执行文件和依赖库打包到 `package` 目录。
+
+### 使用 CMake 目标（推荐）
+
+```shell
+# 生成后执行
+cmake --build . --target package_portable
+```
+
+打包输出位于 `package/SoundBridge_portable`，包含：
+- `SoundBridge` - 主程序
+- `run.sh` - 启动脚本（自动设置 `LD_LIBRARY_PATH`）
+- `lib/` - 所有依赖的 `.so` 库
+- `music/` - 示例音乐（可选）
+
+### 使用方式
+
+```shell
+# 运行启动脚本
+./package/SoundBridge_portable/run.sh
+
+# 或直接运行（需手动设置库路径）
+LD_LIBRARY_PATH=./package/SoundBridge_portable/lib ./package/SoundBridge_portable/SoundBridge
+```
+
 ## SDK 测试（Windows）
 
 测试依赖样本文件和 DLL，请使用一键脚本准备运行目录并执行测试。

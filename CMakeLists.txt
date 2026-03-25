@@ -49,3 +49,21 @@ if(WIN32)
         COMMENT "Create portable Windows package"
     )
 endif()
+
+if(UNIX AND NOT APPLE)
+    set(SOUNDBRIDGE_PACKAGE_DIR
+        "${CMAKE_CURRENT_LIST_DIR}/package/SoundBridge_portable"
+        CACHE PATH "Portable package output directory"
+    )
+
+    add_custom_target(package_portable
+        COMMAND ${CMAKE_COMMAND}
+            -DAPP_EXE="$<TARGET_FILE:SoundBridge>"
+            -DPACKAGE_DIR="${SOUNDBRIDGE_PACKAGE_DIR}"
+            -DTHIRD_PARTY_LIB_DIR="${3RDPARTY_DIST_DIR}/lib"
+            -DMUSIC_DIR="${CMAKE_CURRENT_LIST_DIR}/music"
+            -P "${CMAKE_CURRENT_LIST_DIR}/cmake/package_portable_linux.cmake"
+        DEPENDS SoundBridge
+        COMMENT "Create portable Linux package"
+    )
+endif()
