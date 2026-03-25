@@ -22,7 +22,7 @@ AudioBuffer::~AudioBuffer()
     m_size = 0;
 }
 
-void AudioBuffer::setData(off64_t offset, size_t len, char *buffer)
+void AudioBuffer::setData(size_t offset, size_t len, char *buffer)
 {
     size_t available = m_size - offset;
     if (available >= len) {
@@ -33,7 +33,7 @@ void AudioBuffer::setData(off64_t offset, size_t len, char *buffer)
     return;
 }
 
-void AudioBuffer::getData(off64_t offset, size_t len, char *buffer)
+void AudioBuffer::getData(size_t offset, size_t len, char *buffer)
 {
     size_t available = m_size - offset;
     if (available >= len) {

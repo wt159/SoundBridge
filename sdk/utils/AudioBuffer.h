@@ -16,8 +16,8 @@ public:
     ~AudioBuffer();
     char *data() { return m_data;}
     size_t size() const { return m_size; }
-    void setData(off64_t offset, size_t len, char *buffer);
-    void getData(off64_t offset, size_t len, char *buffer);
+void setData(size_t offset, size_t len, char *buffer);
+void getData(size_t offset, size_t len, char *buffer);
 };
 
 using AudioBufferPtr = std::shared_ptr<AudioBuffer>;

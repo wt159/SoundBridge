@@ -4,6 +4,7 @@
 #include "AudioCommon.hpp"
 #include "ByteUtils.h"
 #include "ErrorUtils.h"
+#include <string>
 #include <unordered_map>
 
 enum standardExtractors {

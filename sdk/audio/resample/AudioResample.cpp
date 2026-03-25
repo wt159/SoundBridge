@@ -157,7 +157,7 @@ void AudioResample::Impl::init(AudioSpec &in, AudioSpec &out)
 
 int AudioResample::Impl::resample(void *in, size_t inLen, void *out, size_t *outLen)
 {
-    if(inLen <= 0 || outLen <= 0) {
+    if(inLen == 0 || outLen == nullptr || *outLen == 0) {
         LOG_WARNING(LOG_TAG, "inLen or outLen is invalid");
         return -1;
     }
