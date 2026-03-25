@@ -28,7 +28,7 @@ SoundBridge 是使用 C++ 和 Qt 构建的跨平台音乐播放器，提供模�
 utils → LogWrapper → AudioResample/AudioDecode/AudioDevice → Extractor → sdk → SoundBridge
 ```
 
-**构建目标**：`SoundBridge`（Qt App）、`sdk`、`AudioDecode`/`AudioResample`/`AudioDevice`、`Extractor`、`LogWrapper`、`utils`、`TestSdkSuite`、`package_portable`（Windows）
+**构建目标**：`SoundBridge`（Qt App）、`sdk`、`AudioDecode`/`AudioResample`/`AudioDevice`、`Extractor`、`LogWrapper`、`utils`、`TestSdkSuite`、`package_portable`（Windows/Linux）
 
 **约束**：禁止层间循环依赖；优先在最低合适层添加功能并向上暴露。
 
@@ -50,11 +50,12 @@ cmake --build .
 - **Windows MinGW**：`toolchain.windows_x86_64_mingw.cmake`，生成器 `"MinGW Makefiles"`
 - **嵌入式 Linux ARM**：`toolchain.linux_arm_gnueabihf_gcc.cmake`，生成器 `"Unix Makefiles"`
 
-### 打包（Windows 便携版）
+### 打包
 ```bash
 cmake --build . --target package_portable
 ```
-输出：`package/SoundBridge_portable_v3`
+- **Windows**：输出 `package/SoundBridge_portable_v3`，使用 `windeployqt` 部署 Qt 依赖
+- **Linux**：输出 `package/SoundBridge_portable/`，使用 `ldd` 自动收集 `.so` 库，生成 `run.sh` 启动脚本
 
 ## 测试
 ### 测试框架
@@ -122,6 +123,24 @@ void foo()          class Foo {         if (condition) {
 - 日志宏：`LOG_INFO`/`LOG_ERROR`/`LOG_WARNING`/`LOG_DEBUG`
 - 短宏：`LOGI`/`LOGE`/`LOGW`/`LOGD`（需定义 `LOG_TAG`）
 
+## 已知编译问题
+- `off64_t` 未声明：使用 `size_t` 替代（跨平台兼容，Windows 无 `sys/types.h`）
+- GCC 13+ 缺少 `<string>` 头文件：`std::unordered_map<std::string, ...>` 场景需显式包含
+- 指针比较 `ptr <= 0`：应改为 `ptr == nullptr` 或 `*ptr == 0`
+
+## 提交规范
+- 使用 `fix:`、`feat:`、`chore:`、`docs:` 等前缀
+- 示例：`fix: resolve cross-platform compilation issues`
+- 示例：`feat: add Linux portable packaging support`
+- 示例：`chore: add .cache to .gitignore`
+
+## .gitignore
+- `build/` - 构建输出
+- `package/` - 打包输出
+- `.cache/` - clangd 索引缓存
+- `sdk/3rdparty/dist/` - 第三方依赖预构建
+- `sdk/3rdparty/ffmpeg-4.4.4/` - FFmpeg 源码
+
 ## Agent 指南
 - 保持 SDK 模块边界；优先在最低合适层添加功能并向上暴露
 - 避免编辑 `sdk/3rdparty/`（除非更新依赖源码）
@@ -130,3 +149,4 @@ void foo()          class Foo {         if (condition) {
 - 遵循命名约定和错误处理模式
 - 使用 `#pragma once` 而非 `#ifndef`
 - 不要引入循环依赖
+- 跨平台修改需在 Windows 和 Linux 上都验证编译
