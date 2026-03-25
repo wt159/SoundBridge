@@ -22,7 +22,7 @@ cmake --install .
 ```shell
 cd SoundBridge/sdk/3rdparty
 mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -G "Unix Makefiles"
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DBUILD_OPTION_FFMPEG=ON -DBUILD_OPTION_BOOST=ON -G "Unix Makefiles"
 cmake --build .
 cmake --install .
 ```

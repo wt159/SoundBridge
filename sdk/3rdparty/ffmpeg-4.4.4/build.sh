@@ -41,7 +41,8 @@ echo "start config"
     --disable-ffmpeg \
     --disable-ffplay \
     --disable-ffprobe \
-    --disable-x86asm
+    --disable-asm
+# gcc 11以上的高版本汇编接口不对,直接disable-asm
 
 echo "start make"
 $MAKE V=1 #-j

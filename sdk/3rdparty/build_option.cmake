@@ -4,7 +4,7 @@ if(NOT BUILD_OPTION_BOOST)
 endif()
 # ffmpeg
 if(NOT BUILD_OPTION_FFMPEG)
-    option(BUILD_OPTION_FFMPEG "Build ffmpeg" OFF)
+    option(BUILD_OPTION_FFMPEG "Build ffmpeg" ON)
 endif()
 # flac
 if(NOT BUILD_OPTION_FLAC)
@@ -12,7 +12,7 @@ if(NOT BUILD_OPTION_FLAC)
 endif()
 # g3log
 if(NOT BUILD_OPTION_G3LOG)
-    option(BUILD_OPTION_G3LOG "Build g3log" ON)
+    option(BUILD_OPTION_G3LOG "Build g3log" OFF)
 endif()
 # g3sinks
 if(NOT BUILD_OPTION_G3SINKS)
