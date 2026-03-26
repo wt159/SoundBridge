@@ -17,6 +17,7 @@ private:
     std::ofstream m_outFile;
     AudioSpec m_in;
     AudioSpec m_out;
+
 public:
     AudioResampleTest(std::string &inFile, AudioSpec &in, std::string &outFile, AudioSpec &out)
         : m_resample()
@@ -29,15 +30,15 @@ public:
     }
     void run()
     {
-        int ret = 0;
-        int inFileSize = 0;
+        int ret         = 0;
+        int inFileSize  = 0;
         int outFileSize = 0;
-        size_t inLen = 0;
-        size_t outLen = 0;
-        int inDataSize = m_in.samples * m_in.numChannel * m_in.bitsPerSample / 8;
+        size_t inLen    = 0;
+        int inDataSize  = m_in.samples * m_in.numChannel * m_in.bitsPerSample / 8;
         int outDataSize = m_out.samples * m_out.numChannel * m_out.bitsPerSample / 8;
+        size_t outLen   = outDataSize + 10; // 传递输出缓冲区大小
         LOG_INFO(LOG_TAG, "inDataSize: %d, outDataSize: %d", inDataSize, outDataSize);
-        if(!m_inFile.is_open() || !m_outFile.is_open()) {
+        if (!m_inFile.is_open() || !m_outFile.is_open()) {
             LOG_ERROR(LOG_TAG, "open file failed");
             return;
         }
@@ -45,18 +46,18 @@ public:
         inFileSize = m_inFile.tellg();
         LOG_INFO(LOG_TAG, "inFileSize: %d", inFileSize);
         m_inFile.seekg(0, std::ios::beg);
-        char *inData = new char[inDataSize];
+        char *inData  = new char[inDataSize];
         char *outData = new char[outDataSize + 10];
-        while(1) {
+        while (1) {
             m_inFile.read(inData, inDataSize);
             inLen = m_inFile.gcount();
-            if(inLen <= 0) {
+            if (inLen <= 0) {
                 LOG_ERROR(LOG_TAG, "read file failed");
                 break;
             }
             // LOG_INFO(LOG_TAG, "inLen: %d", inLen);
             ret = m_resample.resample(inData, inLen, outData, &outLen);
-            if(ret != 0) {
+            if (ret != 0) {
                 LOG_ERROR(LOG_TAG, "resample failed, ret: %d", ret);
                 break;
             }
@@ -67,31 +68,32 @@ public:
         delete[] inData;
         delete[] outData;
     }
-    ~AudioResampleTest() {
-        if(m_inFile.is_open()) {
+    ~AudioResampleTest()
+    {
+        if (m_inFile.is_open()) {
             m_inFile.close();
         }
-        if(m_outFile.is_open()) {
+        if (m_outFile.is_open()) {
             m_outFile.close();
         }
-     }
+    }
 };
 
 void TestCode()
 {
     std::string inFile = "./1-44100_s16le_2.pcm";
     AudioSpec in;
-    in.sampleRate = 44100;
-    in.numChannel = 2;
-    in.format = AudioFormatS16;
-    in.samples = 1024;
-    in.bitsPerSample = 16;
+    in.sampleRate       = 44100;
+    in.numChannel       = 2;
+    in.format           = AudioFormatS16;
+    in.samples          = 1024;
+    in.bitsPerSample    = 16;
     std::string outFile = "./2-48000_f32le_1.pcm";
     AudioSpec out;
-    out.sampleRate = 48000;
-    out.numChannel = 1;
-    out.format = AudioFormatFLT32;
-    out.samples = in.samples * out.sampleRate / in.sampleRate;
+    out.sampleRate    = 48000;
+    out.numChannel    = 1;
+    out.format        = AudioFormatFLT32;
+    out.samples       = in.samples * out.sampleRate / in.sampleRate;
     out.bitsPerSample = 32;
     AudioResampleTest test(inFile, in, outFile, out);
     test.run();
@@ -101,17 +103,17 @@ void TestCode2()
 {
     std::string inFile = "./3-16000_s16le_1.pcm";
     AudioSpec in;
-    in.sampleRate = 16000;
-    in.numChannel = 1;
-    in.format = AudioFormatS16;
-    in.samples = 1024;
-    in.bitsPerSample = 16;
+    in.sampleRate       = 16000;
+    in.numChannel       = 1;
+    in.format           = AudioFormatS16;
+    in.samples          = 1024;
+    in.bitsPerSample    = 16;
     std::string outFile = "./4-44100_s16le_2.pcm";
     AudioSpec out;
-    out.sampleRate = 44100;
-    out.numChannel = 2;
-    out.format = AudioFormatS16;
-    out.samples = in.samples * out.sampleRate / in.sampleRate;
+    out.sampleRate    = 44100;
+    out.numChannel    = 2;
+    out.format        = AudioFormatS16;
+    out.samples       = in.samples * out.sampleRate / in.sampleRate;
     out.bitsPerSample = 16;
     AudioResampleTest test(inFile, in, outFile, out);
     test.run();
@@ -119,10 +121,10 @@ void TestCode2()
 
 int main()
 {
-    std::string rotateFileLog = "audio_resample_test";
-    std::string directory = "./log";
+    std::string rotateFileLog  = "audio_resample_test";
+    std::string directory      = "./log";
     constexpr int k10MBInBytes = 10 * 1024 * 1024;
-    constexpr int k20InCounts = 20;
+    constexpr int k20InCounts  = 20;
     printf("LogWrapper::getInstanceInitialize\n");
     LogWrapper::getInstanceInitialize(directory, rotateFileLog, k10MBInBytes, k20InCounts);
     LOG_INFO(LOG_TAG, "Log init success");

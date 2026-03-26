@@ -1,11 +1,11 @@
+#include "MusicPlayList.h"
 #include "ExtractorFactory.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "Metrics.h"
-#include "MusicPlayList.h"
 #include "type_name.hpp"
-#include <cstddef>
 #include <chrono>
+#include <cstddef>
 
 namespace sdk {
 
@@ -72,11 +72,11 @@ bool MusicPlayList::skipToNextPlayable()
     if (m_curIndex.load() == 0 || m_selectMusicProperties == nullptr) {
         return false;
     }
-    size_t count = m_curIndex.load();
+    size_t count      = m_curIndex.load();
     size_t startIndex = m_selectMusicProperties->index;
-    size_t prevIndex = startIndex;
+    size_t prevIndex  = startIndex;
     for (size_t step = 1; step <= count; ++step) {
-        size_t index = (startIndex + step) % count;
+        size_t index                 = (startIndex + step) % count;
         MusicPropertiesPtr candidate = m_musicListProperties.at(index);
         if (!ensureDecoded(candidate)) {
             continue;
@@ -84,7 +84,7 @@ bool MusicPlayList::skipToNextPlayable()
         releaseDecodedBuffersExcept(candidate->index, prevIndex);
         candidate->signalProperties.curDataOffset = 0;
         candidate->signalProperties.curPositionMs = 0;
-        m_selectMusicProperties = candidate;
+        m_selectMusicProperties                   = candidate;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
         return true;
     }
@@ -92,7 +92,7 @@ bool MusicPlayList::skipToNextPlayable()
 }
 void MusicPlayList::_addMusic(const std::string &musicPath)
 {
-    auto openStart = std::chrono::steady_clock::now();
+    auto openStart                       = std::chrono::steady_clock::now();
     MusicPropertiesPtr musicProperties   = std::make_shared<MusicProperties>();
     musicProperties->index               = m_curIndex;
     FileProperties &fileProperties       = musicProperties->fileProperties;
@@ -115,7 +115,8 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     std::shared_ptr<ExtractorHelper> extractor(
         ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName, true));
     if (extractor == nullptr) {
-        reportError(ErrorCode::ExtractorUnsupported, "createExtractor returned nullptr", musicProperties);
+        reportError(ErrorCode::ExtractorUnsupported, "createExtractor returned nullptr",
+                    musicProperties);
         return;
     }
     if (extractor->initCheck() != OK) {
@@ -123,10 +124,12 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         return;
     }
     auto openEnd = std::chrono::steady_clock::now();
-    auto openMs  = std::chrono::duration_cast<std::chrono::milliseconds>(openEnd - openStart).count();
-    Metrics::RecordTiming("open_file_ms", static_cast<uint64_t>(openMs),
-                          MetricTags{currentTraceId(), musicPath, static_cast<int>(musicProperties->index)});
-    processProperties.extractor = extractor;
+    auto openMs
+        = std::chrono::duration_cast<std::chrono::milliseconds>(openEnd - openStart).count();
+    Metrics::RecordTiming(
+        "open_file_ms", static_cast<uint64_t>(openMs),
+        MetricTags { currentTraceId(), musicPath, static_cast<int>(musicProperties->index) });
+    processProperties.extractor    = extractor;
     signalProperties.curPositionMs = 0;
     signalProperties.curDataOffset = 0;
     signalProperties.spec          = extractor->getAudioSpec();
@@ -149,8 +152,8 @@ void MusicPlayList::_next()
     if (m_curIndex.load() == 0)
         return;
     MusicPropertiesPtr prev = m_selectMusicProperties;
-    size_t prevIndex = prev ? prev->index : SIZE_MAX;
-    size_t index = (m_selectMusicProperties->index + 1) % m_curIndex.load();
+    size_t prevIndex        = prev ? prev->index : SIZE_MAX;
+    size_t index            = (m_selectMusicProperties->index + 1) % m_curIndex.load();
     m_selectMusicProperties = m_musicListProperties.at(index);
     if (!ensureDecoded(m_selectMusicProperties)) {
         m_selectMusicProperties = prev;
@@ -166,8 +169,8 @@ void MusicPlayList::_pervious()
     if (m_curIndex.load() == 0)
         return;
     MusicPropertiesPtr prev = m_selectMusicProperties;
-    size_t prevIndex = prev ? prev->index : SIZE_MAX;
-    size_t index = (m_selectMusicProperties->index - 1) % m_curIndex.load();
+    size_t prevIndex        = prev ? prev->index : SIZE_MAX;
+    size_t index            = (m_selectMusicProperties->index - 1) % m_curIndex.load();
     m_selectMusicProperties = m_musicListProperties.at(index);
     if (!ensureDecoded(m_selectMusicProperties)) {
         m_selectMusicProperties = prev;
@@ -183,7 +186,7 @@ void MusicPlayList::_setCurrentIndex(int index)
     if (m_curIndex.load() == 0)
         return;
     MusicPropertiesPtr prev = m_selectMusicProperties;
-    size_t prevIndex = prev ? prev->index : SIZE_MAX;
+    size_t prevIndex        = prev ? prev->index : SIZE_MAX;
     m_selectMusicProperties = m_musicListProperties.at(index);
     if (!ensureDecoded(m_selectMusicProperties)) {
         m_selectMusicProperties = prev;
@@ -208,15 +211,14 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
     }
     if (musicProperties->rawBuffer != nullptr) {
         Metrics::RecordCount("buffer_hit", 1,
-                             MetricTags{currentTraceId(),
-                                        musicProperties->fileProperties.fullPath,
-                                        static_cast<int>(musicProperties->index)});
+                             MetricTags { currentTraceId(),
+                                          musicProperties->fileProperties.fullPath,
+                                          static_cast<int>(musicProperties->index) });
         return true;
     }
     Metrics::RecordCount("buffer_miss", 1,
-                         MetricTags{currentTraceId(),
-                                    musicProperties->fileProperties.fullPath,
-                                    static_cast<int>(musicProperties->index)});
+                         MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                                      static_cast<int>(musicProperties->index) });
 
     ProcessProperties &processProperties = musicProperties->processProperties;
     if (processProperties.extractor == nullptr) {
@@ -224,12 +226,13 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
         return false;
     }
 
-    int ret = 0;
+    int ret          = 0;
     auto decodeStart = std::chrono::steady_clock::now();
     std::shared_ptr<AudioDecodeProcess> decode(
         new AudioDecodeProcess(processProperties.extractor.get()));
     if (decode == nullptr || decode->initCheck() != OK) {
-        reportError(ErrorCode::DecodeInitFailed, "AudioDecodeProcess initCheck failed", musicProperties);
+        reportError(ErrorCode::DecodeInitFailed, "AudioDecodeProcess initCheck failed",
+                    musicProperties);
         return false;
     }
     processProperties.decode = decode;
@@ -242,17 +245,18 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
         return false;
     }
     auto decodeEnd = std::chrono::steady_clock::now();
-    auto decodeMs  = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
-    MetricTags tags{currentTraceId(), musicProperties->fileProperties.fullPath,
-                    static_cast<int>(musicProperties->index)};
+    auto decodeMs
+        = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart).count();
+    MetricTags tags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                      static_cast<int>(musicProperties->index) };
     Metrics::RecordTiming("decode_total_ms", static_cast<uint64_t>(decodeMs), tags);
     Metrics::RecordTiming("first_frame_ms", static_cast<uint64_t>(decodeMs), tags);
-    signalProperties.dataSize             = decBufPtr->size();
-    signalProperties.durationMs           = signalProperties.spec.durationMs;
+    signalProperties.dataSize   = decBufPtr->size();
+    signalProperties.durationMs = signalProperties.spec.durationMs;
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
     LOG_INFO(LOG_TAG, "dataSize      : %lld", signalProperties.dataSize);
     if (signalProperties.durationMs > 0) {
-        double durationSec = static_cast<double>(signalProperties.durationMs) / 1000.0;
+        double durationSec       = static_cast<double>(signalProperties.durationMs) / 1000.0;
         double avgDecodeMsPerSec = static_cast<double>(decodeMs) / durationSec;
         Metrics::RecordGauge("decode_ms_per_sec", avgDecodeMsPerSec, tags, "ms/s");
     }
@@ -272,18 +276,20 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
     }
 
     LOG_INFO(LOG_TAG, "audio spec is not same, need resample");
-    AudioSpec inSpec           = signalProperties.spec;
-    AudioSpec outSpec          = m_devSpec;
+    AudioSpec inSpec  = signalProperties.spec;
+    AudioSpec outSpec = m_devSpec;
     LOGD("in  spec %d %d %d", inSpec.sampleRate, inSpec.numChannel, inSpec.bytesPerSample);
     LOGD("out spec %d %d %d", outSpec.sampleRate, outSpec.numChannel, outSpec.bytesPerSample);
     inSpec.samples             = 1024;
     processProperties.resample = std::make_shared<AudioResample>(inSpec, outSpec);
     if (processProperties.resample == nullptr || processProperties.resample->initCheck() != OK) {
-        reportError(ErrorCode::ResampleInitFailed, "AudioResample initCheck failed", musicProperties);
+        reportError(ErrorCode::ResampleInitFailed, "AudioResample initCheck failed",
+                    musicProperties);
         return false;
     }
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", decBufPtr->size());
-    long resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate / (double)inSpec.sampleRate);
+    long resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate
+                                    / (double)inSpec.sampleRate);
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
     resampleBufSize = resampleBufSize * outSpec.numChannel / inSpec.numChannel;
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
@@ -296,7 +302,7 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
     size_t inOnceSize  = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
     LOG_INFO(LOG_TAG, "inOnceSize : %d", inOnceSize);
     size_t inSize  = 0;
-    size_t outSize = 0, outOnceSize = 0;
+    size_t outSize = 0, outOnceSize = resampleBufSize;
     auto resampleStart = std::chrono::steady_clock::now();
     while (1) {
         ret = processProperties.resample->resample(decOutputBuf + inSize, inOnceSize,
@@ -317,7 +323,9 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
         }
     }
     auto resampleEnd = std::chrono::steady_clock::now();
-    auto resampleMs  = std::chrono::duration_cast<std::chrono::milliseconds>(resampleEnd - resampleStart).count();
+    auto resampleMs
+        = std::chrono::duration_cast<std::chrono::milliseconds>(resampleEnd - resampleStart)
+              .count();
     Metrics::RecordTiming("resample_ms", static_cast<uint64_t>(resampleMs), tags);
     LOG_INFO(LOG_TAG, "resampleBufSize : %llu", resampleBufSize);
     signalProperties.dataSize  = outSize;
@@ -355,7 +363,8 @@ void MusicPlayList::reportError(ErrorCode code, const std::string &detail,
     std::string traceId = currentTraceId();
     LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, traceId, "error=%d detail=%s index=%d path=%s",
                        static_cast<int>(code), detail.c_str(), index, path.c_str());
-    bool shouldNotify = (m_selectMusicProperties == nullptr || musicProperties == m_selectMusicProperties);
+    bool shouldNotify
+        = (m_selectMusicProperties == nullptr || musicProperties == m_selectMusicProperties);
     if (m_callback != nullptr && shouldNotify) {
         m_callback->onMusicPlayListError(code, detail, index, path);
     }
@@ -367,4 +376,3 @@ std::string MusicPlayList::currentTraceId() const
     return m_traceId;
 }
 }
-

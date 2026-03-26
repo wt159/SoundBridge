@@ -8,12 +8,12 @@
 #include "FileSource.h"
 #include "LogWrapper.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
-#include <algorithm>
 #include <vector>
 
 namespace {
@@ -41,9 +41,9 @@ bool check(bool condition, const char *message)
 
 bool init_logger()
 {
-    std::string log_file = "sdk_test_suite";
-    std::string log_dir = "./log";
-    constexpr int k5MB = 5 * 1024 * 1024;
+    std::string log_file  = "sdk_test_suite";
+    std::string log_dir   = "./log";
+    constexpr int k5MB    = 5 * 1024 * 1024;
     constexpr int k5Files = 5;
     LogWrapper::getInstanceInitialize(log_dir, log_file, k5MB, k5Files);
     LOG_INFO("TestSdkSuite", "logger initialized");
@@ -52,21 +52,21 @@ bool init_logger()
 
 bool test_audio_common()
 {
-    bool ok = true;
-    ok &= check(getAudioFormatByBitPreSample(16) == AudioFormatS16, "Audio format map 16bit");
-    ok &= check(getAudioFormatByBitPreSample(32) == AudioFormatS32, "Audio format map 32bit");
-    ok &= check(getBytePreSampleByAudioFormat(AudioFormatFLT32) == 4,
-                "Audio bytes per sample (float)");
-    ok &= check(getBytePreSampleByAudioFormat(AudioFormatDBL64) == 8,
-                "Audio bytes per sample (double)");
+    bool ok  = true;
+    ok      &= check(getAudioFormatByBitPreSample(16) == AudioFormatS16, "Audio format map 16bit");
+    ok      &= check(getAudioFormatByBitPreSample(32) == AudioFormatS32, "Audio format map 32bit");
+    ok      &= check(getBytePreSampleByAudioFormat(AudioFormatFLT32) == 4,
+                     "Audio bytes per sample (float)");
+    ok      &= check(getBytePreSampleByAudioFormat(AudioFormatDBL64) == 8,
+                     "Audio bytes per sample (double)");
     return ok;
 }
 
 bool test_file_search()
 {
     std::vector<std::string> files = recursiveFileSearch(".");
-    bool has_wav = false;
-    bool has_aac = false;
+    bool has_wav                   = false;
+    bool has_aac                   = false;
     for (const auto &path : files) {
         if (path.find("music.wav") != std::string::npos) {
             has_wav = true;
@@ -76,10 +76,10 @@ bool test_file_search()
         }
     }
 
-    bool ok = true;
-    ok &= check(!files.empty(), "FileSearch found media files");
-    ok &= check(has_wav, "FileSearch found music.wav");
-    ok &= check(has_aac, "FileSearch found sample aac");
+    bool ok  = true;
+    ok      &= check(!files.empty(), "FileSearch found media files");
+    ok      &= check(has_wav, "FileSearch found music.wav");
+    ok      &= check(has_aac, "FileSearch found sample aac");
     return ok;
 }
 
@@ -91,19 +91,19 @@ bool test_resample()
     }
 
     AudioSpec in_spec;
-    in_spec.sampleRate = 44100;
-    in_spec.numChannel = 2;
-    in_spec.format = AudioFormatS16;
-    in_spec.samples = 1024;
-    in_spec.bitsPerSample = 16;
+    in_spec.sampleRate     = 44100;
+    in_spec.numChannel     = 2;
+    in_spec.format         = AudioFormatS16;
+    in_spec.samples        = 1024;
+    in_spec.bitsPerSample  = 16;
     in_spec.bytesPerSample = 2;
 
     AudioSpec out_spec;
-    out_spec.sampleRate = 48000;
-    out_spec.numChannel = 1;
-    out_spec.format = AudioFormatFLT32;
-    out_spec.samples = 1024 * 48000 / 44100;
-    out_spec.bitsPerSample = 32;
+    out_spec.sampleRate     = 48000;
+    out_spec.numChannel     = 1;
+    out_spec.format         = AudioFormatFLT32;
+    out_spec.samples        = 1024 * 48000 / 44100;
+    out_spec.bitsPerSample  = 32;
     out_spec.bytesPerSample = 4;
 
     AudioResample resample;
@@ -112,22 +112,22 @@ bool test_resample()
         return false;
     }
 
-    const size_t in_block =
-        static_cast<size_t>(in_spec.samples) * in_spec.numChannel * in_spec.bytesPerSample;
+    const size_t in_block
+        = static_cast<size_t>(in_spec.samples) * in_spec.numChannel * in_spec.bytesPerSample;
     std::vector<char> in_buf(in_block);
     std::vector<char> out_buf(in_block * 4);
 
-    size_t out_len = 0;
+    size_t out_len = out_buf.size(); // 传递输出缓冲区大小
     in.read(in_buf.data(), static_cast<std::streamsize>(in_buf.size()));
     size_t got = static_cast<size_t>(in.gcount());
     if (!check(got > 0, "Read resample input bytes")) {
         return false;
     }
 
-    int ret = resample.resample(in_buf.data(), got, out_buf.data(), &out_len);
-    bool ok = true;
-    ok &= check(ret == 0, "AudioResample resample return code");
-    ok &= check(out_len > 0, "AudioResample output size > 0");
+    int ret  = resample.resample(in_buf.data(), got, out_buf.data(), &out_len);
+    bool ok  = true;
+    ok      &= check(ret == 0, "AudioResample resample return code");
+    ok      &= check(out_len > 0, "AudioResample output size > 0");
     return ok;
 }
 
@@ -146,18 +146,18 @@ bool test_decode()
     DecodeCollector collector;
     AudioDecode decode(AUDIO_CODEC_ID_AAC, &collector);
 
-    bool ok = true;
-    ok &= check(decode.initCheck() == sdk_utils::OK, "AudioDecode initCheck");
+    bool ok  = true;
+    ok      &= check(decode.initCheck() == sdk_utils::OK, "AudioDecode initCheck");
     if (!ok) {
         return false;
     }
 
-    int ret = decode.decode(data.data(), static_cast<ssize_t>(data.size()));
-    ok &= check(ret == 0, "AudioDecode decode return code");
-    ok &= check(collector.frame_count > 0, "AudioDecode callback frame count");
-    ok &= check(collector.last_spec.sampleRate > 0, "AudioDecode sample rate parsed");
-    ok &= check(collector.last_spec.numChannel > 0, "AudioDecode channels parsed");
-    ok &= check(collector.last_spec.bytesPerSample > 0, "AudioDecode bytes/sample parsed");
+    int ret  = decode.decode(data.data(), static_cast<ssize_t>(data.size()));
+    ok      &= check(ret == 0, "AudioDecode decode return code");
+    ok      &= check(collector.frame_count > 0, "AudioDecode callback frame count");
+    ok      &= check(collector.last_spec.sampleRate > 0, "AudioDecode sample rate parsed");
+    ok      &= check(collector.last_spec.numChannel > 0, "AudioDecode channels parsed");
+    ok      &= check(collector.last_spec.bytesPerSample > 0, "AudioDecode bytes/sample parsed");
     return ok;
 }
 
@@ -205,15 +205,15 @@ std::string normalize_ext_filter(const std::string &raw)
 bool test_media_smoke()
 {
     std::string media_dir = get_env_or_default("SB_MEDIA_DIR", "../../music");
-    int limit = get_env_int("SB_MEDIA_LIMIT", 0);
-    std::string filter = normalize_ext_filter(get_env_or_default("SB_MEDIA_FILTER", ""));
+    int limit             = get_env_int("SB_MEDIA_LIMIT", 0);
+    std::string filter    = normalize_ext_filter(get_env_or_default("SB_MEDIA_FILTER", ""));
     std::vector<std::string> files = recursiveFileSearch(media_dir);
     if (!check(!files.empty(), "MediaSmoke found media files")) {
         return false;
     }
     std::sort(files.begin(), files.end());
 
-    bool ok = true;
+    bool ok   = true;
     int count = 0;
     struct FailItem {
         std::string path;
@@ -238,7 +238,7 @@ bool test_media_smoke()
         std::shared_ptr<FileSource> source(new FileSource(path.c_str()));
         if (!check(source && source->initCheck() == sdk_utils::OK,
                    ("MediaSmoke open file " + path).c_str())) {
-            fails.push_back({path, "open"});
+            fails.push_back({ path, "open" });
             ok = false;
             continue;
         }
@@ -246,13 +246,13 @@ bool test_media_smoke()
         std::unique_ptr<ExtractorHelper> extractor(
             ExtractorFactory::createExtractor(source.get(), ext, true));
         if (!check(extractor != nullptr, ("MediaSmoke extractor " + path).c_str())) {
-            fails.push_back({path, "extractor"});
+            fails.push_back({ path, "extractor" });
             ok = false;
             continue;
         }
         if (!check(extractor->initCheck() == sdk_utils::OK,
                    ("MediaSmoke extractor init " + path).c_str())) {
-            fails.push_back({path, "extractor_init"});
+            fails.push_back({ path, "extractor_init" });
             ok = false;
             continue;
         }
@@ -260,17 +260,14 @@ bool test_media_smoke()
         std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
         if (!check(decode && decode->initCheck() == sdk_utils::OK,
                    ("MediaSmoke decode init " + path).c_str())) {
-            AudioSpec spec = extractor->getAudioSpec();
+            AudioSpec spec                    = extractor->getAudioSpec();
             AudioBuffer::AudioBufferPtr extra = extractor->getCodecExtraData();
-            std::printf("DecodeInit info: codec=%#x, sr=%d, ch=%d, bits=%d, bitrate=%d, blockAlign=%d, extra=%zu\n",
-                        extractor->getAudioCodecID(),
-                        spec.sampleRate,
-                        spec.numChannel,
-                        spec.bitsPerSample,
-                        extractor->getBitRate(),
-                        extractor->getBlockAlign(),
+            std::printf("DecodeInit info: codec=%#x, sr=%d, ch=%d, bits=%d, bitrate=%d, "
+                        "blockAlign=%d, extra=%zu\n",
+                        extractor->getAudioCodecID(), spec.sampleRate, spec.numChannel,
+                        spec.bitsPerSample, extractor->getBitRate(), extractor->getBlockAlign(),
                         extra ? extra->size() : 0);
-            fails.push_back({path, "decode_init"});
+            fails.push_back({ path, "decode_init" });
             ok = false;
             continue;
         }
@@ -278,14 +275,14 @@ bool test_media_smoke()
         AudioBuffer::AudioBufferPtr out = decode->getDecodeBuffer();
         if (!check(out != nullptr && out->size() > 0,
                    ("MediaSmoke decoded bytes " + path).c_str())) {
-            fails.push_back({path, "decoded_bytes"});
+            fails.push_back({ path, "decoded_bytes" });
             ok = false;
             continue;
         }
     }
 
-    std::printf("MediaSmoke decoded files: %d (filter=%s)\n",
-                count, filter.empty() ? "<none>" : filter.c_str());
+    std::printf("MediaSmoke decoded files: %d (filter=%s)\n", count,
+                filter.empty() ? "<none>" : filter.c_str());
     if (!fails.empty()) {
         std::printf("MediaSmoke failures: %zu\n", fails.size());
         for (const auto &f : fails) {

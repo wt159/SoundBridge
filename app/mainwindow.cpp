@@ -9,20 +9,20 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 *******************************************************************/
 #include "mainwindow.h"
 #include "LogApi.h"
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfoList>
 #include <QGuiApplication>
+#include <QMessageBox>
 #include <QPainter>
-#include <QApplication>
 #include <QScreen>
 #include <QSettings>
 #include <QStyledItemDelegate>
-#include <QMessageBox>
 #include <QThread>
 
 namespace {
-constexpr const char* kTag = "MainWindow";
+constexpr const char *kTag = "MainWindow";
 constexpr int kRolePlaying = Qt::UserRole + 1;
 
 class MusicItemDelegate : public QStyledItemDelegate {
@@ -51,8 +51,8 @@ public:
             }
         }
 
-        opt.state &= ~QStyle::State_Selected;
-        opt.backgroundBrush = Qt::NoBrush;
+        opt.state           &= ~QStyle::State_Selected;
+        opt.backgroundBrush  = Qt::NoBrush;
 
         QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
         style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
@@ -123,9 +123,9 @@ void MainWindow::musicLayout()
     /* Labels */
     for (int i = 0; i < 4; i++)
         mLabel[i] = new QLabel();
-    mNowPlayingTitle = new QLabel();
+    mNowPlayingTitle    = new QLabel();
     mNowPlayingSubtitle = new QLabel();
-    mAutoSkipCheck = new QCheckBox("Auto skip on error");
+    mAutoSkipCheck      = new QCheckBox("Auto skip on error");
     mAutoSkipCheck->setObjectName("mAutoSkipCheck");
 
     for (int i = 0; i < 3; i++) {
@@ -175,10 +175,10 @@ void MainWindow::musicLayout()
             "QListWidget::item{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,16);}"
             "QListWidget::item:hover{background:rgba(255,255,255,8);}"
             "QScrollBar:vertical{background:transparent;width:6px;margin:2px 2px 2px 0;}"
-            "QScrollBar::handle:vertical{background:rgba(255,255,255,60);border-radius:3px;min-height:24px;}"
+            "QScrollBar::handle:vertical{background:rgba(255,255,255,60);border-radius:3px;min-"
+            "height:24px;}"
             "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;}"
-            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}"
-        );
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}");
     }
 
     /* List mask overlay */
@@ -190,10 +190,8 @@ void MainWindow::musicLayout()
     mListMask->hide();
     const int maskInset  = 1;
     const int maskHeight = 0;
-    mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - maskInset,
-                           mListWidget->viewport()->width() - maskInset * 2,
-                           maskHeight);
+    mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
+                           mListWidget->viewport()->width() - maskInset * 2, maskHeight);
 
     /* Set object names */
     mPushButton[0]->setObjectName("btn_previous");
@@ -399,12 +397,10 @@ void MainWindow::musicLayout()
     // mVWidget[2]->setStyleSheet("background-color:gray");
 
     QTimer::singleShot(0, this, [this]() {
-    const int maskInset  = 1;
-    const int maskHeight = 0;
-    mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - maskInset,
-                           mListWidget->viewport()->width() - maskInset * 2,
-                           maskHeight);
+        const int maskInset  = 1;
+        const int maskHeight = 0;
+        mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
+                               mListWidget->viewport()->width() - maskInset * 2, maskHeight);
         mListWidget->doItemsLayout();
         mListWidget->viewport()->update();
     });
@@ -423,8 +419,8 @@ void MainWindow::restoreWindowState()
 {
     QSettings settings;
     const QByteArray geometry = settings.value("window/geometry").toByteArray();
-    const bool maximized = settings.value("window/maximized", false).toBool();
-    mAutoSkipOnError = settings.value("playback/auto_skip_on_error", true).toBool();
+    const bool maximized      = settings.value("window/maximized", false).toBool();
+    mAutoSkipOnError          = settings.value("playback/auto_skip_on_error", true).toBool();
     if (mAutoSkipCheck != nullptr) {
         mAutoSkipCheck->setChecked(mAutoSkipOnError);
     }
@@ -525,18 +521,17 @@ void MainWindow::btn_volume_clicked()
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
 {
     const int clickedIndex = mListWidget->row(item);
-    int selectedCount = 0;
+    int selectedCount      = 0;
     if (mListWidget && mListWidget->selectionModel()) {
         selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
     }
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "thread listWidgetCliked cur=%p ui=%p",
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "thread listWidgetCliked cur=%p ui=%p",
                    QThread::currentThread(), qApp ? qApp->thread() : nullptr);
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "listWidgetCliked idx=%d playing=%d selectedCount=%d itemSelected=%d itemPlaying=%d",
-                   clickedIndex, mPlayingIndex, selectedCount,
-                   item ? item->isSelected() : -1,
-                   item ? item->data(kRolePlaying).toBool() : -1);
+    sdk::LogPrintf(
+        sdk::SdkLogLevel::Debug, kTag,
+        "listWidgetCliked idx=%d playing=%d selectedCount=%d itemSelected=%d itemPlaying=%d",
+        clickedIndex, mPlayingIndex, selectedCount, item ? item->isSelected() : -1,
+        item ? item->data(kRolePlaying).toBool() : -1);
     // Optimistically update highlight to avoid double-highlight while SDK switches tracks.
     if (mListWidget != nullptr) {
         mListWidget->selectionModel()->clearSelection();
@@ -565,16 +560,15 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     Q_UNUSED(event);
     const int maskInset  = 1;
     const int maskHeight = 0;
-    mListMask->setGeometry(maskInset,
-                           mListWidget->viewport()->height() - maskInset,
-                           mListWidget->viewport()->width() - maskInset * 2,
-                           maskHeight);
+    mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
+                           mListWidget->viewport()->width() - maskInset * 2, maskHeight);
 }
 
 void MainWindow::durationSliderReleased()
 {
     /* Seek playback to slider position */
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "durationSliderReleased: %d", mDurationSlider->value());
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "durationSliderReleased: %d",
+                   mDurationSlider->value());
     mMusicPlayer->setPosition(mDurationSlider->value() * 1000);
 }
 
@@ -595,7 +589,8 @@ void MainWindow::scanSongs()
         mMusicPlayer->addMusicDir(dirbsolutePath.absolutePath().toStdString());
     } else {
         sdk::LogMessage(sdk::SdkLogLevel::Warning, kTag, "dir not exist");
-        sdk::LogPrintf(sdk::SdkLogLevel::Warning, kTag, "dir is %s", QCoreApplication::applicationDirPath().toUtf8().constData());
+        sdk::LogPrintf(sdk::SdkLogLevel::Warning, kTag, "dir is %s",
+                       QCoreApplication::applicationDirPath().toUtf8().constData());
     }
 }
 
@@ -606,8 +601,8 @@ void MainWindow::mediaPlayerInit()
     mLogDir = mAppDir + "/log";
 #else
 #define TONAME1(x) #x
-#define TONAME(x) TONAME1(x)
-    mLogDir = "/var/log/";
+#define TONAME(x)  TONAME1(x)
+    mLogDir  = "/var/log/";
     mLogDir += TONAME(EXE_NAME);
 #endif // _WIN32
     QDir dir(mLogDir.c_str());
@@ -626,12 +621,11 @@ void MainWindow::mediaPlayerInit()
 void MainWindow::onMusicPlayerStateChanged(MusicPlayerState state)
 {
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, state]() { onMusicPlayerStateChanged(state); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, state]() { onMusicPlayerStateChanged(state); }, Qt::QueuedConnection);
         return;
     }
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "thread onStateChanged cur=%p ui=%p",
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "thread onStateChanged cur=%p ui=%p",
                    QThread::currentThread(), qApp ? qApp->thread() : nullptr);
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onStateChanged state=%d playing=%d",
                    static_cast<int>(state), mPlayingIndex);
@@ -658,16 +652,16 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
     if (-1 == index)
         return;
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, index]() { onMusicPlayerListCurrentIndexChanged(index); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, index]() { onMusicPlayerListCurrentIndexChanged(index); },
+            Qt::QueuedConnection);
         return;
     }
     int selectedCount = 0;
     if (mListWidget && mListWidget->selectionModel()) {
         selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
     }
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "thread onListCurIndex cur=%p ui=%p",
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "thread onListCurIndex cur=%p ui=%p",
                    QThread::currentThread(), qApp ? qApp->thread() : nullptr);
     QString playingList;
     for (int i = 0; i < mListWidget->count(); ++i) {
@@ -677,8 +671,8 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
         }
     }
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "onListCurIndex idx=%d playing=%d selectedCount=%d playingFlags=%s",
-                   index, mPlayingIndex, selectedCount, playingList.toUtf8().constData());
+                   "onListCurIndex idx=%d playing=%d selectedCount=%d playingFlags=%s", index,
+                   mPlayingIndex, selectedCount, playingList.toUtf8().constData());
     mNowPlayingSubtitle->setText("NOW PLAYING");
     if (mListWidget != nullptr) {
         mListWidget->selectionModel()->clearSelection();
@@ -704,8 +698,9 @@ void MainWindow::onMusicPlayerListCurrentIndexChanged(int index)
 void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 {
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, duration]() { onMusicPlayerDurationChanged(duration); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, duration]() { onMusicPlayerDurationChanged(duration); },
+            Qt::QueuedConnection);
         return;
     }
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "duration %llu", duration);
@@ -734,8 +729,9 @@ void MainWindow::onMusicPlayerDurationChanged(uint64_t duration)
 void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 {
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, position]() { onMusicPlayerPositionChanged(position); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, position]() { onMusicPlayerPositionChanged(position); },
+            Qt::QueuedConnection);
         return;
     }
     if (!mDurationSlider->isSliderDown())
@@ -765,16 +761,15 @@ void MainWindow::onMusicPlayerPositionChanged(uint64_t position)
 void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
 {
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, list]() { onMusicPlayerMusicListChanged(list); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, list]() { onMusicPlayerMusicListChanged(list); }, Qt::QueuedConnection);
         return;
     }
     int selectedCount = 0;
     if (mListWidget && mListWidget->selectionModel()) {
         selectedCount = mListWidget->selectionModel()->selectedIndexes().size();
     }
-    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag,
-                   "thread onMusicListChanged cur=%p ui=%p",
+    sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "thread onMusicListChanged cur=%p ui=%p",
                    QThread::currentThread(), qApp ? qApp->thread() : nullptr);
     sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicListChanged size=%d selectedCount=%d",
                    static_cast<int>(list.size()), selectedCount);
@@ -783,8 +778,8 @@ void MainWindow::onMusicPlayerMusicListChanged(std::list<MusicIndex> list)
     for (auto &index : list) {
         std::string name = QString::fromLocal8Bit(index.name.data()).toUtf8().data();
         mListWidget->addItem(QString::fromStdString(name));
-        sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s",
-                       index.index, name.c_str());
+        sdk::LogPrintf(sdk::SdkLogLevel::Debug, kTag, "onMusicList: %d %s", index.index,
+                       name.c_str());
     }
     for (int i = 0; i < mListWidget->count(); ++i) {
         QListWidgetItem *item = mListWidget->item(i);
@@ -811,13 +806,16 @@ void MainWindow::onMusicPlayerError(ErrorCode code, const std::string &detail, i
                                     const std::string &path, const std::string &traceId)
 {
     if (QThread::currentThread() != this->thread()) {
-        QMetaObject::invokeMethod(this, [this, code, detail, index, path, traceId]() {
-            onMusicPlayerError(code, detail, index, path, traceId);
-        }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this,
+            [this, code, detail, index, path, traceId]() {
+                onMusicPlayerError(code, detail, index, path, traceId);
+            },
+            Qt::QueuedConnection);
         return;
     }
     const ErrorCodeInfo &info = GetErrorInfo(code);
-    QString title = "Playback Error";
+    QString title             = "Playback Error";
     QString message;
     message += "Message: " + QString::fromStdString(FormatError(code, detail)) + "\n";
     message += "Module: " + QString::fromUtf8(ToString(info.module)) + "\n";
