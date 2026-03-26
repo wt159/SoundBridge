@@ -288,8 +288,8 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
         return false;
     }
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", decBufPtr->size());
-    long resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate
-                                    / (double)inSpec.sampleRate);
+    size_t resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate
+                                      / (double)inSpec.sampleRate);
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
     resampleBufSize = resampleBufSize * outSpec.numChannel / inSpec.numChannel;
     LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
@@ -300,7 +300,7 @@ bool MusicPlayList::ensureDecoded(const MusicPropertiesPtr &musicProperties)
     char *resampleBuf  = resampleBufPtr->data();
     char *decOutputBuf = decBufPtr->data();
     size_t inOnceSize  = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
-    LOG_INFO(LOG_TAG, "inOnceSize : %d", inOnceSize);
+    LOG_INFO(LOG_TAG, "inOnceSize : %lu", inOnceSize);
     size_t inSize  = 0;
     size_t outSize = 0, outOnceSize = resampleBufSize;
     auto resampleStart = std::chrono::steady_clock::now();
