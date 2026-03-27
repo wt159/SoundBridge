@@ -1,9 +1,9 @@
 #include "ASFExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
-#include <vector>
 #include <climits>
 #include <cstdio>
+#include <vector>
 extern "C" {
 #include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
@@ -24,12 +24,12 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool ASFExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[16] = {0};
+    uint8_t buf[16] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
-    const uint8_t asfGuid[16]
-        = {0x30,0x26,0xB2,0x75,0x8E,0x66,0xCF,0x11,0xA6,0xD9,0x00,0xAA,0x00,0x62,0xCE,0x6C};
+    const uint8_t asfGuid[16] = { 0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+                                  0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C };
     for (int i = 0; i < 16; ++i) {
         if (buf[i] != asfGuid[i]) {
             return false;
@@ -37,7 +37,6 @@ bool ASFExtractor::sniff(DataSourceBase *source)
     }
     return true;
 }
-
 
 constexpr GUID guidHeader = {
     .v1 = 0x75B22630,
@@ -254,15 +253,15 @@ status_t ASFExtractor::initWithFFmpegDemux()
     ioCtxData.size   = static_cast<int64_t>(fileSize);
 
     const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer = static_cast<uint8_t *>(av_malloc(ioBufferSize));
+    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
     if (!ioBuffer) {
         LOGE("initWithFFmpegDemux av_malloc failed");
         return NO_MEMORY;
     }
 
-    AVIOContext *avioCtx = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData,
-                                              &ASFExtractor::avioRead, nullptr,
-                                              &ASFExtractor::avioSeek);
+    AVIOContext *avioCtx
+        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &ASFExtractor::avioRead,
+                             nullptr, &ASFExtractor::avioSeek);
     if (!avioCtx) {
         av_free(ioBuffer);
         LOGE("initWithFFmpegDemux avio_alloc_context failed");
@@ -275,7 +274,7 @@ status_t ASFExtractor::initWithFFmpegDemux()
         LOGE("initWithFFmpegDemux avformat_alloc_context failed");
         return NO_MEMORY;
     }
-    fmt->pb = avioCtx;
+    fmt->pb     = avioCtx;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
 
     int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
@@ -311,18 +310,16 @@ status_t ASFExtractor::initWithFFmpegDemux()
     }
 
     AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate    = par->sample_rate;
-    m_audioSpec.numChannel    = par->channels;
-    m_audioSpec.bitsPerSample = par->bits_per_coded_sample > 0
-        ? par->bits_per_coded_sample
-        : par->bits_per_raw_sample;
-    m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample > 0
-        ? (m_audioSpec.bitsPerSample + 7) / 8
-        : 0;
+    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
+    m_audioSpec.sampleRate = par->sample_rate;
+    m_audioSpec.numChannel = par->channels;
+    m_audioSpec.bitsPerSample
+        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+    m_audioSpec.bytesPerSample
+        = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate    = static_cast<int>(par->bit_rate);
-    m_blockAlign = static_cast<int>(par->block_align);
+    m_bitRate          = static_cast<int>(par->bit_rate);
+    m_blockAlign       = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
         m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
@@ -447,8 +444,8 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
                 m_blockAlign             = (int)spObj.waveFormatEx.blockAlign;
                 if (spObj.typeSpecificDataLength > 18 && spObj.waveFormatEx.cbSize > 0) {
                     size_t extraOffset = 54 + 18;
-                    size_t maxExtra = spObj.typeSpecificDataLength - 18;
-                    size_t extraSize = spObj.waveFormatEx.cbSize;
+                    size_t maxExtra    = spObj.typeSpecificDataLength - 18;
+                    size_t extraSize   = spObj.waveFormatEx.cbSize;
                     if (extraSize > maxExtra) {
                         extraSize = maxExtra;
                     }
@@ -473,7 +470,7 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
 }
 status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dataObj)
 {
-    off64_t offset = startOffset;
+    off64_t offset  = startOffset;
     off64_t dataEnd = startOffset + dataObj.size;
     if (dataObj.size < 26) {
         return NO_INIT;
@@ -499,7 +496,7 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
     size_t packetCount = 0;
     while (offset + 1 <= dataEnd) {
         off64_t packetStart = offset;
-        uint8_t firstByte = 0;
+        uint8_t firstByte   = 0;
         if (m_dataSource->readAt(offset, &firstByte, 1) < 1) {
             break;
         }
@@ -507,12 +504,12 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
 
         DataPacket pkt;
         uint8_t lengthTypeFlags = 0;
-        uint8_t propertyFlags = 0;
-        bool ecPresent = (firstByte & 0x80) != 0;
+        uint8_t propertyFlags   = 0;
+        bool ecPresent          = (firstByte & 0x80) != 0;
         if (ecPresent) {
             pkt.ec.errorCorrectionFlag = firstByte;
-            int lenType = pkt.ec.errorCorrectionFlag & 0x0F;
-            int lenBytes = 0;
+            int lenType                = pkt.ec.errorCorrectionFlag & 0x0F;
+            int lenBytes               = 0;
             switch (lenType) {
             case PayloadInfoLengthType_0bit:
                 lenBytes = 0;
@@ -532,7 +529,7 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
             }
             uint32_t ecDataLen = 0;
             if (lenBytes > 0) {
-                uint8_t tmp[4] = {0};
+                uint8_t tmp[4] = { 0 };
                 if (m_dataSource->readAt(offset, tmp, lenBytes) < lenBytes) {
                     return NO_INIT;
                 }
@@ -571,12 +568,12 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
             offset += 1;
         }
 
-        pkt.info.lengthTypeFlags = lengthTypeFlags;
-        pkt.info.propertyFlags   = propertyFlags;
+        pkt.info.lengthTypeFlags  = lengthTypeFlags;
+        pkt.info.propertyFlags    = propertyFlags;
         int sequenceTypeByte      = pkt.info.getSequenceTypeByte();
         int paddingLengthTypeByte = pkt.info.getPaddingLengthTypeByte();
         int packetLengthTypeByte  = pkt.info.getPacketLengthTypeByte();
-        int infoSize              = sequenceTypeByte + paddingLengthTypeByte + packetLengthTypeByte + 6;
+        int infoSize = sequenceTypeByte + paddingLengthTypeByte + packetLengthTypeByte + 6;
         if (infoSize < 6) {
             return NO_INIT;
         }
@@ -617,14 +614,14 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
         }
         if (m_headerObj.fpObj.maxDataPacketSize > 0
             && pkt.info.packetLength > m_headerObj.fpObj.maxDataPacketSize) {
-            LOGW("packet length too large: %u > %u, clamp",
-                 pkt.info.packetLength, m_headerObj.fpObj.maxDataPacketSize);
+            LOGW("packet length too large: %u > %u, clamp", pkt.info.packetLength,
+                 m_headerObj.fpObj.maxDataPacketSize);
             pkt.info.packetLength = m_headerObj.fpObj.maxDataPacketSize;
         }
         off64_t headerConsumed = offset - packetStart;
         if (pkt.info.packetLength < headerConsumed) {
-            LOGW("packet length too small: %u < header %lld, clamp",
-                 pkt.info.packetLength, (long long)headerConsumed);
+            LOGW("packet length too small: %u < header %lld, clamp", pkt.info.packetLength,
+                 (long long)headerConsumed);
             pkt.info.packetLength = static_cast<uint32_t>(headerConsumed);
         }
         if (pkt.info.packetLength == 0) {
@@ -641,15 +638,14 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
             packetEnd = dataEnd;
         }
         if (pkt.info.paddingLength > pkt.info.packetLength) {
-            LOGW("padding length too large: %u > %u, clamp",
-                 pkt.info.paddingLength, pkt.info.packetLength);
+            LOGW("padding length too large: %u > %u, clamp", pkt.info.paddingLength,
+                 pkt.info.packetLength);
             pkt.info.paddingLength = pkt.info.packetLength;
         }
 
         pkt.info.dump();
 
-        status_t ret = parsePayloadData(offset, pkt, packetStart,
-                                        pkt.info.packetLength, audioData);
+        status_t ret = parsePayloadData(offset, pkt, packetStart, pkt.info.packetLength, audioData);
         if (ret != OK) {
             return NO_INIT;
         }
@@ -685,20 +681,17 @@ sdk_utils::status_t ASFExtractor::parseOpaqueData(off64_t stOffset, ASF::DataPac
     return OK;
 }
 
-sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
-                                                   ASF::DataPacket &dataPacket,
-                                                   off64_t packetStart,
-                                                   uint32_t packetLen,
+sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset, ASF::DataPacket &dataPacket,
+                                                   off64_t packetStart, uint32_t packetLen,
                                                    std::vector<uint8_t> &audioData)
 {
-    off64_t offset = stOffset;
+    off64_t offset    = stOffset;
     off64_t packetEnd = packetStart + packetLen;
     if (packetEnd < offset) {
         return NO_INIT;
     }
     if (dataPacket.info.paddingLength > packetLen) {
-        LOGW("padding length too large: %u > %u, clamp",
-             dataPacket.info.paddingLength, packetLen);
+        LOGW("padding length too large: %u > %u, clamp", dataPacket.info.paddingLength, packetLen);
         dataPacket.info.paddingLength = packetLen;
     }
 
@@ -713,7 +706,7 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
         if (offset + byteCount > packetEnd) {
             return false;
         }
-        uint8_t tmp[4] = {0};
+        uint8_t tmp[4] = { 0 };
         if (m_dataSource->readAt(offset, tmp, byteCount) < byteCount) {
             return false;
         }
@@ -746,8 +739,8 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
         }
         offset += 1;
 
-        int payloadLengthType = (payloadFlags >> 6) & 0x03;
-        int payloadCount = payloadFlags & 0x3F;
+        int payloadLengthType     = (payloadFlags >> 6) & 0x03;
+        int payloadCount          = payloadFlags & 0x3F;
         int payloadLengthTypeByte = 0;
         switch (payloadLengthType) {
         case PayloadInfoLengthType_8bit:
@@ -770,7 +763,7 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
 
         for (int i = 0; i < payloadCount; ++i) {
             uint32_t streamNum = 0;
-            int streamNumLen = dataPacket.info.getStreamNumberLengthTypeByte();
+            int streamNumLen   = dataPacket.info.getStreamNumberLengthTypeByte();
             if (streamNumLen == 0) {
                 streamNumLen = 1;
             }
@@ -799,8 +792,8 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
             }
             if (replicatedDataLength > 0) {
                 if (offset + replicatedDataLength > packetEnd - dataPacket.info.paddingLength) {
-                    replicatedDataLength = static_cast<uint32_t>(
-                        packetEnd - dataPacket.info.paddingLength - offset);
+                    replicatedDataLength
+                        = static_cast<uint32_t>(packetEnd - dataPacket.info.paddingLength - offset);
                 }
                 offset += replicatedDataLength;
             }
@@ -817,9 +810,9 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
                 }
                 if (i != payloadCount - 1) {
                     int remainingPayloads = payloadCount - i;
-                    payloadLen = remainingPayloads > 0
-                        ? static_cast<uint32_t>(remain / remainingPayloads)
-                        : 0;
+                    payloadLen            = remainingPayloads > 0
+                                   ? static_cast<uint32_t>(remain / remainingPayloads)
+                                   : 0;
                 } else {
                     payloadLen = static_cast<uint32_t>(remain);
                 }
@@ -827,8 +820,8 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
 
             if (payloadLen > 0) {
                 if (offset + payloadLen > packetEnd - dataPacket.info.paddingLength) {
-                    payloadLen = static_cast<uint32_t>(
-                        packetEnd - dataPacket.info.paddingLength - offset);
+                    payloadLen
+                        = static_cast<uint32_t>(packetEnd - dataPacket.info.paddingLength - offset);
                 }
                 std::vector<uint8_t> payload(payloadLen);
                 if (m_dataSource->readAt(offset, payload.data(), payload.size())
@@ -852,8 +845,8 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
         if (m_dataSource->readAt(offset, &streamNumByte, 1) < 1) {
             return NO_INIT;
         }
-        offset += 1;
-        uint8_t streamNumber = streamNumByte & 0x7F;
+        offset               += 1;
+        uint8_t streamNumber  = streamNumByte & 0x7F;
 
         uint32_t mediaObjectNumber = 0;
         int mediaObjNumLenTypeByte = dataPacket.info.getMediaObjectNumberLengthTypeByte();
@@ -875,8 +868,8 @@ sdk_utils::status_t ASFExtractor::parsePayloadData(off64_t stOffset,
         }
         if (replicatedDataLength > 0) {
             if (offset + replicatedDataLength > packetEnd - dataPacket.info.paddingLength) {
-                replicatedDataLength = static_cast<uint32_t>(
-                    packetEnd - dataPacket.info.paddingLength - offset);
+                replicatedDataLength
+                    = static_cast<uint32_t>(packetEnd - dataPacket.info.paddingLength - offset);
             }
             offset += replicatedDataLength;
         }
@@ -965,4 +958,3 @@ void ASF::PayloadParsingInfomation::dump()
     LOGD("sendTime=%u", sendTime);
     LOGD("duration=%u", duration);
 }
-

@@ -65,4 +65,3 @@ private:
     AudioSpec m_spec;
     std::vector<OGG::Page> m_pageVec;
 };
-

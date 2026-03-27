@@ -134,7 +134,10 @@ public:
 
     virtual void close() {};
 
-    virtual sdk_utils::status_t getAvailableSize(off64_t /*offset*/, off64_t * /*size*/) { return -1; }
+    virtual sdk_utils::status_t getAvailableSize(off64_t /*offset*/, off64_t * /*size*/)
+    {
+        return -1;
+    }
 
 protected:
     virtual ~DataSourceBase() { }
@@ -152,7 +155,10 @@ public:
 
     virtual std::string toString() { return std::string("<unspecified>"); }
 
-    virtual sdk_utils::status_t reconnectAtOffset(off64_t /*offset*/) { return sdk_utils::ERROR_UNSUPPORTED; }
+    virtual sdk_utils::status_t reconnectAtOffset(off64_t /*offset*/)
+    {
+        return sdk_utils::ERROR_UNSUPPORTED;
+    }
 
     ////////////////////////////////////////////////////////////////////////////
 

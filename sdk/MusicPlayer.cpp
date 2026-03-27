@@ -1,15 +1,15 @@
-﻿#include "AudioBuffer.h"
+﻿#include "MusicPlayer.h"
+#include "AudioBuffer.h"
 #include "AudioDevice.h"
 #include "FileSearch.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "MusicPlayList.h"
-#include "MusicPlayer.h"
 #include "WorkQueue.hpp"
+#include <chrono>
+#include <cstring>
 #include <list>
 #include <mutex>
-#include <cstring>
-#include <chrono>
 #include <sstream>
 
 namespace sdk {
@@ -90,17 +90,17 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_switching(false)
 {
     SdkLogConfig logConfig;
-    logConfig.directory = logDir;
-    logConfig.filePrefix = "soundbridge";
+    logConfig.directory           = logDir;
+    logConfig.filePrefix          = "soundbridge";
     logConfig.singleFileSizeBytes = 10 * 1024 * 1024;
-    logConfig.maxFileCount = 20;
+    logConfig.maxFileCount        = 20;
     InitializeLogging(logConfig);
     LOG_INFO(LOG_TAG, "Log init success");
 
     m_audioDev = std::make_shared<AudioDevice>(this);
     m_audioDev->getDeviceSpec(m_devSpec);
     m_musicList = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
-    m_traceId = newTraceId();
+    m_traceId   = newTraceId();
     m_musicList->setTraceId(m_traceId);
     LOG_INFO(LOG_TAG, "Impl construct");
 }
@@ -201,8 +201,8 @@ void MusicPlayer::Impl::_play()
     if (cur == nullptr) {
         LOG_ERROR(LOG_TAG, "m_curMusicProperties is nullptr");
         if (m_listener != nullptr) {
-            m_listener->onMusicPlayerError(ErrorCode::PlayerNoCurrent,
-                                           "no current track", -1, "", m_traceId);
+            m_listener->onMusicPlayerError(ErrorCode::PlayerNoCurrent, "no current track", -1, "",
+                                           m_traceId);
         }
         return;
     }
@@ -261,7 +261,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         cur = m_curMusicProperties;
     }
     if (cur && pos >= 0 && pos <= cur->signalProperties.durationMs) {
-        AudioSpec &spec                                      = m_devSpec;
+        AudioSpec &spec                     = m_devSpec;
         cur->signalProperties.curPositionMs = pos;
         cur->signalProperties.curDataOffset
             = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
@@ -362,8 +362,7 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
 
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
-    LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId,
-                       "putMusicPlayListCurBuf : %d(%s)",
+    LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId, "putMusicPlayListCurBuf : %d(%s)",
                        property->index, property->fileProperties.fileName.data());
     m_skipFailures.store(0);
     {
@@ -380,7 +379,7 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
 {
     LOG_INFO(LOG_TAG, "updateMusicList list size:%d", list.size());
     m_musicListIndex.clear();
-    for(auto &property : list) {
+    for (auto &property : list) {
         MusicIndex index;
         index.index = property->index;
         index.name  = property->fileProperties.fileName;
@@ -395,8 +394,8 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
     m_switching.store(false);
     std::string message = FormatError(code, detail);
     LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
-                       "playlist error code=%d message=%s index=%d path=%s",
-                       static_cast<int>(code), message.c_str(), index, path.c_str());
+                       "playlist error code=%d message=%s index=%d path=%s", static_cast<int>(code),
+                       message.c_str(), index, path.c_str());
     if (m_audioDev != nullptr) {
         m_audioDev->stop();
         m_audioDev->close();
@@ -417,7 +416,6 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
         });
     }
 }
-
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
 {
@@ -523,4 +521,3 @@ bool MusicPlayer::autoSkipOnError() const
     return m_impl->autoSkipOnError();
 }
 }
-

@@ -17,7 +17,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool AIFFExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[12] = {0};
+    uint8_t buf[12] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -26,7 +26,6 @@ bool AIFFExtractor::sniff(DataSourceBase *source)
     }
     return (memcmp(buf + 8, "AIFF", 4) == 0) || (memcmp(buf + 8, "AIFC", 4) == 0);
 }
-
 
 AIFFExtractor::AIFFExtractor(DataSourceBase *source)
     : m_dataSource(source)
@@ -187,4 +186,3 @@ void AIFFExtractor::AudioBuffer2HostEndian(AudioBuffer::AudioBufferPtr &audioBuf
         }
     }
 }
-

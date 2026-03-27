@@ -19,23 +19,16 @@ private:
 public:
     TestMusicPlayer()
     {
-        std::string directory      = "./log";
-        m_player        = std::make_shared<MusicPlayer>(this, directory);
-        std::string dir = "../../../music";
+        std::string directory = "./log";
+        m_player              = std::make_shared<MusicPlayer>(this, directory);
+        std::string dir       = "../../../music";
         m_player->addMusicDir(dir);
     }
-    ~TestMusicPlayer() {
-        m_player->stop();
-    }
+    ~TestMusicPlayer() { m_player->stop(); }
 
-    void next()
-    {
-        m_player->next();
-    }
+    void next() { m_player->next(); }
 
-    void play() {
-        m_player->play();
-    }
+    void play() { m_player->play(); }
 
 protected:
     virtual void onMusicPlayerStateChanged(MusicPlayerState state)

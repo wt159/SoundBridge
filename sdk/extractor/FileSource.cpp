@@ -15,7 +15,7 @@ FileSource::FileSource(const char *filename)
     , m_extensionName("<null>")
 {
     if (filename) {
-        m_name = std::string("FileSource(") + std::string(filename) + std::string(")");
+        m_name          = std::string("FileSource(") + std::string(filename) + std::string(")");
         m_extensionName = getExtensionName(filename);
     }
 

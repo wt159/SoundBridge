@@ -84,24 +84,25 @@ public:
         LOG_INFO(LOG_TAG, "inFileSize: %d", inFileSize);
         char *inData = new char[inFileSize];
         m_inFile.read(inData, inFileSize);
-        LOG_INFO(LOG_TAG, "inLen: %d, adtsHeaderSize: %d", inLen, sizeof (ADTSHeader));
+        LOG_INFO(LOG_TAG, "inLen: %d, adtsHeaderSize: %d", inLen, sizeof(ADTSHeader));
         ADTSHeader header;
-        char *data = inData;
-        header.syncWord = (data[0] << 4) | (data[1] >> 4);
-        header.id = (data[1] >> 3) & 0x01;
-        header.layer = (data[1] >> 1) & 0x03;
-        header.protectionAbsent = data[1] & 0x01;
-        header.profile = (data[2] >> 6) & 0x03;
+        char *data                    = inData;
+        header.syncWord               = (data[0] << 4) | (data[1] >> 4);
+        header.id                     = (data[1] >> 3) & 0x01;
+        header.layer                  = (data[1] >> 1) & 0x03;
+        header.protectionAbsent       = data[1] & 0x01;
+        header.profile                = (data[2] >> 6) & 0x03;
         header.samplingFrequencyIndex = (data[2] >> 2) & 0x0F;
-        header.privateBit = (data[2] >> 1) & 0x01;
-        header.channelConfiguration = (((data[2] & 0x01) << 2) | ((data[3] & 0xc0) >> 6)) & 0x07;
+        header.privateBit             = (data[2] >> 1) & 0x01;
+        header.channelConfiguration   = (((data[2] & 0x01) << 2) | ((data[3] & 0xc0) >> 6)) & 0x07;
         LOG_INFO(LOG_TAG, "data[2]: %x %x", data[2], data[3]);
-        header.originalCopy = (data[3] >> 5) & 0x01;
-        header.home = (data[3] >> 4) & 0x01;
-        header.copyrightIDBit = (data[3] >> 3) & 0x01;
+        header.originalCopy     = (data[3] >> 5) & 0x01;
+        header.home             = (data[3] >> 4) & 0x01;
+        header.copyrightIDBit   = (data[3] >> 3) & 0x01;
         header.copyrightIDStart = (data[3] >> 2) & 0x01;
-        header.frameLength = ((data[3] & 0x03) << 11) | ((data[4] & 0xff) << 3) | ((data[5] & 0xe0) >> 5);
-        header.bufferFullness = ((data[5] & 0x1F) << 6) | ((data[6] & 0xfc) >> 2);
+        header.frameLength
+            = ((data[3] & 0x03) << 11) | ((data[4] & 0xff) << 3) | ((data[5] & 0xe0) >> 5);
+        header.bufferFullness   = ((data[5] & 0x1F) << 6) | ((data[6] & 0xfc) >> 2);
         header.numRawDataBlocks = data[6] & 0x03;
         LOG_INFO(LOG_TAG, "syncWord: %x", header.syncWord);
         LOG_INFO(LOG_TAG, "id: %x", header.id);
@@ -116,7 +117,6 @@ public:
         LOG_INFO(LOG_TAG, "frameLength: %d", header.frameLength);
         LOG_INFO(LOG_TAG, "bufferFullness: %d", header.bufferFullness);
         LOG_INFO(LOG_TAG, "numRawDataBlocks: %d", header.numRawDataBlocks);
-
 
         ret = m_audioDecode.decode(inData, inFileSize);
         if (ret == 0) {

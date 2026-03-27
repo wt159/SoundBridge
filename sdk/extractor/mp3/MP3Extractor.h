@@ -39,5 +39,3 @@ public:
 private:
     sdk_utils::status_t init();
 };
-
-

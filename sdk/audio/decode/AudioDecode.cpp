@@ -40,7 +40,8 @@ private:
     int decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame);
 };
 
-AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config)
+AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback,
+                        const AudioCodecConfig &config)
     : m_codecID(codec)
     , m_avCodecID((AVCodecID)codec)
     , m_codec(nullptr)
@@ -114,7 +115,7 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
         return;
     }
     if (m_config.channels > 0) {
-        m_ctx->channels = m_config.channels;
+        m_ctx->channels       = m_config.channels;
         m_ctx->channel_layout = av_get_default_channel_layout(m_config.channels);
     }
     if (m_config.sampleRate > 0) {
@@ -132,7 +133,8 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
     }
     if (m_config.extraData && m_config.extraData->size() > 0) {
         m_ctx->extradata_size = (int)m_config.extraData->size();
-        m_ctx->extradata = (uint8_t *)av_mallocz(m_ctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+        m_ctx->extradata
+            = (uint8_t *)av_mallocz(m_ctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
         if (m_ctx->extradata) {
             memcpy(m_ctx->extradata, m_config.extraData->data(), m_ctx->extradata_size);
         }
@@ -151,14 +153,10 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback, const
     if (ret < 0) {
         LOG_ERROR(LOG_TAG, "avcodec_open2 failed rc:%d, %s", ret, getAVErrorString(ret));
         std::fprintf(stderr,
-                     "AudioDecode: avcodec_open2 failed rc:%d (%s) codec=%s sr=%d ch=%d blka=%d br=%lld extra=%d\n",
-                     ret,
-                     getAVErrorString(ret),
-                     avcodec_get_name(m_avCodecID),
-                     m_ctx->sample_rate,
-                     m_ctx->channels,
-                     m_ctx->block_align,
-                     static_cast<long long>(m_ctx->bit_rate),
+                     "AudioDecode: avcodec_open2 failed rc:%d (%s) codec=%s sr=%d ch=%d blka=%d "
+                     "br=%lld extra=%d\n",
+                     ret, getAVErrorString(ret), avcodec_get_name(m_avCodecID), m_ctx->sample_rate,
+                     m_ctx->channels, m_ctx->block_align, static_cast<long long>(m_ctx->bit_rate),
                      m_ctx->extradata_size);
         return;
     }
@@ -170,7 +168,7 @@ AudioDecode::Impl::~Impl()
 {
     if (m_ctx && m_ctx->extradata) {
         av_free(m_ctx->extradata);
-        m_ctx->extradata = nullptr;
+        m_ctx->extradata      = nullptr;
         m_ctx->extradata_size = 0;
     }
     if (m_pkt) {
@@ -226,14 +224,14 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         }
         m_pkt->data = (uint8_t *)srcData;
         m_pkt->size = (int)srcSize;
-        ret = decode(m_ctx, m_pkt, m_frame);
+        ret         = decode(m_ctx, m_pkt, m_frame);
         if (ret < 0) {
             LOG_ERROR(LOG_TAG, "decode failed: %d", ret);
             return ret;
         }
         m_pkt->data = nullptr;
         m_pkt->size = 0;
-        ret = decode(m_ctx, m_pkt, m_frame);
+        ret         = decode(m_ctx, m_pkt, m_frame);
         if (ret < 0) {
             LOG_ERROR(LOG_TAG, "decode flush failed: %s", getAVErrorString(ret));
             return ret;
@@ -252,7 +250,8 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         ret = av_parser_parse2(m_parserCtx, m_ctx, &m_pkt->data, &m_pkt->size, inPtr, inSize,
                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
         if (ret <= 0) {
-            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s, rc:%d, srcSize:%ld", getAVErrorString(ret), ret, srcSize);
+            LOG_ERROR(LOG_TAG, "av_parser_parse2 failed: %s, rc:%d, srcSize:%ld",
+                      getAVErrorString(ret), ret, srcSize);
             ret = -1;
             goto err;
         }
@@ -332,7 +331,8 @@ AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback)
 {
 }
 
-AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config)
+AudioDecode::AudioDecode(AudioCodecID codec, AudioDecodeCallback *callback,
+                         const AudioCodecConfig &config)
     : m_impl(new Impl(codec, callback, config))
 {
 }

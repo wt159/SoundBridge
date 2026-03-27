@@ -40,9 +40,9 @@ public:
             std::cout << "init success" << std::endl;
         }
     }
-    AudioTest(AudioTest &&) = default;
-    AudioTest(const AudioTest &) = default;
-    AudioTest &operator=(AudioTest &&) = default;
+    AudioTest(AudioTest &&)                 = default;
+    AudioTest(const AudioTest &)            = default;
+    AudioTest &operator=(AudioTest &&)      = default;
     AudioTest &operator=(const AudioTest &) = default;
     ~AudioTest()
     {
@@ -54,12 +54,13 @@ public:
         }
         m_file.close();
     }
-    int play(){
+    int play()
+    {
         if (m_dev.open()) {
             std::cout << "open device failed" << std::endl;
             return -1;
         }
-        if(m_dev.start()) {
+        if (m_dev.start()) {
             std::cout << "start device failed" << std::endl;
             return -2;
         }
@@ -94,23 +95,23 @@ private:
         std::cout << "Bits per Sample: " << header.bitsPerSample << " bits" << std::endl;
         std::cout << "Subchunk2 ID: " << std::string(header.subchunk2ID, 4) << std::endl;
         std::cout << "Subchunk2 Size: " << header.subchunk2Size << " bytes" << std::endl;
-        m_spec.sampleRate = header.sampleRate;
-        m_spec.numChannel = header.numChannels;
-        m_spec.format = AudioFormatS16;
+        m_spec.sampleRate    = header.sampleRate;
+        m_spec.numChannel    = header.numChannels;
+        m_spec.format        = AudioFormatS16;
         m_spec.bitsPerSample = header.bitsPerSample;
-        m_bufferPos = 0;
-        m_bufferSize = m_fileSize - sizeof(header);
+        m_bufferPos          = 0;
+        m_bufferSize         = m_fileSize - sizeof(header);
         std::cout << "\nfile size: " << m_fileSize << std::endl;
         std::cout << "buffer size: " << m_bufferSize << std::endl;
         m_buffer = new char[m_bufferSize];
         m_file.read(m_buffer, m_bufferSize);
         return 0;
     }
-    
+
     void getAudioData(void *data, int len)
     {
         // std::cout << "onAudioData: " << len << std::endl;
-        if(m_bufferPos >= m_bufferSize) {
+        if (m_bufferPos >= m_bufferSize) {
             std::cout << "stop" << std::endl;
             m_dev.stop();
             return;

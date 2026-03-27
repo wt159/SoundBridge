@@ -1,6 +1,6 @@
 #define LOG_TAG "ID3"
-#include "ByteUtils.h"
 #include "ID3.h"
+#include "ByteUtils.h"
 #include "LogWrapper.h"
 #include <cassert>
 #include <cstring>

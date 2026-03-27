@@ -30,4 +30,3 @@ private:
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
 };
-

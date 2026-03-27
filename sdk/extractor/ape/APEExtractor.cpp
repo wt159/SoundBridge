@@ -1,7 +1,7 @@
 #include "APEExtractor.h"
+#include "ByteUtils.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
-#include "ByteUtils.h"
 #include <climits>
 #include <cstring>
 #include <vector>
@@ -15,15 +15,16 @@ extern "C" {
 using namespace sdk_utils;
 
 // APE version 3.98+ uses the descriptor/header layout we parse here.
-static const uint16_t kApeMinVersion = 3980;
+static const uint16_t kApeMinVersion     = 3980;
 // APE descriptor is 52 bytes for v3.98+.
-static const size_t kApeDescriptorBytes = 52;
+static const size_t kApeDescriptorBytes  = 52;
 // APE header is at least 24 bytes (fixed portion) and can include optional fields.
 static const uint32_t kApeHeaderMinBytes = 24;
 // Safety cap to avoid reading unreasonable header sizes from a corrupt file.
 static const uint32_t kApeHeaderMaxBytes = 1024;
 
-static bool parseApeHeader(DataSourceBase *source, int &sampleRate, int &channels, int &bitsPerSample)
+static bool parseApeHeader(DataSourceBase *source, int &sampleRate, int &channels,
+                           int &bitsPerSample)
 {
     uint8_t desc[kApeDescriptorBytes] = { 0 };
     if (!source || source->readAt(0, desc, sizeof(desc)) < static_cast<ssize_t>(sizeof(desc))) {
@@ -40,7 +41,8 @@ static bool parseApeHeader(DataSourceBase *source, int &sampleRate, int &channel
 
     uint32_t descriptorBytes = U32LE_AT(desc + 8);
     uint32_t headerBytes     = U32LE_AT(desc + 12);
-    if (descriptorBytes < sizeof(desc) || headerBytes < kApeHeaderMinBytes || headerBytes > kApeHeaderMaxBytes) {
+    if (descriptorBytes < sizeof(desc) || headerBytes < kApeHeaderMinBytes
+        || headerBytes > kApeHeaderMaxBytes) {
         return false;
     }
 
@@ -76,7 +78,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool APEExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[4] = {0};
+    uint8_t buf[4] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -168,15 +170,15 @@ status_t APEExtractor::initWithFFmpegDemux()
     ioCtxData.size   = static_cast<int64_t>(fileSize);
 
     const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer = static_cast<uint8_t *>(av_malloc(ioBufferSize));
+    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
     if (!ioBuffer) {
         LOGE("initWithFFmpegDemux av_malloc failed");
         return NO_MEMORY;
     }
 
-    AVIOContext *avioCtx = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData,
-                                              &APEExtractor::avioRead, nullptr,
-                                              &APEExtractor::avioSeek);
+    AVIOContext *avioCtx
+        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &APEExtractor::avioRead,
+                             nullptr, &APEExtractor::avioSeek);
     if (!avioCtx) {
         av_free(ioBuffer);
         LOGE("initWithFFmpegDemux avio_alloc_context failed");
@@ -189,7 +191,7 @@ status_t APEExtractor::initWithFFmpegDemux()
         LOGE("initWithFFmpegDemux avformat_alloc_context failed");
         return NO_MEMORY;
     }
-    fmt->pb = avioCtx;
+    fmt->pb     = avioCtx;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
 
     int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
@@ -225,33 +227,32 @@ status_t APEExtractor::initWithFFmpegDemux()
     }
 
     AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate    = par->sample_rate;
-    m_audioSpec.numChannel    = par->channels;
-    m_audioSpec.bitsPerSample = par->bits_per_coded_sample > 0
-        ? par->bits_per_coded_sample
-        : par->bits_per_raw_sample;
-    if (m_audioSpec.bitsPerSample == 0 || m_audioSpec.sampleRate == 0 || m_audioSpec.numChannel == 0) {
-        int parsedSampleRate  = m_audioSpec.sampleRate;
-        int parsedChannels    = m_audioSpec.numChannel;
+    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
+    m_audioSpec.sampleRate = par->sample_rate;
+    m_audioSpec.numChannel = par->channels;
+    m_audioSpec.bitsPerSample
+        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+    if (m_audioSpec.bitsPerSample == 0 || m_audioSpec.sampleRate == 0
+        || m_audioSpec.numChannel == 0) {
+        int parsedSampleRate    = m_audioSpec.sampleRate;
+        int parsedChannels      = m_audioSpec.numChannel;
         int parsedBitsPerSample = m_audioSpec.bitsPerSample;
         if (parseApeHeader(m_dataSource, parsedSampleRate, parsedChannels, parsedBitsPerSample)) {
-            m_audioSpec.sampleRate   = parsedSampleRate;
-            m_audioSpec.numChannel   = parsedChannels;
+            m_audioSpec.sampleRate    = parsedSampleRate;
+            m_audioSpec.numChannel    = parsedChannels;
             m_audioSpec.bitsPerSample = parsedBitsPerSample;
-            LOGI("parseApeHeader ok: sr=%d ch=%d bps=%d",
-                 m_audioSpec.sampleRate, m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
+            LOGI("parseApeHeader ok: sr=%d ch=%d bps=%d", m_audioSpec.sampleRate,
+                 m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
         } else {
-            LOGW("parseApeHeader failed or incomplete, sr=%d ch=%d bps=%d",
-                 m_audioSpec.sampleRate, m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
+            LOGW("parseApeHeader failed or incomplete, sr=%d ch=%d bps=%d", m_audioSpec.sampleRate,
+                 m_audioSpec.numChannel, m_audioSpec.bitsPerSample);
         }
     }
-    m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample > 0
-        ? (m_audioSpec.bitsPerSample + 7) / 8
-        : 0;
+    m_audioSpec.bytesPerSample
+        = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate    = static_cast<int>(par->bit_rate);
-    m_blockAlign = static_cast<int>(par->block_align);
+    m_bitRate          = static_cast<int>(par->bit_rate);
+    m_blockAlign       = static_cast<int>(par->block_align);
     if (m_blockAlign == 0 && m_audioSpec.numChannel > 0 && m_audioSpec.bitsPerSample > 0) {
         m_blockAlign = m_audioSpec.numChannel * (m_audioSpec.bitsPerSample / 8);
     }

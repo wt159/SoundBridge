@@ -162,7 +162,7 @@ protected:
     bool isValidConfig(const ThreadPoolConfig &cfg)
     {
         return !(cfg.coreThreads < 1 || cfg.coreThreads < cfg.maxThreads
-            || cfg.cacheTimeout < PoolSeconds(1));
+                 || cfg.cacheTimeout < PoolSeconds(1));
     }
     void addCoreThread()
     {
@@ -258,4 +258,3 @@ protected:
     std::atomic<bool> m_shutdownNow;
     std::once_flag m_flag;
 };
-

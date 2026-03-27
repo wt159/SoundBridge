@@ -9,40 +9,41 @@
 namespace sdk {
 namespace {
 
-constexpr int kDefaultSingleFileSizeBytes = 10 * 1024 * 1024;
-constexpr int kDefaultMaxFileCount = 20;
+    constexpr int kDefaultSingleFileSizeBytes = 10 * 1024 * 1024;
+    constexpr int kDefaultMaxFileCount        = 20;
 
-std::mutex g_logInitMutex;
+    std::mutex g_logInitMutex;
 
-int ToWrapperLevel(SdkLogLevel level)
-{
-    switch (level) {
-    case SdkLogLevel::Info:
+    int ToWrapperLevel(SdkLogLevel level)
+    {
+        switch (level) {
+        case SdkLogLevel::Info:
+            return INFO;
+        case SdkLogLevel::Warning:
+            return WARNING;
+        case SdkLogLevel::Error:
+            return ERROR;
+        case SdkLogLevel::Fatal:
+            return FATAL;
+        case SdkLogLevel::Debug:
+            return DEBUG;
+        case SdkLogLevel::Verbose:
+            return VERBOSE;
+        }
         return INFO;
-    case SdkLogLevel::Warning:
-        return WARNING;
-    case SdkLogLevel::Error:
-        return ERROR;
-    case SdkLogLevel::Fatal:
-        return FATAL;
-    case SdkLogLevel::Debug:
-        return DEBUG;
-    case SdkLogLevel::Verbose:
-        return VERBOSE;
-    }
-    return INFO;
-}
-
-void EnsureDefaultLoggerInitialized()
-{
-    if (LogWrapper::getInstance() != nullptr) {
-        return;
     }
 
-    std::string directory = "./log";
-    std::string filePrefix = "soundbridge";
-    LogWrapper::getInstanceInitialize(directory, filePrefix, kDefaultSingleFileSizeBytes, kDefaultMaxFileCount);
-}
+    void EnsureDefaultLoggerInitialized()
+    {
+        if (LogWrapper::getInstance() != nullptr) {
+            return;
+        }
+
+        std::string directory  = "./log";
+        std::string filePrefix = "soundbridge";
+        LogWrapper::getInstanceInitialize(directory, filePrefix, kDefaultSingleFileSizeBytes,
+                                          kDefaultMaxFileCount);
+    }
 
 } // namespace
 
@@ -53,9 +54,10 @@ bool InitializeLogging(const SdkLogConfig &config)
         return true;
     }
 
-    std::string directory = config.directory.empty() ? "./log" : config.directory;
+    std::string directory  = config.directory.empty() ? "./log" : config.directory;
     std::string filePrefix = config.filePrefix.empty() ? "soundbridge" : config.filePrefix;
-    int singleFileSizeBytes = config.singleFileSizeBytes > 0 ? config.singleFileSizeBytes : kDefaultSingleFileSizeBytes;
+    int singleFileSizeBytes
+        = config.singleFileSizeBytes > 0 ? config.singleFileSizeBytes : kDefaultSingleFileSizeBytes;
     int maxFileCount = config.maxFileCount > 0 ? config.maxFileCount : kDefaultMaxFileCount;
 
     LogWrapper::getInstanceInitialize(directory, filePrefix, singleFileSizeBytes, maxFileCount);
@@ -81,7 +83,7 @@ void LogMessage(SdkLogLevel level, const char *tag, const std::string &message)
 
 void LogPrintf(SdkLogLevel level, const char *tag, const char *format, ...)
 {
-    char buffer[2048] = {0};
+    char buffer[2048] = { 0 };
 
     va_list args;
     va_start(args, format);
@@ -91,9 +93,10 @@ void LogPrintf(SdkLogLevel level, const char *tag, const char *format, ...)
     LogMessage(level, tag, buffer);
 }
 
-void LogPrintfWithTrace(SdkLogLevel level, const char *tag, const std::string &traceId, const char *format, ...)
+void LogPrintfWithTrace(SdkLogLevel level, const char *tag, const std::string &traceId,
+                        const char *format, ...)
 {
-    char buffer[2048] = {0};
+    char buffer[2048] = { 0 };
 
     va_list args;
     va_start(args, format);
@@ -105,8 +108,8 @@ void LogPrintfWithTrace(SdkLogLevel level, const char *tag, const std::string &t
         return;
     }
 
-    std::string message = "traceId=" + traceId + " ";
-    message += buffer;
+    std::string message  = "traceId=" + traceId + " ";
+    message             += buffer;
     LogMessage(level, tag, message);
 }
 

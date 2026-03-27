@@ -233,10 +233,8 @@ private:
     sdk_utils::status_t parseHeaderObject(off64_t offset, ASF::HeaderObject &headerObj);
     sdk_utils::status_t parseDataObject(off64_t offset, ASF::DataObject &dataObj);
     sdk_utils::status_t parseOpaqueData(off64_t offset, ASF::DataPacket &dataPacket);
-    sdk_utils::status_t parsePayloadData(off64_t offset,
-                                         ASF::DataPacket &dataPacket,
-                                         off64_t packetStart,
-                                         uint32_t packetLen,
+    sdk_utils::status_t parsePayloadData(off64_t offset, ASF::DataPacket &dataPacket,
+                                         off64_t packetStart, uint32_t packetLen,
                                          std::vector<uint8_t> &audioData);
     sdk_utils::status_t parseIndexObject(off64_t offset, ASF::Object &indexObj);
 
@@ -254,4 +252,3 @@ private:
     int m_blockAlign;
     AudioBuffer::AudioBufferPtr m_codecExtraData;
 };
-

@@ -15,13 +15,12 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool FLACExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[4] = {0};
+    uint8_t buf[4] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
     return memcmp(buf, "fLaC", 4) == 0;
 }
-
 
 FLACExtractor::FLACExtractor(DataSourceBase *source)
     : m_dataSource(source)
@@ -78,9 +77,9 @@ status_t FLACExtractor::init()
             if (block.header.type == STREAMINFO) {
                 LOGD("block header type is STREAMINFO");
                 uint8_t data[size];
-            if (m_dataSource->readAt(offset, data, size) < size) {
-                return NO_INIT;
-            }
+                if (m_dataSource->readAt(offset, data, size) < size) {
+                    return NO_INIT;
+                }
                 block.data.streamInfo.minBlockSize = ((data[0] & 0xff) << 8) | (data[1] & 0xff);
                 block.data.streamInfo.maxBlockSize = ((data[2] & 0xff) << 8) | (data[3] & 0xff);
                 block.data.streamInfo.minFrameSize
@@ -140,15 +139,16 @@ status_t FLACExtractor::init()
             return NO_INIT;
         }
         AudioFrame frame;
-        frame.header.syncCode = ((temp[0] & 0xff) << 6) | ((temp[1] & 0xFC) >> 2);
+        frame.header.syncCode         = ((temp[0] & 0xff) << 6) | ((temp[1] & 0xFC) >> 2);
         frame.header.blockingStrategy = (temp[1] & 0x01);
-        frame.header.bsCode = (temp[2] & 0xf0) >> 4;
-        frame.header.srCode = (temp[2] & 0x0F);
-        frame.header.chMode = (temp[3] & 0xf0) >> 4;
-        frame.header.bpsCode = (temp[3] & 0x0e) >> 1;
-        LOGI("syncCode: %d, blockingStrategy: %d, bs_code: %d, sr_code: %d, chMode: %d, bpsCode: %d",
-             frame.header.syncCode, frame.header.blockingStrategy, frame.header.bsCode, frame.header.srCode,
-             frame.header.chMode, frame.header.bpsCode);
+        frame.header.bsCode           = (temp[2] & 0xf0) >> 4;
+        frame.header.srCode           = (temp[2] & 0x0F);
+        frame.header.chMode           = (temp[3] & 0xf0) >> 4;
+        frame.header.bpsCode          = (temp[3] & 0x0e) >> 1;
+        LOGI(
+            "syncCode: %d, blockingStrategy: %d, bs_code: %d, sr_code: %d, chMode: %d, bpsCode: %d",
+            frame.header.syncCode, frame.header.blockingStrategy, frame.header.bsCode,
+            frame.header.srCode, frame.header.chMode, frame.header.bpsCode);
     }
 
     if (!m_validFormat) {
@@ -158,17 +158,15 @@ status_t FLACExtractor::init()
 
     off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
-    fileSize -= offset;
-    m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
+    fileSize  -= offset;
+    m_metaBuf  = std::make_shared<AudioBuffer>(fileSize);
     if (m_dataSource->readAt(offset, m_metaBuf->data(), fileSize) < fileSize) {
         LOGE("readAt failed");
         return NO_MEMORY;
     }
 
-    LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d, samples:%d", m_spec.sampleRate, m_spec.numChannel,
-         m_spec.bytesPerSample, m_spec.samples);
+    LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d, samples:%d", m_spec.sampleRate,
+         m_spec.numChannel, m_spec.bytesPerSample, m_spec.samples);
     LOGI("durationMs: %lu", m_spec.durationMs);
     return NO_ERROR;
 }
-
-

@@ -23,7 +23,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool MKVExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[4] = {0};
+    uint8_t buf[4] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -117,15 +117,15 @@ status_t MKVExtractor::initWithFFmpegDemux()
     ioCtxData.size   = static_cast<int64_t>(fileSize);
 
     const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer = static_cast<uint8_t *>(av_malloc(ioBufferSize));
+    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
     if (!ioBuffer) {
         LOGE("initWithFFmpegDemux av_malloc failed");
         return NO_MEMORY;
     }
 
-    AVIOContext *avioCtx = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData,
-                                              &MKVExtractor::avioRead, nullptr,
-                                              &MKVExtractor::avioSeek);
+    AVIOContext *avioCtx
+        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &MKVExtractor::avioRead,
+                             nullptr, &MKVExtractor::avioSeek);
     if (!avioCtx) {
         av_free(ioBuffer);
         LOGE("initWithFFmpegDemux avio_alloc_context failed");
@@ -138,7 +138,7 @@ status_t MKVExtractor::initWithFFmpegDemux()
         LOGE("initWithFFmpegDemux avformat_alloc_context failed");
         return NO_MEMORY;
     }
-    fmt->pb = avioCtx;
+    fmt->pb     = avioCtx;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
 
     int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
@@ -174,18 +174,16 @@ status_t MKVExtractor::initWithFFmpegDemux()
     }
 
     AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate    = par->sample_rate;
-    m_audioSpec.numChannel    = par->channels;
-    m_audioSpec.bitsPerSample = par->bits_per_coded_sample > 0
-        ? par->bits_per_coded_sample
-        : par->bits_per_raw_sample;
-    m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample > 0
-        ? (m_audioSpec.bitsPerSample + 7) / 8
-        : 0;
+    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
+    m_audioSpec.sampleRate = par->sample_rate;
+    m_audioSpec.numChannel = par->channels;
+    m_audioSpec.bitsPerSample
+        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+    m_audioSpec.bytesPerSample
+        = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate    = static_cast<int>(par->bit_rate);
-    m_blockAlign = static_cast<int>(par->block_align);
+    m_bitRate          = static_cast<int>(par->bit_rate);
+    m_blockAlign       = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
         m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);

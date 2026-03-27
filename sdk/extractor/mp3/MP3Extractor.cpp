@@ -1,10 +1,10 @@
+#include "MP3Extractor.h"
 #include "ByteUtils.h"
 #include "ID3.h"
 #include "LogWrapper.h"
-#include "MP3Extractor.h"
 #include <cstring>
 
-#define LOG_TAG   "MP3Extractor"
+#define LOG_TAG  "MP3Extractor"
 
 #define __unused __attribute__((unused))
 
@@ -19,7 +19,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool MP3Extractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[3] = {0};
+    uint8_t buf[3] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -476,9 +476,9 @@ MP3Extractor::MP3Extractor(DataSourceBase *source)
 
     off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
-    fileSize -= m_firstFramePos;
-    m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
-    if(m_dataSource->readAt(m_firstFramePos, m_metaBuf->data(), fileSize) < 0) {
+    fileSize  -= m_firstFramePos;
+    m_metaBuf  = std::make_shared<AudioBuffer>(fileSize);
+    if (m_dataSource->readAt(m_firstFramePos, m_metaBuf->data(), fileSize) < 0) {
         LOGE("readAt failed");
     }
     LOGI("m_metaBuf->data(): %p, size: %llu", m_metaBuf->data(), m_metaBuf->size());

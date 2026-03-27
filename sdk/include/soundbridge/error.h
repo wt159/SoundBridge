@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace sdk {
+namespace soundbridge {
 
 enum class ErrorModule {
     Unknown,
@@ -20,7 +20,7 @@ enum class ErrorSeverity { Info, Warning, Error, Fatal };
 
 enum class ErrorAction { None, SkipTrack, StopPlayback, CheckFile, ReportBug };
 
-struct ErrorCodeInfo {
+struct ErrorInfo {
     ErrorModule module;
     ErrorSeverity severity;
     bool recoverable;
@@ -44,10 +44,10 @@ enum class ErrorCode : int32_t {
     Unknown                = 0x7fffffff
 };
 
-const ErrorCodeInfo &GetErrorInfo(ErrorCode code);
+const ErrorInfo &GetErrorInfo(ErrorCode code);
 const char *ToString(ErrorModule module);
 const char *ToString(ErrorSeverity severity);
 const char *ToString(ErrorAction action);
 std::string FormatError(ErrorCode code, const std::string &detail);
 
-} // namespace sdk
+} // namespace soundbridge

@@ -3,5 +3,7 @@
 #include <string>
 #include <vector>
 
-std::vector<std::string> recursiveFileSearch(const std::string &rootDir,
-    std::unordered_map<std::string, standardExtractors> extractorMap = defaultExtractorMap);
+std::vector<std::string>
+recursiveFileSearch(const std::string &rootDir,
+                    std::unordered_map<std::string, standardExtractors> extractorMap
+                    = defaultExtractorMap);

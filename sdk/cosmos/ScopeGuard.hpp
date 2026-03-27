@@ -1,13 +1,12 @@
 #pragma once
-template <typename F>
-class ScopeGuard {
+template <typename F> class ScopeGuard {
 public:
-    explicit ScopeGuard(F&& f)
+    explicit ScopeGuard(F &&f)
         : m_func(std::move(f))
         , m_dismiss(false)
     {
     }
-    explicit ScopeGuard(const F& f)
+    explicit ScopeGuard(const F &f)
         : m_func(f)
         , m_dismiss(false)
     {
@@ -19,29 +18,25 @@ public:
             m_func();
     }
 
-    ScopeGuard(ScopeGuard&& rhs)
+    ScopeGuard(ScopeGuard &&rhs)
         : m_func(std::move(rhs.m_func))
         , m_dismiss(rhs.m_dismiss)
     {
         rhs.Dismiss();
     }
 
-    void Dismiss()
-    {
-        m_dismiss = true;
-    }
+    void Dismiss() { m_dismiss = true; }
 
 private:
     F m_func;
     bool m_dismiss;
 
     ScopeGuard();
-    ScopeGuard(const ScopeGuard&);
-    ScopeGuard& operator=(const ScopeGuard&);
+    ScopeGuard(const ScopeGuard &);
+    ScopeGuard &operator=(const ScopeGuard &);
 };
 
-template <typename F>
-ScopeGuard<typename std::decay<F>::type> MakeGuard(F&& f)
+template <typename F> ScopeGuard<typename std::decay<F>::type> MakeGuard(F &&f)
 {
     return ScopeGuard<typename std::decay<F>::type>(std::forward<F>(f));
 }

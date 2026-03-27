@@ -19,7 +19,7 @@ SoundBridge 是使用 C++ 和 Qt 构建的跨平台音乐播放器，提供模�
 - 语言：C++11，UI：Qt5 Widgets，构建：CMake 3.2+
 - 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：SDL2
 - 日志：Boost.Log，文件系统：Boost.Filesystem
-- 格式化：clang-format（`.clang-format`，WebKit 风格）
+- 格式化：clang-format（`.clang-format`，WebKit 风格，4 空格缩进，100 列宽）
 - 静态分析：无 `.clang-tidy`，仅使用 `clang-format`
 
 ## 架构与模块依赖
@@ -92,6 +92,7 @@ ctest -R sdk_<组名>_tests --output-on-failure
 ### 格式化
 - `clang-format`（WebKit 风格，4 空格缩进，100 列宽）
 - 命令：`clang-format -i <file>`
+- 保持指针右对齐：`int *ptr`，引用右对齐：`std::string &str`
 
 ### 命名约定
 | 类型 | 风格 | 示例 |
@@ -108,6 +109,11 @@ ctest -R sdk_<组名>_tests --output-on-failure
 - 系统头文件：`#include <vector>`，项目头文件：`#include "AudioDecode.h"`
 - 指针右对齐：`int *ptr`，引用右对齐：`std::string &str`
 
+### 导入顺序
+1. 项目头文件（如 `#include "AudioDecode.h"`）
+2. 系统头文件（如 `#include <vector>`）
+3. 第三方库（如 `#include <libavformat/avformat.h>`）
+
 ### 大括号风格（WebKit）
 ```cpp
 void foo()          class Foo {         if (condition) {
@@ -117,11 +123,28 @@ void foo()          class Foo {         if (condition) {
 ```
 函数定义换行；类/结构体/控制语句不换行。
 
+### 类型使用
+- 使用 `size_t` 而非 `off64_t`（跨平台兼容）
+- 优先使用 `std::string` 而非 C 风格字符串
+- 使用 `std::unique_ptr` 管理所有权，`std::shared_ptr` 共享所有权
+- 避免原始指针，除非与 C API 交互
+
 ## 错误处理
 - 状态码：`sdk_utils::status_t`（0=OK，负数=错误），定义在 `sdk/utils/ErrorUtils.h`
 - 公共 API：`ErrorCode` 枚举类（`sdk/ErrorCode.hpp`），使用 `FormatError()` 格式化
 - 日志宏：`LOG_INFO`/`LOG_ERROR`/`LOG_WARNING`/`LOG_DEBUG`
 - 短宏：`LOGI`/`LOGE`/`LOGW`/`LOGD`（需定义 `LOG_TAG`）
+
+### 错误处理示例
+```cpp
+#define LOG_TAG "MyModule"
+
+sdk_utils::status_t result = someOperation();
+if (result != sdk_utils::OK) {
+    LOGE("Operation failed: %d", result);
+    return result;
+}
+```
 
 ## 已知编译问题
 - `off64_t` 未声明：使用 `size_t` 替代（跨平台兼容，Windows 无 `sys/types.h`）
@@ -150,3 +173,5 @@ void foo()          class Foo {         if (condition) {
 - 使用 `#pragma once` 而非 `#ifndef`
 - 不要引入循环依赖
 - 跨平台修改需在 Windows 和 Linux 上都验证编译
+- 保持头文件最小化，避免不必要的依赖
+- 使用 PIMPL 模式隐藏实现细节（如 `MusicPlayer` 类）

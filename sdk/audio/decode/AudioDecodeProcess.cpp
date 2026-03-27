@@ -1,7 +1,7 @@
 #include "AudioDecodeProcess.h"
 #include "FLACDecode.h"
-#include "VorbisDecode.h"
 #include "LogWrapper.h"
+#include "VorbisDecode.h"
 
 #define LOG_TAG "AudioDecodeProcess"
 
@@ -93,13 +93,13 @@ status_t AudioDecodeProcess::init()
         m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     } else {
         AudioCodecConfig config;
-        config.sampleRate   = m_spec.sampleRate;
-        config.channels     = m_spec.numChannel;
+        config.sampleRate    = m_spec.sampleRate;
+        config.channels      = m_spec.numChannel;
         config.bitsPerSample = m_spec.bitsPerSample;
-        config.bitRate      = m_extractor->getBitRate();
-        config.blockAlign   = m_extractor->getBlockAlign();
-        config.extraData    = m_extractor->getCodecExtraData();
-        m_decode = std::make_shared<AudioDecode>(m_codecID, this, config);
+        config.bitRate       = m_extractor->getBitRate();
+        config.blockAlign    = m_extractor->getBlockAlign();
+        config.extraData     = m_extractor->getCodecExtraData();
+        m_decode             = std::make_shared<AudioDecode>(m_codecID, this, config);
         if (m_decode == nullptr || m_decode->initCheck() != OK) {
             LOG_ERROR(LOG_TAG, "new AudioDecode failed or initCheck failed, %p", m_decode.get());
             return INVALID_OPERATION;

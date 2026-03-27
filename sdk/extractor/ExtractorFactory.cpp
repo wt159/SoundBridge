@@ -1,6 +1,6 @@
 ﻿#include "ExtractorFactory.h"
-#include "LogWrapper.h"
 #include "FileSource.h"
+#include "LogWrapper.h"
 #include "aac/AACExtractor.h"
 #include "aiff/AIFFExtractor.h"
 #include "ape/APEExtractor.h"
@@ -13,8 +13,8 @@
 #include "wav/WAVExtractor.h"
 #include <mutex>
 #include <unordered_map>
-#include <vector>
 #include <utility>
+#include <vector>
 
 #define LOG_TAG "ExtractorFactory"
 
@@ -58,7 +58,7 @@ bool matchAscii(const uint8_t *buf, size_t offset, const char *text)
 
 std::string sniffExtensionByMagic(DataSourceBase *source)
 {
-    uint8_t buf[16] = {0};
+    uint8_t buf[16] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return std::string();
     }
@@ -89,10 +89,14 @@ std::string sniffExtensionByMagic(DataSourceBase *source)
         return ".aac"; // ADTS
     }
     // ASF/WMA magic GUID
-    const uint8_t asfGuid[16] = {0x30,0x26,0xB2,0x75,0x8E,0x66,0xCF,0x11,0xA6,0xD9,0x00,0xAA,0x00,0x62,0xCE,0x6C};
-    bool asfMatch = true;
+    const uint8_t asfGuid[16] = { 0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+                                  0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C };
+    bool asfMatch             = true;
     for (int i = 0; i < 16; ++i) {
-        if (buf[i] != asfGuid[i]) { asfMatch = false; break; }
+        if (buf[i] != asfGuid[i]) {
+            asfMatch = false;
+            break;
+        }
     }
     if (asfMatch) {
         return ".asf";
@@ -133,8 +137,7 @@ bool ExtractorFactory::registerExtractor(const std::string &extensionName, Extra
     return registerExtractor(extensionName, std::move(creator), nullptr);
 }
 
-bool ExtractorFactory::registerExtractor(const std::string &extensionName,
-                                         ExtractorCreator creator,
+bool ExtractorFactory::registerExtractor(const std::string &extensionName, ExtractorCreator creator,
                                          ExtractorSniffer sniffer)
 {
     const std::string normalized = normalizeExtension(extensionName);
@@ -148,7 +151,8 @@ bool ExtractorFactory::registerExtractor(const std::string &extensionName,
     ExtractorEntry entry;
     entry.creator = std::move(creator);
     entry.sniffer = std::move(sniffer);
-    std::pair<RegistryMap::iterator, bool> insertResult = registry.emplace(normalized, std::move(entry));
+    std::pair<RegistryMap::iterator, bool> insertResult
+        = registry.emplace(normalized, std::move(entry));
     if (!insertResult.second) {
         LOGW("registerExtractor duplicate extension: %s", normalized.c_str());
         return false;
@@ -170,7 +174,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
     {
         std::lock_guard<std::mutex> guard(extractorRegistryMutex());
         auto &registry = extractorRegistry();
-        auto search = registry.find(normalized);
+        auto search    = registry.find(normalized);
         if (search != registry.end()) {
             return search->second.creator(source);
         }
@@ -185,7 +189,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
     if (!sniffed.empty()) {
         std::lock_guard<std::mutex> guard(extractorRegistryMutex());
         auto &registry = extractorRegistry();
-        auto search = registry.find(sniffed);
+        auto search    = registry.find(sniffed);
         if (search != registry.end()) {
             LOGI("createExtractor sniff hit: %s", sniffed.c_str());
             return search->second.creator(source);
@@ -193,7 +197,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         LOGW("createExtractor unsupported sniffed extension: %s", sniffed.c_str());
     }
 
-    std::vector<std::pair<std::string, ExtractorEntry> > entries;
+    std::vector<std::pair<std::string, ExtractorEntry>> entries;
     {
         std::lock_guard<std::mutex> guard(extractorRegistryMutex());
         auto &registry = extractorRegistry();
@@ -230,12 +234,3 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".ape", APEExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".mkv", MKVExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
 REGISTER_EXTRACTOR(".amr", ASFExtractor);
-
-
-
-
-
-
-
-
-

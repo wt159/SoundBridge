@@ -7,8 +7,9 @@
 
 namespace fs = boost::filesystem;
 
-std::vector<std::string> recursiveFileSearch(
-    const std::string &rootDir, std::unordered_map<std::string, standardExtractors> extractorMap)
+std::vector<std::string>
+recursiveFileSearch(const std::string &rootDir,
+                    std::unordered_map<std::string, standardExtractors> extractorMap)
 {
     std::vector<std::string> fileVec;
     fs::path rootPath(rootDir);

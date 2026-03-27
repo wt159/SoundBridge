@@ -1,6 +1,6 @@
+#include "OGGExtractor.h"
 #include "ByteUtils.h"
 #include "LogWrapper.h"
-#include "OGGExtractor.h"
 #include "type_name.hpp"
 #include <cstring>
 #include <vector>
@@ -19,13 +19,12 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool OGGExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[4] = {0};
+    uint8_t buf[4] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
     return memcmp(buf, "OggS", 4) == 0;
 }
-
 
 constexpr uint16_t kMaxCodecParameterNum = 15;
 
@@ -132,7 +131,7 @@ status_t OGGExtractor::init()
     for (auto &page : m_pageVec) {
         for (int i = 0; i < page.header.numPageSegments; i++) {
             if (findAudioPkt(page.packets[i])) {
-                isFound = true;
+                isFound        = true;
                 audioSerialNum = page.header.serialNumber;
                 break;
             }
@@ -149,12 +148,11 @@ status_t OGGExtractor::init()
     LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
     off64_t dataSize = 0;
     m_dataSource->getSize(&dataSize);
-    m_metaBuf                = std::make_shared<AudioBuffer>(dataSize);
-    if(m_dataSource->readAt(0, m_metaBuf->data(), dataSize) < dataSize) {
+    m_metaBuf = std::make_shared<AudioBuffer>(dataSize);
+    if (m_dataSource->readAt(0, m_metaBuf->data(), dataSize) < dataSize) {
         LOGE("read meta data failed");
         return NO_INIT;
     }
 
     return OK;
 }
-

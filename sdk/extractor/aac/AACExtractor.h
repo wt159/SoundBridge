@@ -48,8 +48,8 @@ public:
     static bool sniff(DataSourceBase *source);
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
-    virtual AudioCodecID getAudioCodecID() { return m_audioCodecID;}
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf;}
+    virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
+    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual ~AACExtractor();
 
 private:
@@ -64,4 +64,3 @@ private:
     AudioSpec m_spec;
     AACHeader m_header;
 };
-

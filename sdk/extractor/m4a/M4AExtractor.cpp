@@ -15,10 +15,8 @@ using namespace sdk_utils;
 
 static int sampleRateToIndex(int sampleRate)
 {
-    static const int kSampleRates[] = {
-        96000, 88200, 64000, 48000, 44100, 32000, 24000,
-        22050, 16000, 12000, 11025, 8000, 7350
-    };
+    static const int kSampleRates[] = { 96000, 88200, 64000, 48000, 44100, 32000, 24000,
+                                        22050, 16000, 12000, 11025, 8000,  7350 };
     for (int i = 0; i < (int)(sizeof(kSampleRates) / sizeof(kSampleRates[0])); ++i) {
         if (kSampleRates[i] == sampleRate) {
             return i;
@@ -27,18 +25,18 @@ static int sampleRateToIndex(int sampleRate)
     return -1;
 }
 
-static bool parseAudioSpecificConfig(const uint8_t *data, int size,
-                                     int &audioObjectType, int &sampleRateIndex, int &channelConfig)
+static bool parseAudioSpecificConfig(const uint8_t *data, int size, int &audioObjectType,
+                                     int &sampleRateIndex, int &channelConfig)
 {
     if (!data || size < 2) {
         return false;
     }
-    int bitpos = 0;
+    int bitpos   = 0;
     auto getBits = [&](int n) -> int {
         int out = 0;
         for (int i = 0; i < n; ++i) {
             int byte = (bitpos >> 3);
-            int bit = 7 - (bitpos & 7);
+            int bit  = 7 - (bitpos & 7);
             if (byte >= size) {
                 return -1;
             }
@@ -77,11 +75,12 @@ static bool parseAudioSpecificConfig(const uint8_t *data, int size,
 
     audioObjectType = aot;
     sampleRateIndex = srIndex;
-    channelConfig = ch;
+    channelConfig   = ch;
     return true;
 }
 
-static void buildAdtsHeader(uint8_t *out, int profile, int sampleRateIndex, int channelConfig, int frameLen)
+static void buildAdtsHeader(uint8_t *out, int profile, int sampleRateIndex, int channelConfig,
+                            int frameLen)
 {
     // profile: 0 = Main, 1 = LC, 2 = SSR, 3 = LTP
     if (profile < 0) {
@@ -89,7 +88,8 @@ static void buildAdtsHeader(uint8_t *out, int profile, int sampleRateIndex, int 
     }
     out[0] = 0xFF;
     out[1] = 0xF1;
-    out[2] = (uint8_t)(((profile & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01));
+    out[2] = (uint8_t)(((profile & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2)
+                       | ((channelConfig >> 2) & 0x01));
     out[3] = (uint8_t)(((channelConfig & 0x03) << 6) | ((frameLen >> 11) & 0x03));
     out[4] = (uint8_t)((frameLen >> 3) & 0xFF);
     out[5] = (uint8_t)(((frameLen & 0x07) << 5) | 0x1F);
@@ -106,7 +106,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool M4AExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[12] = {0};
+    uint8_t buf[12] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -199,15 +199,15 @@ status_t M4AExtractor::initWithFFmpegDemux()
     ioCtxData.size   = static_cast<int64_t>(fileSize);
 
     const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer = static_cast<uint8_t *>(av_malloc(ioBufferSize));
+    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
     if (!ioBuffer) {
         LOGE("initWithFFmpegDemux av_malloc failed");
         return NO_MEMORY;
     }
 
-    AVIOContext *avioCtx = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData,
-                                              &M4AExtractor::avioRead, nullptr,
-                                              &M4AExtractor::avioSeek);
+    AVIOContext *avioCtx
+        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &M4AExtractor::avioRead,
+                             nullptr, &M4AExtractor::avioSeek);
     if (!avioCtx) {
         av_free(ioBuffer);
         LOGE("initWithFFmpegDemux avio_alloc_context failed");
@@ -220,7 +220,7 @@ status_t M4AExtractor::initWithFFmpegDemux()
         LOGE("initWithFFmpegDemux avformat_alloc_context failed");
         return NO_MEMORY;
     }
-    fmt->pb = avioCtx;
+    fmt->pb     = avioCtx;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
 
     int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
@@ -256,18 +256,16 @@ status_t M4AExtractor::initWithFFmpegDemux()
     }
 
     AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate    = par->sample_rate;
-    m_audioSpec.numChannel    = par->channels;
-    m_audioSpec.bitsPerSample = par->bits_per_coded_sample > 0
-        ? par->bits_per_coded_sample
-        : par->bits_per_raw_sample;
-    m_audioSpec.bytesPerSample = m_audioSpec.bitsPerSample > 0
-        ? (m_audioSpec.bitsPerSample + 7) / 8
-        : 0;
+    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
+    m_audioSpec.sampleRate = par->sample_rate;
+    m_audioSpec.numChannel = par->channels;
+    m_audioSpec.bitsPerSample
+        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+    m_audioSpec.bytesPerSample
+        = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate    = static_cast<int>(par->bit_rate);
-    m_blockAlign = static_cast<int>(par->block_align);
+    m_bitRate          = static_cast<int>(par->bit_rate);
+    m_blockAlign       = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
         m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
@@ -286,9 +284,9 @@ status_t M4AExtractor::initWithFFmpegDemux()
     }
 
     bool useAdts = (par->codec_id == AV_CODEC_ID_AAC);
-    int aot = 2;
-    int srIndex = sampleRateToIndex(par->sample_rate);
-    int chCfg = par->channels;
+    int aot      = 2;
+    int srIndex  = sampleRateToIndex(par->sample_rate);
+    int chCfg    = par->channels;
     if (useAdts && par->extradata && par->extradata_size > 0) {
         int paot = 0, psr = -1, pch = 0;
         if (parseAudioSpecificConfig(par->extradata, par->extradata_size, paot, psr, pch)) {

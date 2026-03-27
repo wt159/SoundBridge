@@ -78,6 +78,3 @@ private:
     AudioBuffer::AudioBufferPtr m_metaBuf;
     AIFF::FormAiffChunk m_formChunk;
 };
-
-
-

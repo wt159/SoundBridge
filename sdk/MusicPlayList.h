@@ -25,7 +25,7 @@ struct FileProperties {
     std::string extensionName;
     std::string fileDir;
 
-        void parseFileName()
+    void parseFileName()
     {
         if (fullPath.empty())
             return;
@@ -45,7 +45,8 @@ struct FileProperties {
                 fileName      = fileName.substr(0, lastDotPos);
             }
         }
-    }};
+    }
+};
 
 struct SignalProperties {
     AudioSpec spec;
@@ -80,7 +81,8 @@ public:
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property)    = 0;
     virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list) = 0;
     virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
-                                      const std::string &path)          = 0;
+                                      const std::string &path)
+        = 0;
 };
 
 class MusicPlayList : public NonCopyable {
@@ -120,8 +122,8 @@ protected:
 private:
     bool ensureDecoded(const MusicPropertiesPtr &musicProperties);
     void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
-    void reportError(ErrorCode code, const std::string &detail, const MusicPropertiesPtr &musicProperties);
+    void reportError(ErrorCode code, const std::string &detail,
+                     const MusicPropertiesPtr &musicProperties);
     std::string currentTraceId() const;
 };
 }
-

@@ -1,20 +1,20 @@
 ﻿#pragma once
-#include <NonCopyable.hpp>
 #include <AudioCommon.hpp>
+#include <NonCopyable.hpp>
 #include <memory>
 #include <string>
 #include <vector>
 
 class AudioDataCallback {
 public:
-    virtual ~AudioDataCallback() = default;
+    virtual ~AudioDataCallback()                   = default;
     virtual void getAudioData(void *data, int len) = 0;
 };
 
 /**
  * @brief Audio device class: select, open, close, start, and stop audio devices.
  * @details Supported audio format: 44100 Hz, 16-bit, stereo.
-  * 
+ *
  * @version 0.1
  * @author wtp (wtp0727@gmail.com)
  * @date 2023-10-03

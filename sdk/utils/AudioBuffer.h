@@ -14,10 +14,10 @@ public:
     AudioBuffer(size_t size);
     AudioBuffer(char *buffer, size_t size);
     ~AudioBuffer();
-    char *data() { return m_data;}
+    char *data() { return m_data; }
     size_t size() const { return m_size; }
-void setData(size_t offset, size_t len, char *buffer);
-void getData(size_t offset, size_t len, char *buffer);
+    void setData(size_t offset, size_t len, char *buffer);
+    void getData(size_t offset, size_t len, char *buffer);
 };
 
 using AudioBufferPtr = std::shared_ptr<AudioBuffer>;

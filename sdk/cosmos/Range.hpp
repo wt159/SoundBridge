@@ -1,6 +1,5 @@
 #pragma once
-template <typename value_t>
-class RangeImpl {
+template <typename value_t> class RangeImpl {
     class Iterator;
 
 public:
@@ -20,25 +19,13 @@ public:
         }
     }
 
-    Iterator begin()
-    {
-        return Iterator(0, *this);
-    }
+    Iterator begin() { return Iterator(0, *this); }
 
-    Iterator end()
-    {
-        return Iterator(m_step_end, *this);
-    }
+    Iterator end() { return Iterator(m_step_end, *this); }
 
-    value_t operator[](int s)
-    {
-        return m_begin + s * m_step;
-    }
+    value_t operator[](int s) { return m_begin + s * m_step; }
 
-    int size()
-    {
-        return m_step_end;
-    }
+    int size() { return m_step_end; }
 
 private:
     value_t m_begin;
@@ -48,7 +35,7 @@ private:
 
     class Iterator {
     public:
-        Iterator(int start, RangeImpl& range)
+        Iterator(int start, RangeImpl &range)
             : m_current_step(start)
             , m_range(range)
         {
@@ -57,24 +44,18 @@ private:
 
         value_t operator*() { return m_current_value; }
 
-        const Iterator* operator++()
+        const Iterator *operator++()
         {
             m_current_value += m_range.m_step;
             m_current_step++;
             return this;
         }
 
-        bool operator==(const Iterator& other)
-        {
-            return m_current_step == other.m_current_step;
-        }
+        bool operator==(const Iterator &other) { return m_current_step == other.m_current_step; }
 
-        bool operator!=(const Iterator& other)
-        {
-            return m_current_step != other.m_current_step;
-        }
+        bool operator!=(const Iterator &other) { return m_current_step != other.m_current_step; }
 
-        const Iterator* operator--()
+        const Iterator *operator--()
         {
             m_current_value -= m_range.m_step;
             m_current_step--;
@@ -84,7 +65,7 @@ private:
     private:
         value_t m_current_value;
         int m_current_step;
-        RangeImpl& m_range;
+        RangeImpl &m_range;
     };
 };
 
@@ -94,14 +75,12 @@ auto Range(T begin, T end, V stepsize) -> RangeImpl<decltype(begin + end + steps
     return RangeImpl<decltype(begin + end + stepsize)>(begin, end, stepsize);
 }
 
-template <typename T>
-RangeImpl<T> Range(T begin, T end)
+template <typename T> RangeImpl<T> Range(T begin, T end)
 {
     return RangeImpl<T>(begin, end, 1);
 }
 
-template <typename T>
-RangeImpl<T> Range(T end)
+template <typename T> RangeImpl<T> Range(T end)
 {
     return RangeImpl<T>(T(), end, 1);
 }

@@ -1,5 +1,5 @@
-#include "LogWrapper.h"
 #include "VorbisDecode.h"
+#include "LogWrapper.h"
 #include <cmath>
 #include <cstring>
 

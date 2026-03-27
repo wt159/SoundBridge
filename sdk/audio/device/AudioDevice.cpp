@@ -329,4 +329,3 @@ int AudioDevice::stop()
     m_impl->stop();
     return 0;
 }
-

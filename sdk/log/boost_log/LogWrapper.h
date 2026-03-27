@@ -3,17 +3,9 @@
 #include <memory>
 #include <string>
 
-#define CHECK(x)       assert(x)
+#define CHECK(x) assert(x)
 
-enum logLevel
-{
-    INFO,
-    WARNING,
-    ERROR,
-    FATAL,
-    DEBUG,
-    VERBOSE
-};
+enum logLevel { INFO, WARNING, ERROR, FATAL, DEBUG, VERBOSE };
 
 class LogWrapper : NonCopyable {
 private:
@@ -22,15 +14,16 @@ private:
     static std::unique_ptr<LogWrapper> m_staticLog;
 
 public:
-    static void initialize(std::string &logDir, std::string &logFileName,
-                                      int singleFileSizeInBytes, int maxFileCount);
+    static void initialize(std::string &logDir, std::string &logFileName, int singleFileSizeInBytes,
+                           int maxFileCount);
     static void getInstanceInitialize(std::string &logDir, std::string &logFileName,
                                       int singleFileSizeInBytes, int maxFileCount);
-    static LogWrapper* getInstance();
-    void log(int level, const char *tag, const char* format, ...);
+    static LogWrapper *getInstance();
+    void log(int level, const char *tag, const char *format, ...);
 
 private:
-    LogWrapper() {}
+    LogWrapper() { }
+
 public:
     ~LogWrapper() = default;
 };
@@ -40,7 +33,7 @@ public:
 #define LOG_WARNING(tag, ...) LogWrapper::getInstance()->log(WARNING, tag, __VA_ARGS__)
 #define LOG_ERROR(tag, ...)   LogWrapper::getInstance()->log(ERROR, tag, __VA_ARGS__)
 #define LOG_FATAL(tag, ...)   LogWrapper::getInstance()->log(FATAL, tag, __VA_ARGS__)
-#define LOG_VERBOSE(tag, ...)   LogWrapper::getInstance()->log(VERBOSE, tag, __VA_ARGS__)
+#define LOG_VERBOSE(tag, ...) LogWrapper::getInstance()->log(VERBOSE, tag, __VA_ARGS__)
 
 #define LOGI(...)             LOG_INFO(LOG_TAG, __VA_ARGS__)
 #define LOGE(...)             LOG_ERROR(LOG_TAG, __VA_ARGS__)

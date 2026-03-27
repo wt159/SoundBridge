@@ -1,9 +1,9 @@
 #pragma once
 #include "AudioBuffer.h"
+#include "AudioCommon.hpp"
 #include "AudioDecode.h"
 #include "ExtractorHelper.hpp"
 #include "NonCopyable.hpp"
-#include "AudioCommon.hpp"
 #include <vector>
 
 class AudioDecodeProcess : public NonCopyable, public AudioDecodeCallback {
@@ -26,7 +26,8 @@ public:
 
 protected:
     virtual void onAudioDecodeCallback(AudioDecodeSpec &out) override;
-    void mergeDecodeBuffer(AudioBufferPtr &outBuf, std::vector<AudioBuffer::AudioBufferPtr> &inBufVec);
+    void mergeDecodeBuffer(AudioBufferPtr &outBuf,
+                           std::vector<AudioBuffer::AudioBufferPtr> &inBufVec);
 
 private:
     sdk_utils::status_t init();

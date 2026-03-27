@@ -9,23 +9,23 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 *******************************************************************/
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
-#include "MusicPlayer.h"
+#include "soundbridge/sdk.h"
+#include <QCheckBox>
+#include <QCloseEvent>
+#include <QColor>
 #include <QDebug>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
-#include <QCloseEvent>
-#include <QColor>
 #include <QPushButton>
-#include <QCheckBox>
 #include <QSlider>
 #include <QSpacerItem>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
 
-using namespace sdk;
+using namespace soundbridge;
 
 /* Media information struct. */
 struct MediaObjectInfo {
@@ -35,7 +35,7 @@ struct MediaObjectInfo {
     QString filePath;
 };
 
-class MainWindow : public QMainWindow, public MusicPlayerListener {
+class MainWindow : public QMainWindow, public PlayerCallbacks {
     Q_OBJECT
 
 public:
@@ -49,7 +49,7 @@ public:
 
 private:
     /* Music player instance. */
-    std::shared_ptr<MusicPlayer> mMusicPlayer;
+    std::unique_ptr<Player> mPlayer;
 
     /* Music list. */
     QListWidget *mListWidget;
@@ -86,8 +86,8 @@ private:
 
     std::string mAppDir;
     std::string mLogDir;
-    MusicPlayerState mState;
-    int mPlayingIndex = -1;
+    PlayerState mState;
+    int mPlayingIndex     = -1;
     bool mAutoSkipOnError = true;
 
 protected:
@@ -108,24 +108,14 @@ protected:
     void persistWindowState();
 
 protected:
-    /* Media player state changed. */
-    virtual void onMusicPlayerStateChanged(MusicPlayerState state);
-
-    /* Current playlist index changed. */
-    virtual void onMusicPlayerListCurrentIndexChanged(int index);
-
-    /* Total duration changed. */
-    virtual void onMusicPlayerDurationChanged(uint64_t duration);
-
-    /* Playback position changed. */
-    virtual void onMusicPlayerPositionChanged(uint64_t position);
-
-    /* Playlist changed. */
-    virtual void onMusicPlayerMusicListChanged(std::list<MusicIndex> list);
-
-    /* Playback error. */
-    virtual void onMusicPlayerError(ErrorCode code, const std::string &detail, int index,
-                                    const std::string &path, const std::string &traceId);
+    /* PlayerCallbacks implementation */
+    void onStateChanged(PlayerState state) override;
+    void onTrackChanged(int index) override;
+    void onDurationChanged(uint64_t durationMs) override;
+    void onPositionChanged(uint64_t positionMs) override;
+    void onPlaylistChanged(const std::list<TrackInfo> &tracks) override;
+    void onError(ErrorCode code, const std::string &detail, int trackIndex,
+                 const std::string &path) override;
 
 private slots:
     /* Play button clicked. */

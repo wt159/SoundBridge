@@ -15,7 +15,7 @@ static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 
 bool AACExtractor::sniff(DataSourceBase *source)
 {
-    uint8_t buf[4] = {0};
+    uint8_t buf[4] = { 0 };
     if (!readHeader(source, buf, sizeof(buf))) {
         return false;
     }
@@ -24,7 +24,6 @@ bool AACExtractor::sniff(DataSourceBase *source)
     }
     return (buf[0] == 0xFF && (buf[1] & 0xF0) == 0xF0);
 }
-
 
 // Returns the sample rate based on the sampling frequency index
 uint32_t getSampleRate(const uint8_t sfIndex)
@@ -48,9 +47,7 @@ AACExtractor::AACExtractor(DataSourceBase *source)
     m_initCheck = init();
 }
 
-AACExtractor::~AACExtractor()
-{
-}
+AACExtractor::~AACExtractor() { }
 
 status_t AACExtractor::init()
 {
@@ -86,11 +83,11 @@ status_t AACExtractor::init()
             = ((data[3] & 0x03) << 11) | ((data[4] & 0xff) << 3) | ((data[5] & 0xe0) >> 5);
         m_header.adts.bufferFullness   = ((data[5] & 0x1F) << 6) | ((data[6] & 0xfc) >> 2);
         m_header.adts.numRawDataBlocks = data[6] & 0x03;
-        m_spec.sampleRate         = getSampleRate(m_header.adts.samplingFrequencyIndex);
-        m_spec.numChannel         = m_header.adts.channelConfiguration;
+        m_spec.sampleRate              = getSampleRate(m_header.adts.samplingFrequencyIndex);
+        m_spec.numChannel              = m_header.adts.channelConfiguration;
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
-    
+
     off64_t fileSize = 0;
     m_dataSource->getSize(&fileSize);
     m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
@@ -103,5 +100,3 @@ status_t AACExtractor::init()
              m_spec.numChannel, m_spec.bytesPerSample);
     return NO_ERROR;
 }
-
-

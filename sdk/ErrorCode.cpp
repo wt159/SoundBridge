@@ -5,14 +5,14 @@
 namespace sdk {
 namespace {
 
-ErrorCodeInfo MakeInfo(ErrorModule module, ErrorSeverity severity, bool recoverable, ErrorAction action,
-                       const char *message)
-{
-    return ErrorCodeInfo{module, severity, recoverable, action, message};
-}
+    ErrorCodeInfo MakeInfo(ErrorModule module, ErrorSeverity severity, bool recoverable,
+                           ErrorAction action, const char *message)
+    {
+        return ErrorCodeInfo { module, severity, recoverable, action, message };
+    }
 
-const ErrorCodeInfo kUnknownInfo
-    = MakeInfo(ErrorModule::Unknown, ErrorSeverity::Error, false, ErrorAction::ReportBug, "Unknown error");
+    const ErrorCodeInfo kUnknownInfo = MakeInfo(ErrorModule::Unknown, ErrorSeverity::Error, false,
+                                                ErrorAction::ReportBug, "Unknown error");
 
 } // namespace
 
@@ -25,47 +25,58 @@ const ErrorCodeInfo &GetErrorInfo(ErrorCode code)
         return kOkInfo;
     case ErrorCode::FileOpenFailed:
         static const ErrorCodeInfo kFileOpen
-            = MakeInfo(ErrorModule::File, ErrorSeverity::Error, false, ErrorAction::CheckFile, "Open file failed");
+            = MakeInfo(ErrorModule::File, ErrorSeverity::Error, false, ErrorAction::CheckFile,
+                       "Open file failed");
         return kFileOpen;
     case ErrorCode::ExtractorUnsupported:
         static const ErrorCodeInfo kExtractorUnsupported
-            = MakeInfo(ErrorModule::Extractor, ErrorSeverity::Warning, false, ErrorAction::SkipTrack, "Unsupported format");
+            = MakeInfo(ErrorModule::Extractor, ErrorSeverity::Warning, false,
+                       ErrorAction::SkipTrack, "Unsupported format");
         return kExtractorUnsupported;
     case ErrorCode::ExtractorInitFailed:
         static const ErrorCodeInfo kExtractorInit
-            = MakeInfo(ErrorModule::Extractor, ErrorSeverity::Error, false, ErrorAction::SkipTrack, "Extractor init failed");
+            = MakeInfo(ErrorModule::Extractor, ErrorSeverity::Error, false, ErrorAction::SkipTrack,
+                       "Extractor init failed");
         return kExtractorInit;
     case ErrorCode::DecodeInitFailed:
         static const ErrorCodeInfo kDecodeInit
-            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack, "Decode init failed");
+            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack,
+                       "Decode init failed");
         return kDecodeInit;
     case ErrorCode::DecodeFailed:
         static const ErrorCodeInfo kDecodeFailed
-            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack, "Decode failed");
+            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack,
+                       "Decode failed");
         return kDecodeFailed;
     case ErrorCode::ResampleInitFailed:
         static const ErrorCodeInfo kResampleInit
-            = MakeInfo(ErrorModule::Resample, ErrorSeverity::Error, true, ErrorAction::SkipTrack, "Resample init failed");
+            = MakeInfo(ErrorModule::Resample, ErrorSeverity::Error, true, ErrorAction::SkipTrack,
+                       "Resample init failed");
         return kResampleInit;
     case ErrorCode::ResampleFailed:
         static const ErrorCodeInfo kResampleFailed
-            = MakeInfo(ErrorModule::Resample, ErrorSeverity::Error, true, ErrorAction::SkipTrack, "Resample failed");
+            = MakeInfo(ErrorModule::Resample, ErrorSeverity::Error, true, ErrorAction::SkipTrack,
+                       "Resample failed");
         return kResampleFailed;
     case ErrorCode::PlaylistEmpty:
         static const ErrorCodeInfo kPlaylistEmpty
-            = MakeInfo(ErrorModule::Playlist, ErrorSeverity::Warning, true, ErrorAction::None, "Playlist is empty");
+            = MakeInfo(ErrorModule::Playlist, ErrorSeverity::Warning, true, ErrorAction::None,
+                       "Playlist is empty");
         return kPlaylistEmpty;
     case ErrorCode::PlayerNoCurrent:
         static const ErrorCodeInfo kPlayerNoCurrent
-            = MakeInfo(ErrorModule::Player, ErrorSeverity::Warning, true, ErrorAction::None, "No current track");
+            = MakeInfo(ErrorModule::Player, ErrorSeverity::Warning, true, ErrorAction::None,
+                       "No current track");
         return kPlayerNoCurrent;
     case ErrorCode::AudioDeviceOpenFailed:
         static const ErrorCodeInfo kAudioOpen
-            = MakeInfo(ErrorModule::AudioDevice, ErrorSeverity::Error, true, ErrorAction::StopPlayback, "Audio device open failed");
+            = MakeInfo(ErrorModule::AudioDevice, ErrorSeverity::Error, true,
+                       ErrorAction::StopPlayback, "Audio device open failed");
         return kAudioOpen;
     case ErrorCode::AudioDeviceStartFailed:
         static const ErrorCodeInfo kAudioStart
-            = MakeInfo(ErrorModule::AudioDevice, ErrorSeverity::Error, true, ErrorAction::StopPlayback, "Audio device start failed");
+            = MakeInfo(ErrorModule::AudioDevice, ErrorSeverity::Error, true,
+                       ErrorAction::StopPlayback, "Audio device start failed");
         return kAudioStart;
     case ErrorCode::Unknown:
     default:

@@ -7,39 +7,39 @@
 namespace sdk {
 namespace {
 
-std::string SanitizeTagValue(const std::string &value)
-{
-    std::string out;
-    out.reserve(value.size());
-    for (char ch : value) {
-        if (ch == '\n' || ch == '\r') {
-            continue;
+    std::string SanitizeTagValue(const std::string &value)
+    {
+        std::string out;
+        out.reserve(value.size());
+        for (char ch : value) {
+            if (ch == '\n' || ch == '\r') {
+                continue;
+            }
+            out.push_back(ch);
         }
-        out.push_back(ch);
+        return out;
     }
-    return out;
-}
 
-void LogMetric(const char *type, const char *name, const std::string &value, const MetricTags &tags, const char *unit)
-{
-    std::ostringstream oss;
-    oss << "metric=" << (name ? name : "unknown")
-        << " type=" << (type ? type : "unknown")
-        << " value=" << value;
-    if (unit && unit[0] != '\0') {
-        oss << " unit=" << unit;
+    void LogMetric(const char *type, const char *name, const std::string &value,
+                   const MetricTags &tags, const char *unit)
+    {
+        std::ostringstream oss;
+        oss << "metric=" << (name ? name : "unknown") << " type=" << (type ? type : "unknown")
+            << " value=" << value;
+        if (unit && unit[0] != '\0') {
+            oss << " unit=" << unit;
+        }
+        if (!tags.traceId.empty()) {
+            oss << " traceId=" << tags.traceId;
+        }
+        if (tags.index >= 0) {
+            oss << " index=" << tags.index;
+        }
+        if (!tags.file.empty()) {
+            oss << " file=" << SanitizeTagValue(tags.file);
+        }
+        LogMessage(SdkLogLevel::Info, "Metrics", oss.str());
     }
-    if (!tags.traceId.empty()) {
-        oss << " traceId=" << tags.traceId;
-    }
-    if (tags.index >= 0) {
-        oss << " index=" << tags.index;
-    }
-    if (!tags.file.empty()) {
-        oss << " file=" << SanitizeTagValue(tags.file);
-    }
-    LogMessage(SdkLogLevel::Info, "Metrics", oss.str());
-}
 
 } // namespace
 

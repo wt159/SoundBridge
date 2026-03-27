@@ -23,7 +23,8 @@ class Metrics {
 public:
     static void RecordTiming(const char *name, uint64_t ms, const MetricTags &tags);
     static void RecordCount(const char *name, int64_t value, const MetricTags &tags);
-    static void RecordGauge(const char *name, double value, const MetricTags &tags, const char *unit);
+    static void RecordGauge(const char *name, double value, const MetricTags &tags,
+                            const char *unit);
 };
 
 } // namespace sdk

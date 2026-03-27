@@ -235,5 +235,3 @@ private:
     AudioSpec m_spec;
     FLACHeader m_header;
 };
-
-
