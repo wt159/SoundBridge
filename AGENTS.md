@@ -4,6 +4,24 @@
 SoundBridge 是使用 C++ 和 Qt 构建的跨平台音乐播放器，提供模块化 SDK 用于解码、重采样和播放。
 目标平台：Windows、Linux、嵌入式 Linux。
 
+## 快速开始（Agent 30 秒）
+```bash
+# 1) 配置（以 Linux x86_64 为例）
+mkdir build && cd build
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+  -G "Unix Makefiles"
+
+# 2) 构建
+cmake --build .
+
+# 3) SDK 核心回归
+ctest -R sdk_core_tests --output-on-failure
+
+# 4) 媒体冒烟（可选）
+ctest -R sdk_media_smoke --output-on-failure
+```
+
 ## 仓库结构
 - `app/` Qt UI 应用（入口：`app/main.cpp`）
 - `sdk/` 核心 SDK（播放器、解码、重采样、设备、提取器、日志）
@@ -63,7 +81,7 @@ cmake --build . --target package_portable
 - 断言：`check(condition, message)` 输出 `[PASS]` 或 `[FAIL]`
 - 测试类命名：`*Test`（如 `AudioDecodeTest`）
 
-### 运行测试
+### 单元测试
 ```bash
 # 构建测试
 cmake --build . --target TestSdkSuite
@@ -71,16 +89,26 @@ cmake --build . --target TestSdkSuite
 # 运行全部
 ctest -R sdk_ --output-on-failure
 
-# 运行单个组（core/resample/decode/all/media）
-ctest -R sdk_<组名>_tests --output-on-failure
+# 运行单个组
+ctest -R sdk_core_tests --output-on-failure
+ctest -R sdk_resample_tests --output-on-failure
+ctest -R sdk_decode_tests --output-on-failure
+ctest -R sdk_all_tests --output-on-failure
+
 # 或直接运行（在 build/sdk/test 目录下）
-./TestSdkSuite <组名>
+./TestSdkSuite core
+./TestSdkSuite resample
+./TestSdkSuite decode
+./TestSdkSuite all
 ```
 
 ### 媒体冒烟测试
 ```bash
 ./TestSdkSuite media [扩展名] [数量限制]
 # 示例：./TestSdkSuite media .m4a 5
+
+# 等效 CTest 用例名（固定）
+ctest -R sdk_media_smoke --output-on-failure
 ```
 
 ### 环境变量
@@ -88,11 +116,17 @@ ctest -R sdk_<组名>_tests --output-on-failure
 - `SB_MEDIA_FILTER` - 扩展名过滤（如 `.m4a`）
 - `SB_MEDIA_LIMIT` - 文件数量限制
 
+### 按改动类型最小回归
+- **utils / LogWrapper**：`ctest -R sdk_core_tests --output-on-failure`
+- **audio/resample**：`ctest -R sdk_resample_tests --output-on-failure`
+- **audio/decode**：`ctest -R sdk_decode_tests --output-on-failure`
+- **extractor / 媒体格式兼容**：`ctest -R sdk_decode_tests --output-on-failure` + `ctest -R sdk_media_smoke --output-on-failure`
+- **跨模块或发布前**：`ctest -R sdk_ --output-on-failure`
+
 ## 代码风格
 ### 格式化
 - `clang-format`（WebKit 风格，4 空格缩进，100 列宽）
 - 命令：`clang-format -i <file>`
-- 保持指针右对齐：`int *ptr`，引用右对齐：`std::string &str`
 
 ### 命名约定
 | 类型 | 风格 | 示例 |
@@ -165,13 +199,16 @@ if (result != sdk_utils::OK) {
 - `sdk/3rdparty/ffmpeg-4.4.4/` - FFmpeg 源码
 
 ## Agent 指南
+### Do
 - 保持 SDK 模块边界；优先在最低合适层添加功能并向上暴露
-- 避免编辑 `sdk/3rdparty/`（除非更新依赖源码）
-- 修改代码后运行 `clang-format` 格式化
-- 运行测试验证：`ctest -R sdk_<group> --output-on-failure`
-- 遵循命名约定和错误处理模式
-- 使用 `#pragma once` 而非 `#ifndef`
-- 不要引入循环依赖
-- 跨平台修改需在 Windows 和 Linux 上都验证编译
-- 保持头文件最小化，避免不必要的依赖
-- 使用 PIMPL 模式隐藏实现细节（如 `MusicPlayer` 类）
+- 修改代码后运行 `clang-format -i <file>`
+- 按改动类型执行最小回归，至少运行对应 `sdk_*` 测试
+- 遵循命名约定、错误处理模式与 `#pragma once` 规则
+- 跨平台相关修改在 Windows 与 Linux 都验证编译
+- 若 `AGENTS.md` 与 `README.md` 冲突，以 `AGENTS.md` 为执行准，并在合适时同步 README
+
+### Don't
+- 不要引入层间循环依赖
+- 不要编辑 `sdk/3rdparty/`（除非明确是依赖源码升级）
+- 不要引入不必要头文件，保持依赖最小化
+- 不要破坏现有 PIMPL 封装边界（如 `MusicPlayer`）
