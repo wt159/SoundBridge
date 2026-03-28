@@ -410,9 +410,8 @@ MP3Extractor::MP3Extractor(DataSourceBase *source)
         break;
     }
 
-    // mMeta.setInt32(kKeySampleRate, sample_rate);
-    // mMeta.setInt32(kKeyBitRate, bitrate * 1000);
-    // mMeta.setInt32(kKeyChannelCount, num_channels);
+    m_spec.sampleRate = static_cast<uint32_t>(sample_rate);
+    m_spec.numChannel = static_cast<uint32_t>(num_channels);
     LOGI("sample_rate: %d, bitrate: %d, num_channels: %d", sample_rate, bitrate, num_channels);
 
     int64_t durationUs;
@@ -433,6 +432,7 @@ MP3Extractor::MP3Extractor(DataSourceBase *source)
     }
 
     if (durationUs >= 0) {
+        m_spec.durationMs = static_cast<uint64_t>(durationUs / 1000);
         LOGI("duration is %lld us", (long long)durationUs);
     }
 

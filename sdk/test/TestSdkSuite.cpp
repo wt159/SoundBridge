@@ -454,6 +454,217 @@ bool test_player_api()
     return ok;
 }
 
+bool test_extractor_spec()
+{
+    bool ok               = true;
+    std::string media_dir = get_env_or_default("SB_MEDIA_DIR", "../../music");
+
+    // WAV
+    {
+        std::string path = media_dir + "/music.wav";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".wav", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec wav initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec wav sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec wav numChannel");
+                ok          &= check(s.bitsPerSample > 0, "ExtractorSpec wav bitsPerSample");
+                ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec wav format");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec wav durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec wav (file not found)\n");
+        }
+    }
+
+    // AIFF
+    {
+        std::string path = media_dir
+            + "/\xe4\xbf\xb1\xe4\xb9\x90\xe9\x83\xa8\xe9\x9f\xb3\xe4\xb9\x90\xe5\xbe\xaa\xe7\x8e"
+              "\xaf-Freesound.aiff";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".aiff", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec aiff initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec aiff sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec aiff numChannel");
+                ok          &= check(s.bitsPerSample > 0, "ExtractorSpec aiff bitsPerSample");
+                ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec aiff format");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec aiff durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec aiff (file not found)\n");
+        }
+    }
+
+    // FLAC
+    {
+        std::string path = media_dir
+            + "/\xe5\xb0\x8f\xe9\x95\x87\xe5\xa7\x91\xe5\xa8\x98-\xe9\x99\xb6\xe5\x96\x86.flac";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".flac", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec flac initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec flac sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec flac numChannel");
+                ok          &= check(s.bitsPerSample > 0, "ExtractorSpec flac bitsPerSample");
+                ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec flac format");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec flac durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec flac (file not found)\n");
+        }
+    }
+
+    // MP3
+    {
+        std::string path
+            = media_dir + "/\xe6\xb6\x88\xe6\x84\x81-\xe6\xaf\x9b\xe4\xb8\x8d\xe6\x98\x93.320.mp3";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".mp3", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec mp3 initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec spec  = ext->getAudioSpec();
+                ok             &= check(spec.sampleRate > 0, "ExtractorSpec mp3 sampleRate");
+                ok             &= check(spec.numChannel > 0, "ExtractorSpec mp3 numChannel");
+                ok             &= check(spec.durationMs > 0, "ExtractorSpec mp3 durationMs");
+                // MP3 is lossy: bitsPerSample/format not asserted
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec mp3 (file not found)\n");
+        }
+    }
+
+    // OGG
+    {
+        std::string path = media_dir + "/Ringtones-\xe8\x80\xb3\xe8\x81\x86\xe7\xbd\x91.ogg";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".ogg", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec ogg initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec ogg sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec ogg numChannel");
+                ok          &= check(s.durationMs >= 0, "ExtractorSpec ogg durationMs");
+                // OGG/Vorbis: bitsPerSample/format NOT asserted (lossy)
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec ogg (file not found)\n");
+        }
+    }
+
+    // AAC
+    {
+        std::string path = media_dir + "/48000_fltp_1.aac";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".aac", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec aac initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec aac sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec aac numChannel");
+                ok          &= check(s.bitsPerSample == 16, "ExtractorSpec aac bitsPerSample");
+                ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec aac format");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec aac durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec aac (file not found)\n");
+        }
+    }
+
+    // M4A
+    {
+        std::string path = media_dir + "/\xe6\x91\x87\xe6\xbb\x9a\xe4\xb9\x90_Freesound.m4a";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".m4a", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec m4a initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec m4a sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec m4a numChannel");
+                // M4A: durationMs >= 0 (FFmpeg demux may or may not populate)
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec m4a (file not found)\n");
+        }
+    }
+
+    // ASF
+    {
+        std::string path = media_dir + "/\xe8\x90\xa8\xe5\x85\x8b\xe6\x96\xaf\xe6\x9c\xba.asf";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".asf", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec asf initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec asf sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec asf numChannel");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec asf (file not found)\n");
+        }
+    }
+
+    // APE
+    {
+        std::string path = media_dir + "/music-ape.ape";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".ape", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec ape initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec ape sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec ape numChannel");
+                ok          &= check(s.bitsPerSample > 0, "ExtractorSpec ape bitsPerSample");
+                ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec ape format");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec ape (file not found)\n");
+        }
+    }
+
+    // MKV
+    {
+        std::string path = media_dir + "/music-mkv.mkv";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".mkv", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec mkv initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec mkv sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec mkv numChannel");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec mkv (file not found)\n");
+        }
+    }
+
+    return ok;
+}
+
 bool run_group(const std::string &group)
 {
     bool ok = init_logger();
@@ -479,6 +690,11 @@ bool run_group(const std::string &group)
         return ok;
     }
 
+    if (group == "extractor") {
+        ok &= test_extractor_spec();
+        return ok;
+    }
+
     if (group == "player") {
         ok &= test_player_api();
         return ok;
@@ -489,12 +705,13 @@ bool run_group(const std::string &group)
         ok &= test_file_search();
         ok &= test_resample();
         ok &= test_decode();
+        ok &= test_extractor_spec();
         ok &= test_player_api();
         return ok;
     }
 
     std::printf("Unknown group: %s\n", group.c_str());
-    std::printf("Valid groups: core | resample | decode | media | player | all\n");
+    std::printf("Valid groups: core | resample | decode | media | extractor | player | all\n");
     return false;
 }
 

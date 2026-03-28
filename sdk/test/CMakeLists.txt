@@ -89,3 +89,11 @@ add_test(
 set_tests_properties(sdk_media_smoke PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+
+add_test(
+    NAME sdk_extractor_spec_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" "SB_MEDIA_DIR=${SB_MEDIA_DIR}" $<TARGET_FILE:TestSdkSuite> extractor
+)
+set_tests_properties(sdk_extractor_spec_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
