@@ -228,6 +228,7 @@ status_t WAVExtractor::init()
                     LOG_ERROR(LOG_TAG, "readAt failed");
                     return NO_INIT;
                 }
+                normalizeAudioSpec(m_audioSpec);
                 return OK;
             }
         }

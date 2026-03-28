@@ -59,22 +59,47 @@ void AudioDecodeProcess::mergeDecodeBuffer(AudioBufferPtr &outBuf,
 
 status_t AudioDecodeProcess::init()
 {
-    AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-    if (extPtr == nullptr) {
-        LOGE("getMetaData failed");
-        return INVALID_OPERATION;
-    }
-    LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr) {
+            LOGE("getMetaData failed");
+            return INVALID_OPERATION;
+        }
+        LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
         LOG_ERROR(LOG_TAG, "m_codecID is AUDIO_CODEC_ID_NONE, not need decode");
         m_decBuf  = extPtr;
         m_decSize = m_decBuf->size();
     } else if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flacDecode(this);
-        int ret = flacDecode.decode(extPtr);
-        if (ret < 0) {
-            LOG_ERROR(LOG_TAG, "decode failed");
-            return INVALID_OPERATION;
+        DataSourceBase *dataSource = m_extractor->getDataSource();
+        if (dataSource != nullptr) {
+            if (!flacDecode.initFromDataSource(dataSource, m_extractor->getAudioDataOffset(),
+                                               m_extractor->getDataSize())) {
+                LOG_ERROR(LOG_TAG, "initFromDataSource failed");
+                return INVALID_OPERATION;
+            }
+            while (true) {
+                int ret = flacDecode.processOne();
+                if (ret == 0) {
+                    break;
+                }
+                if (ret < 0) {
+                    LOG_ERROR(LOG_TAG, "decode failed");
+                    return INVALID_OPERATION;
+                }
+            }
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr) {
+                LOGE("getMetaData failed");
+                return INVALID_OPERATION;
+            }
+            LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
+            int ret = flacDecode.decode(extPtr);
+            if (ret < 0) {
+                LOG_ERROR(LOG_TAG, "decode failed");
+                return INVALID_OPERATION;
+            }
         }
         mergeDecodeBuffer(m_decBuf, m_decBufVec);
         m_decBufVec.clear();
@@ -82,16 +107,46 @@ status_t AudioDecodeProcess::init()
         m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     } else if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
         VorbisDecode vorbisDecode(this);
-        int ret = vorbisDecode.decode(extPtr);
-        if (ret < 0) {
-            LOG_ERROR(LOG_TAG, "decode failed");
-            return INVALID_OPERATION;
+        DataSourceBase *dataSource = m_extractor->getDataSource();
+        if (dataSource != nullptr) {
+            if (!vorbisDecode.initVFFromSource(dataSource, m_extractor->getDataSize())) {
+                LOG_ERROR(LOG_TAG, "initVFFromSource failed");
+                return INVALID_OPERATION;
+            }
+            while (true) {
+                int ret = vorbisDecode.decodeOne();
+                if (ret == 0) {
+                    break;
+                }
+                if (ret < 0) {
+                    LOG_ERROR(LOG_TAG, "decode failed");
+                    return INVALID_OPERATION;
+                }
+            }
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr) {
+                LOGE("getMetaData failed");
+                return INVALID_OPERATION;
+            }
+            LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
+            int ret = vorbisDecode.decode(extPtr);
+            if (ret < 0) {
+                LOG_ERROR(LOG_TAG, "decode failed");
+                return INVALID_OPERATION;
+            }
         }
         mergeDecodeBuffer(m_decBuf, m_decBufVec);
         m_decBufVec.clear();
         size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
         m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     } else {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr) {
+            LOGE("getMetaData failed");
+            return INVALID_OPERATION;
+        }
+        LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
         AudioCodecConfig config;
         config.sampleRate    = m_spec.sampleRate;
         config.channels      = m_spec.numChannel;

@@ -150,6 +150,7 @@ status_t AIFFExtractor::init()
     }
 
     m_audioCodecID = AUDIO_CODEC_ID_NONE;
+    normalizeAudioSpec(m_audioSpec);
     return OK;
 }
 

@@ -38,6 +38,42 @@ uint32_t getSampleRate(const uint8_t sfIndex)
     return 0;
 }
 
+static size_t countAdtsFrames(const uint8_t *data, size_t size)
+{
+    if (data == nullptr || size < 7) {
+        return 0;
+    }
+
+    size_t offset = 0;
+    if (size >= 10 && memcmp(data, "ID3", 3) == 0) {
+        size_t tagSize = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14)
+            | ((data[8] & 0x7f) << 7) | (data[9] & 0x7f);
+        offset = tagSize + 10;
+        if (offset >= size) {
+            return 0;
+        }
+    }
+
+    size_t frameCount = 0;
+    while (offset + 7 <= size) {
+        if (data[offset] != 0xFF || (data[offset + 1] & 0xF0) != 0xF0) {
+            break;
+        }
+
+        size_t frameLength = ((static_cast<size_t>(data[offset + 3] & 0x03) << 11)
+                              | (static_cast<size_t>(data[offset + 4]) << 3)
+                              | ((static_cast<size_t>(data[offset + 5]) & 0xE0) >> 5));
+        if (frameLength < 7 || offset + frameLength > size) {
+            break;
+        }
+
+        ++frameCount;
+        offset += frameLength;
+    }
+
+    return frameCount;
+}
+
 AACExtractor::AACExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_metaBuf(nullptr)
@@ -96,7 +132,24 @@ status_t AACExtractor::init()
         return NO_MEMORY;
     }
 
+    m_spec.bitsPerSample  = 16;
+    m_spec.format         = getAudioFormatByBitPreSample(m_spec.bitsPerSample);
+    m_spec.bytesPerSample = 2;
+
+    size_t frameCount
+        = countAdtsFrames(reinterpret_cast<const uint8_t *>(m_metaBuf->data()), m_metaBuf->size());
+    if (frameCount > 0 && m_spec.sampleRate > 0) {
+        size_t samplesPerFrame = (static_cast<size_t>(m_header.adts.numRawDataBlocks) + 1) * 1024;
+        int64_t durationUs     = static_cast<int64_t>(frameCount)
+            * static_cast<int64_t>(samplesPerFrame) * 1000000LL
+            / static_cast<int64_t>(m_spec.sampleRate);
+        if (durationUs > 0) {
+            m_spec.durationMs = static_cast<uint64_t>(durationUs / 1000);
+        }
+    }
+
     LOG_INFO(LOG_TAG, "sampleRate: %d, numChannel: %d, bytesPerSample: %d", m_spec.sampleRate,
              m_spec.numChannel, m_spec.bytesPerSample);
+    normalizeAudioSpec(m_spec);
     return NO_ERROR;
 }

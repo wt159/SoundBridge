@@ -339,5 +339,6 @@ status_t M4AExtractor::initWithFFmpegDemux()
     memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     m_validFormat = true;
     LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
+    normalizeAudioSpec(m_audioSpec);
     return OK;
 }

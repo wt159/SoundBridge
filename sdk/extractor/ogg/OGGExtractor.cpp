@@ -113,7 +113,12 @@ status_t OGGExtractor::init()
             isFound        = true;
         } else if (!memcmp(pkt.data->data(), "\x01vorbis", 7)) {
             m_audioCodecID = AUDIO_CODEC_ID_VORBIS;
-            isFound        = true;
+            if (pkt.data->size() >= 16) {
+                m_spec.numChannel = static_cast<uint8_t>(pkt.data->data()[11]);
+                m_spec.sampleRate
+                    = U32LE_AT(reinterpret_cast<const uint8_t *>(pkt.data->data()) + 12);
+            }
+            isFound = true;
         } else if (!memcmp(pkt.data->data(), "Speex   ", 8)) {
             m_audioCodecID = AUDIO_CODEC_ID_SPEEX;
             isFound        = true;
@@ -148,6 +153,7 @@ status_t OGGExtractor::init()
     }
     LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
     m_dataSource->getSize(&m_dataSize);
+    normalizeAudioSpec(m_spec);
 
     return OK;
 }

@@ -436,6 +436,7 @@ MP3Extractor::MP3Extractor(DataSourceBase *source)
         LOGI("duration is %lld us", (long long)durationUs);
     }
 
+    normalizeAudioSpec(m_spec);
     m_initCheck = OK;
 
     // Get iTunes-style gapless info if present.

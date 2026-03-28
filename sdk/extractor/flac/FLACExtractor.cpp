@@ -166,5 +166,6 @@ status_t FLACExtractor::init()
     LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d, samples:%d", m_spec.sampleRate,
          m_spec.numChannel, m_spec.bytesPerSample, m_spec.samples);
     LOGI("durationMs: %lu", m_spec.durationMs);
+    normalizeAudioSpec(m_spec);
     return NO_ERROR;
 }

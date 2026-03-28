@@ -66,6 +66,13 @@ public:
 protected:
     ExtractorHelper() { }
 
+    static void normalizeAudioSpec(AudioSpec &spec)
+    {
+        if (spec.bitsPerSample > 0 && spec.bytesPerSample == 0) {
+            spec.bytesPerSample = (spec.bitsPerSample + 7) / 8;
+        }
+    }
+
 private:
     ExtractorHelper(const ExtractorHelper &);
     ExtractorHelper &operator=(const ExtractorHelper &);
