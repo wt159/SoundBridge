@@ -19,7 +19,7 @@ namespace sdk {
 class MusicPlayer::Impl : public AudioDataCallback, public MusicPlayListCallback {
 public:
     Impl(MusicPlayerListener *listener, std::string &logDir);
-    ~Impl() = default;
+    ~Impl();
     // player
     void addMusicDir(const std::string &dir);
     void play();
@@ -33,6 +33,8 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    void setPlaybackMode(MusicPlaybackMode mode);
+    MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
 
@@ -58,14 +60,15 @@ private:
     std::string newTraceId();
     void bumpTraceId(const char *reason);
     bool shouldAutoSkipOnError() const;
+    bool isShuttingDown() const;
+    void fillSilence(void *data, int len) const;
 
 private:
-    WorkQueue m_workQueue;
     std::shared_ptr<AudioDevice> m_audioDev;
     AudioSpec m_devSpec;
     std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
-    MusicPlayerState m_state;
+    std::atomic<MusicPlayerState> m_state;
     MusicPropertiesPtr m_curMusicProperties;
     std::mutex m_curMusicMutex;
     std::list<MusicIndex> m_musicListIndex;
@@ -75,11 +78,12 @@ private:
     std::atomic<bool> m_autoSkipOnError;
     std::atomic<int> m_skipFailures;
     std::atomic<bool> m_switching;
+    std::atomic<bool> m_shuttingDown;
+    WorkQueue m_workQueue;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
-    : m_workQueue()
-    , m_audioDev(nullptr)
+    : m_audioDev(nullptr)
     , m_musicList(nullptr)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
@@ -88,6 +92,8 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_autoSkipOnError(true)
     , m_skipFailures(0)
     , m_switching(false)
+    , m_shuttingDown(false)
+    , m_workQueue()
 {
     SdkLogConfig logConfig;
     logConfig.directory           = logDir;
@@ -100,14 +106,28 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     m_audioDev = std::make_shared<AudioDevice>(this);
     m_audioDev->getDeviceSpec(m_devSpec);
     m_musicList = std::make_shared<MusicPlayList>(this, &m_workQueue, m_devSpec);
-    m_traceId   = newTraceId();
+    m_musicList->setPlaybackMode(MusicPlaybackMode::Sequential);
+    m_traceId = newTraceId();
     m_musicList->setTraceId(m_traceId);
     LOG_INFO(LOG_TAG, "Impl construct");
+}
+
+MusicPlayer::Impl::~Impl()
+{
+    m_shuttingDown.store(true);
+    m_switching.store(true);
+    if (m_audioDev != nullptr) {
+        m_audioDev->stop();
+        m_audioDev->close();
+    }
 }
 
 void MusicPlayer::Impl::addMusicDir(const std::string &dir)
 {
     LOG_INFO(LOG_TAG, "addMusicDir : %s", dir.data());
+    if (isShuttingDown()) {
+        return;
+    }
     std::vector<std::string> musicList = recursiveFileSearch(dir);
     m_pendingAdd.store(static_cast<int>(musicList.size()));
     if (musicList.empty()) {
@@ -116,6 +136,9 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
     }
     for (auto &path : musicList) {
         m_musicList->addMusicWithNotify(path, [this]() {
+            if (isShuttingDown()) {
+                return;
+            }
             if (m_pendingAdd.fetch_sub(1) == 1) {
                 m_musicList->updateList();
             }
@@ -126,6 +149,9 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
 void MusicPlayer::Impl::play()
 {
     LOG_INFO(LOG_TAG, "play");
+    if (isShuttingDown()) {
+        return;
+    }
 
     m_workQueue.asyncRunTask([this]() { _play(); });
 }
@@ -133,6 +159,9 @@ void MusicPlayer::Impl::play()
 void MusicPlayer::Impl::pause()
 {
     LOG_INFO(LOG_TAG, "pause");
+    if (isShuttingDown()) {
+        return;
+    }
 
     m_workQueue.asyncRunTask([this]() { _pause(); });
 }
@@ -140,39 +169,69 @@ void MusicPlayer::Impl::pause()
 void MusicPlayer::Impl::stop()
 {
     LOG_INFO(LOG_TAG, "stop");
+    if (isShuttingDown()) {
+        return;
+    }
 
     m_workQueue.asyncRunTask([this]() { _stop(); });
 }
 
 MusicPlayerState MusicPlayer::Impl::state()
 {
-    return m_state;
+    return m_state.load();
 }
 
 void MusicPlayer::Impl::setPosition(uint64_t pos)
 {
     LOG_INFO(LOG_TAG, "setPosition : %llu", pos);
+    if (isShuttingDown()) {
+        return;
+    }
     m_workQueue.asyncRunTask([this, pos]() { _setPosition(pos); });
 }
 
 void MusicPlayer::Impl::next()
 {
+    if (isShuttingDown()) {
+        return;
+    }
     m_workQueue.asyncRunTask([this]() { _next(); });
 }
 
 void MusicPlayer::Impl::previous()
 {
+    if (isShuttingDown()) {
+        return;
+    }
     m_workQueue.asyncRunTask([this]() { _previous(); });
 }
 
 void MusicPlayer::Impl::setCurrentIndex(int index)
 {
+    if (isShuttingDown()) {
+        return;
+    }
     m_workQueue.asyncRunTask([this, index]() { _setCurrentIndex(index); });
 }
 
 int MusicPlayer::Impl::getMusicCount()
 {
     return m_musicList->getMusicCount();
+}
+
+void MusicPlayer::Impl::setPlaybackMode(MusicPlaybackMode mode)
+{
+    if (m_musicList != nullptr) {
+        m_musicList->setPlaybackMode(mode);
+    }
+}
+
+MusicPlaybackMode MusicPlayer::Impl::playbackMode() const
+{
+    if (m_musicList != nullptr) {
+        return m_musicList->playbackMode();
+    }
+    return MusicPlaybackMode::Sequential;
 }
 
 void MusicPlayer::Impl::setAutoSkipOnError(bool enabled)
@@ -260,13 +319,17 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         cur = m_curMusicProperties;
     }
-    if (cur && pos >= 0 && pos <= cur->signalProperties.durationMs) {
-        AudioSpec &spec                     = m_devSpec;
-        cur->signalProperties.curPositionMs = pos;
-        cur->signalProperties.curDataOffset
-            = pos * spec.sampleRate * spec.bytesPerSample * spec.numChannel / 1000;
-        m_listener->onMusicPlayerPositionChanged(pos);
+    if (cur == nullptr || cur->streamDecoder == nullptr || pos > cur->signalProperties.durationMs) {
+        return;
     }
+
+    AudioSpec &spec = m_devSpec;
+    size_t byteOffset
+        = static_cast<size_t>(pos * spec.sampleRate * spec.numChannel * spec.bytesPerSample / 1000);
+    cur->signalProperties.curDataOffset.store(static_cast<off64_t>(byteOffset));
+    cur->signalProperties.curPositionMs = pos;
+    cur->streamDecoder->seekToOffset(byteOffset);
+    m_listener->onMusicPlayerPositionChanged(pos);
 }
 
 void MusicPlayer::Impl::_next()
@@ -284,7 +347,9 @@ void MusicPlayer::Impl::_next()
         m_switching.store(false);
         return;
     }
-    m_musicList->next();
+    if (!m_musicList->nextSync()) {
+        m_switching.store(false);
+    }
 }
 
 void MusicPlayer::Impl::_previous()
@@ -302,7 +367,9 @@ void MusicPlayer::Impl::_previous()
         m_switching.store(false);
         return;
     }
-    m_musicList->pervious();
+    if (!m_musicList->previousSync()) {
+        m_switching.store(false);
+    }
 }
 
 void MusicPlayer::Impl::_setCurrentIndex(int index)
@@ -320,48 +387,72 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
         m_switching.store(false);
         return;
     }
-    m_musicList->setCurrentIndex(index);
+    if (!m_musicList->setCurrentIndexSync(index)) {
+        m_switching.store(false);
+    }
 }
 
 void MusicPlayer::Impl::getAudioData(void *data, int len)
 {
-    if (m_switching.load()) {
-        if (data && len > 0) {
-            std::memset(data, 0, len);
-        }
+    if (isShuttingDown() || m_switching.load()) {
+        fillSilence(data, len);
         return;
     }
+
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         cur = m_curMusicProperties;
     }
-    if (cur && cur->rawBuffer) {
-        SignalProperties &signalProperties = cur->signalProperties;
-        cur->rawBuffer->getData(signalProperties.curDataOffset, len, (char *)data);
-        AudioSpec &spec                 = m_devSpec;
-        signalProperties.curDataOffset += len;
-        signalProperties.curPositionMs
-            += 1000LL * len / (spec.bytesPerSample * spec.numChannel) / spec.sampleRate;
-        uint64_t curPositionMs = signalProperties.curPositionMs;
-        m_workQueue.asyncRunTask(
-            [this, curPositionMs]() { m_listener->onMusicPlayerPositionChanged(curPositionMs); });
-        // LOG_DEBUG(LOG_TAG, "curDataOffset : %lld, len:%d", signalProperties.curDataOffset.load(),
-        //           len);
-        if (signalProperties.curDataOffset >= signalProperties.dataSize) {
-            signalProperties.curDataOffset = 0;
-            signalProperties.curPositionMs = 0;
-            next();
-        }
-    } else {
-        if (data && len > 0) {
-            std::memset(data, 0, len);
+    if (cur == nullptr || cur->ringBuffer == nullptr || cur->streamDecoder == nullptr) {
+        fillSilence(data, len);
+        return;
+    }
+
+    AudioRingBuffer *ring = cur->ringBuffer.get();
+    size_t got            = ring->read(static_cast<char *>(data), static_cast<size_t>(len));
+    if (got < static_cast<size_t>(len)) {
+        std::memset(static_cast<char *>(data) + got, 0, static_cast<size_t>(len) - got);
+    }
+
+    SignalProperties &signalProperties = cur->signalProperties;
+    AudioSpec &spec                    = m_devSpec;
+    signalProperties.curDataOffset.fetch_add(static_cast<off64_t>(got), std::memory_order_relaxed);
+    uint64_t consumed   = static_cast<uint64_t>(signalProperties.curDataOffset.load());
+    uint64_t bytesPerMs = static_cast<uint64_t>(spec.sampleRate)
+        * static_cast<uint64_t>(spec.numChannel) * static_cast<uint64_t>(spec.bytesPerSample)
+        / 1000;
+    signalProperties.curPositionMs = (bytesPerMs > 0) ? (consumed / bytesPerMs) : 0;
+
+    uint64_t curPositionMs = signalProperties.curPositionMs;
+    if (!isShuttingDown()) {
+        m_workQueue.asyncRunTask([this, curPositionMs]() {
+            if (!isShuttingDown()) {
+                m_listener->onMusicPlayerPositionChanged(curPositionMs);
+            }
+        });
+    }
+
+    StreamDecoderState st = cur->streamDecoder->state();
+    if (st == StreamDecoderState::EOS && ring->availableRead() == 0) {
+        if (!isShuttingDown() && !m_switching.exchange(true)) {
+            m_workQueue.asyncRunTask([this]() {
+                if (!isShuttingDown()) {
+                    if (!m_musicList->advanceToNextTrack()) {
+                        _stop();
+                    }
+                }
+                m_switching.store(false);
+            });
         }
     }
 }
 
 void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 {
+    if (isShuttingDown() || property == nullptr) {
+        return;
+    }
     LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId, "putMusicPlayListCurBuf : %d(%s)",
                        property->index, property->fileProperties.fileName.data());
     m_skipFailures.store(0);
@@ -370,6 +461,9 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
         m_curMusicProperties = property;
     }
     m_switching.store(false);
+    if (isShuttingDown()) {
+        return;
+    }
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
     m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
@@ -377,6 +471,9 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
 
 void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
 {
+    if (isShuttingDown()) {
+        return;
+    }
     LOG_INFO(LOG_TAG, "updateMusicList list size:%d", list.size());
     m_musicListIndex.clear();
     for (auto &property : list) {
@@ -391,6 +488,9 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
 void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                              const std::string &path)
 {
+    if (isShuttingDown()) {
+        return;
+    }
     m_switching.store(false);
     std::string message = FormatError(code, detail);
     LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
@@ -407,6 +507,9 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
     if (shouldAutoSkipOnError()) {
         m_skipFailures.fetch_add(1);
         m_workQueue.asyncRunTask([this]() {
+            if (isShuttingDown()) {
+                return;
+            }
             if (m_musicList->skipToNextPlayable()) {
                 _play();
             } else {
@@ -419,12 +522,18 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
 {
-    m_state = state;
-    m_listener->onMusicPlayerStateChanged(m_state);
+    if (isShuttingDown()) {
+        return;
+    }
+    m_state.store(state);
+    m_listener->onMusicPlayerStateChanged(state);
 }
 
 bool MusicPlayer::Impl::shouldAutoSkipOnError() const
 {
+    if (isShuttingDown()) {
+        return false;
+    }
     if (!m_autoSkipOnError.load()) {
         return false;
     }
@@ -452,6 +561,18 @@ void MusicPlayer::Impl::bumpTraceId(const char *reason)
     m_musicList->setTraceId(m_traceId);
     LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId, "trace start reason=%s",
                        reason ? reason : "unknown");
+}
+
+bool MusicPlayer::Impl::isShuttingDown() const
+{
+    return m_shuttingDown.load();
+}
+
+void MusicPlayer::Impl::fillSilence(void *data, int len) const
+{
+    if (data != nullptr && len > 0) {
+        std::memset(data, 0, len);
+    }
 }
 
 MusicPlayer::MusicPlayer(MusicPlayerListener *listener, std::string &logDir)
@@ -509,6 +630,16 @@ void MusicPlayer::setCurrentIndex(int index)
 int MusicPlayer::getMusicCount()
 {
     return m_impl->getMusicCount();
+}
+
+void MusicPlayer::setPlaybackMode(MusicPlaybackMode mode)
+{
+    m_impl->setPlaybackMode(mode);
+}
+
+MusicPlaybackMode MusicPlayer::playbackMode() const
+{
+    return m_impl->playbackMode();
 }
 
 void MusicPlayer::setAutoSkipOnError(bool enabled)

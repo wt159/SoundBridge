@@ -13,6 +13,7 @@ add_executable(TestSdkSuite ${SDK_TEST_SOURCES})
 
 target_link_libraries(TestSdkSuite
     PRIVATE
+    sdk
     LogWrapper
     Extractor
     AudioResample
@@ -53,6 +54,12 @@ add_test(
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> decode
 )
 set_tests_properties(sdk_decode_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(
+    NAME sdk_player_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> player
+)
+set_tests_properties(sdk_player_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_test(
     NAME sdk_all_tests

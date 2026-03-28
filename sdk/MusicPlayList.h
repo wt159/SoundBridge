@@ -5,15 +5,19 @@
 #include "AudioDecode.h"
 #include "AudioDecodeProcess.h"
 #include "AudioResample.h"
+#include "AudioRingBuffer.h"
+#include "AudioStreamDecoder.h"
 #include "ErrorCode.hpp"
 #include "ExtractorHelper.hpp"
 #include "FileSource.h"
 #include "NonCopyable.hpp"
+#include "PlaybackMode.h"
 #include "WorkQueue.hpp"
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -69,8 +73,8 @@ struct MusicProperties {
     SignalProperties signalProperties;
     ProcessProperties processProperties;
     AudioBuffer::AudioBufferPtr rawBuffer;
-
-    ~MusicProperties() { processProperties.~ProcessProperties(); }
+    std::shared_ptr<AudioRingBuffer> ringBuffer;
+    std::shared_ptr<AudioStreamDecoder> streamDecoder;
 };
 
 using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
@@ -109,7 +113,13 @@ public:
     void setCurrentIndex(int index);
     void updateList();
     int getMusicCount();
+    void setPlaybackMode(MusicPlaybackMode mode);
+    MusicPlaybackMode playbackMode() const;
+    bool nextSync();
+    bool previousSync();
+    bool setCurrentIndexSync(int index);
     void setTraceId(const std::string &traceId);
+    bool advanceToNextTrack();
     bool skipToNextPlayable();
 
 protected:
@@ -120,10 +130,15 @@ protected:
     void _updateList();
 
 private:
-    bool ensureDecoded(const MusicPropertiesPtr &musicProperties);
+    bool selectTrack(size_t index);
+    bool startStreaming(const MusicPropertiesPtr &musicProperties);
     void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
     void reportError(ErrorCode code, const std::string &detail,
                      const MusicPropertiesPtr &musicProperties);
     std::string currentTraceId() const;
+
+private:
+    std::atomic<MusicPlaybackMode> m_playbackMode;
+    std::mt19937 m_randomEngine;
 };
 }

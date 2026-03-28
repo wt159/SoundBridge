@@ -11,6 +11,7 @@
 
 #pragma once
 #include "ErrorCode.hpp"
+#include "PlaybackMode.h"
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -22,14 +23,6 @@ enum class MusicPlayerState {
     PlayingState,
     PausedState,
     StoppedState,
-};
-
-enum class MusicPlaybackMode {
-    CurrentItemOnce,
-    CurrentItemInLoop,
-    Sequential,
-    Loop,
-    Random,
 };
 
 struct MusicIndex {
@@ -75,6 +68,8 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    void setPlaybackMode(MusicPlaybackMode mode);
+    MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
 

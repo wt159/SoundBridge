@@ -52,6 +52,12 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return nullptr; }
     virtual int getBitRate() { return 0; }
     virtual int getBlockAlign() { return 0; }
+    virtual sdk_utils::status_t seekToMs(uint64_t targetMs, uint64_t *actualMs = nullptr)
+    {
+        (void)actualMs;
+        (void)targetMs;
+        return sdk_utils::INVALID_OPERATION;
+    }
 
 protected:
     ExtractorHelper() { }

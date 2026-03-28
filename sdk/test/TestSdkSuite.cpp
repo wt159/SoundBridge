@@ -1,3 +1,4 @@
+#include "../include/soundbridge/player.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
 #include "AudioDecodeProcess.h"
@@ -7,13 +8,19 @@
 #include "FileSearch.h"
 #include "FileSource.h"
 #include "LogWrapper.h"
+#include "MusicPlayer.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -26,6 +33,62 @@ struct DecodeCollector : public AudioDecodeCallback {
     {
         ++frame_count;
         last_spec = out.spec;
+    }
+};
+
+struct LegacyPlayerProbe : public sdk::MusicPlayerListener {
+    std::atomic<int> error_count { 0 };
+    std::atomic<int> state_change_count { 0 };
+    std::mutex mutex;
+    std::string last_trace_id;
+
+    void onMusicPlayerStateChanged(sdk::MusicPlayerState) override
+    {
+        state_change_count.fetch_add(1);
+    }
+    void onMusicPlayerListCurrentIndexChanged(int) override { }
+    void onMusicPlayerDurationChanged(uint64_t) override { }
+    void onMusicPlayerPositionChanged(uint64_t) override { }
+    void onMusicPlayerMusicListChanged(std::list<sdk::MusicIndex>) override { }
+    void onMusicPlayerError(sdk::ErrorCode, const std::string &, int, const std::string &,
+                            const std::string &traceId) override
+    {
+        error_count.fetch_add(1);
+        std::lock_guard<std::mutex> lock(mutex);
+        last_trace_id = traceId;
+    }
+};
+
+struct PublicPlayerProbe : public soundbridge::PlayerCallbacks {
+    std::atomic<int> error_count { 0 };
+    std::atomic<int> track_changed_count { 0 };
+    std::atomic<int> last_track_index { -1 };
+    std::mutex mutex;
+    std::string last_trace_id;
+    std::map<int, std::string> track_names;
+
+    void onStateChanged(soundbridge::PlayerState) override { }
+    void onTrackChanged(int index) override
+    {
+        track_changed_count.fetch_add(1);
+        last_track_index.store(index);
+    }
+    void onDurationChanged(uint64_t) override { }
+    void onPositionChanged(uint64_t) override { }
+    void onPlaylistChanged(const std::list<soundbridge::TrackInfo> &tracks) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        track_names.clear();
+        for (const auto &track : tracks) {
+            track_names[track.index] = track.name;
+        }
+    }
+    void onError(soundbridge::ErrorCode, const std::string &, int, const std::string &,
+                 const std::string &traceId) override
+    {
+        error_count.fetch_add(1);
+        std::lock_guard<std::mutex> lock(mutex);
+        last_trace_id = traceId;
     }
 };
 
@@ -48,6 +111,18 @@ bool init_logger()
     LogWrapper::getInstanceInitialize(log_dir, log_file, k5MB, k5Files);
     LOG_INFO("TestSdkSuite", "logger initialized");
     return check(LogWrapper::getInstance() != nullptr, "LogWrapper init");
+}
+
+template <typename Predicate> bool wait_for_condition(Predicate predicate, int timeout_ms)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return predicate();
 }
 
 bool test_audio_common()
@@ -292,6 +367,93 @@ bool test_media_smoke()
     return ok;
 }
 
+bool test_player_api()
+{
+    bool ok = true;
+
+    {
+        std::string log_dir = "./log";
+        LegacyPlayerProbe probe;
+        sdk::MusicPlayer player(static_cast<sdk::MusicPlayerListener *>(&probe), log_dir);
+        ok &= check(player.playbackMode() == sdk::MusicPlaybackMode::Sequential,
+                    "MusicPlayer default playback mode is sequential");
+        player.setPlaybackMode(sdk::MusicPlaybackMode::CurrentItemOnce);
+        ok &= check(player.playbackMode() == sdk::MusicPlaybackMode::CurrentItemOnce,
+                    "MusicPlayer stores single once playback mode");
+        player.setPlaybackMode(sdk::MusicPlaybackMode::CurrentItemInLoop);
+        ok &= check(player.playbackMode() == sdk::MusicPlaybackMode::CurrentItemInLoop,
+                    "MusicPlayer stores single loop playback mode");
+        player.setPlaybackMode(sdk::MusicPlaybackMode::Random);
+        ok &= check(player.playbackMode() == sdk::MusicPlaybackMode::Random,
+                    "MusicPlayer stores random playback mode");
+        player.play();
+        ok &= check(wait_for_condition([&probe]() { return probe.error_count.load() > 0; }, 3000),
+                    "MusicPlayer reports error when playing without current track");
+        std::string traceId;
+        {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            traceId = probe.last_trace_id;
+        }
+        ok &= check(!traceId.empty(), "MusicPlayer error callback includes trace id");
+    }
+
+    {
+        PublicPlayerProbe probe;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(static_cast<soundbridge::PlayerCallbacks *>(&probe), config);
+        ok &= check(player.playbackMode() == soundbridge::PlaybackMode::Sequential,
+                    "Public Player default playback mode is sequential");
+        player.setPlaybackMode(soundbridge::PlaybackMode::SingleOnce);
+        ok &= check(player.playbackMode() == soundbridge::PlaybackMode::SingleOnce,
+                    "Public Player stores single once playback mode");
+        player.setPlaybackMode(soundbridge::PlaybackMode::SingleLoop);
+        ok &= check(player.playbackMode() == soundbridge::PlaybackMode::SingleLoop,
+                    "Public Player stores single loop playback mode");
+        player.setPlaybackMode(soundbridge::PlaybackMode::Random);
+        ok &= check(player.playbackMode() == soundbridge::PlaybackMode::Random,
+                    "Public Player stores random playback mode");
+        player.play();
+        ok &= check(wait_for_condition([&probe]() { return probe.error_count.load() > 0; }, 3000),
+                    "Public Player forwards error callback without current track");
+        std::string traceId;
+        {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            traceId = probe.last_trace_id;
+        }
+        ok &= check(!traceId.empty(), "Public Player error callback includes trace id");
+        player.addMusicDirectory("../../music");
+        ok &= check(wait_for_condition([&player]() { return player.trackCount() > 0; }, 3000),
+                    "Public Player loads tracks through facade");
+        ok &= check(
+            wait_for_condition([&player]() { return !player.currentTrackName().empty(); }, 3000),
+            "Public Player exposes current track name from core");
+        ok &= check(wait_for_condition([&player]() { return player.duration() > 0; }, 3000),
+                    "Public Player exposes current duration from core");
+        ok &= check(player.position() == 0, "Public Player initial position stays at zero");
+        if (player.trackCount() > 1) {
+            player.setCurrentTrack(1);
+            ok &= check(
+                wait_for_condition([&probe]() { return probe.last_track_index.load() == 1; }, 3000),
+                "Public Player reports track switch through public callbacks");
+            ok &= check(wait_for_condition(
+                            [&player, &probe]() {
+                                std::lock_guard<std::mutex> lock(probe.mutex);
+                                auto iter = probe.track_names.find(1);
+                                return iter != probe.track_names.end() && !iter->second.empty()
+                                    && player.currentTrackName() == iter->second;
+                            },
+                            3000),
+                        "Public Player current track name matches callback playlist after switch");
+            ok &= check(wait_for_condition([&player]() { return player.duration() > 0; }, 3000),
+                        "Public Player keeps duration available after track switch");
+            ok &= check(player.position() == 0, "Public Player resets position after track switch");
+        }
+    }
+
+    return ok;
+}
+
 bool run_group(const std::string &group)
 {
     bool ok = init_logger();
@@ -317,16 +479,22 @@ bool run_group(const std::string &group)
         return ok;
     }
 
+    if (group == "player") {
+        ok &= test_player_api();
+        return ok;
+    }
+
     if (group == "all") {
         ok &= test_audio_common();
         ok &= test_file_search();
         ok &= test_resample();
         ok &= test_decode();
+        ok &= test_player_api();
         return ok;
     }
 
     std::printf("Unknown group: %s\n", group.c_str());
-    std::printf("Valid groups: core | resample | decode | media | all\n");
+    std::printf("Valid groups: core | resample | decode | media | player | all\n");
     return false;
 }
 

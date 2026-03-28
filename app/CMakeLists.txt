@@ -16,6 +16,8 @@ set(APP_SOURCES
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    playercontroller.cpp
+    playercontroller.h
     res.qrc
 )
 

@@ -31,7 +31,7 @@ public:
     virtual void onPositionChanged(uint64_t positionMs)                = 0;
     virtual void onPlaylistChanged(const std::list<TrackInfo> &tracks) = 0;
     virtual void onError(ErrorCode code, const std::string &detail, int trackIndex,
-                         const std::string &path)
+                         const std::string &path, const std::string &traceId)
         = 0;
 };
 

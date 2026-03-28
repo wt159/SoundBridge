@@ -1,10 +1,11 @@
 #include "LogApi.h"
 #include "MusicPlayer.h"
 #include "soundbridge/player.h"
+#include <map>
+#include <mutex>
 
 namespace soundbridge {
 
-// Adapter to convert new callbacks to old listener
 class PlayerCallbacksAdapter : public sdk::MusicPlayerListener {
 public:
     explicit PlayerCallbacksAdapter(PlayerCallbacks *callbacks)
@@ -33,6 +34,12 @@ public:
 
     void onMusicPlayerListCurrentIndexChanged(int index) override
     {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_currentIndex     = index;
+            auto iter          = m_trackNames.find(index);
+            m_currentTrackName = (iter != m_trackNames.end()) ? iter->second : std::string();
+        }
         if (m_callbacks) {
             m_callbacks->onTrackChanged(index);
         }
@@ -40,6 +47,10 @@ public:
 
     void onMusicPlayerDurationChanged(uint64_t duration) override
     {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_duration = duration;
+        }
         if (m_callbacks) {
             m_callbacks->onDurationChanged(duration);
         }
@@ -47,6 +58,10 @@ public:
 
     void onMusicPlayerPositionChanged(uint64_t position) override
     {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_position = position;
+        }
         if (m_callbacks) {
             m_callbacks->onPositionChanged(position);
         }
@@ -54,14 +69,25 @@ public:
 
     void onMusicPlayerMusicListChanged(std::list<sdk::MusicIndex> list) override
     {
+        std::list<TrackInfo> tracks;
         if (m_callbacks) {
-            std::list<TrackInfo> tracks;
             for (const auto &item : list) {
                 TrackInfo info;
                 info.index = item.index;
                 info.name  = item.name;
                 tracks.push_back(info);
             }
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_trackNames.clear();
+            for (const auto &item : list) {
+                m_trackNames[item.index] = item.name;
+            }
+            auto iter          = m_trackNames.find(m_currentIndex);
+            m_currentTrackName = (iter != m_trackNames.end()) ? iter->second : std::string();
+        }
+        if (m_callbacks) {
             m_callbacks->onPlaylistChanged(tracks);
         }
     }
@@ -70,12 +96,36 @@ public:
                             const std::string &path, const std::string &traceId) override
     {
         if (m_callbacks) {
-            m_callbacks->onError(static_cast<ErrorCode>(code), detail, index, path);
+            m_callbacks->onError(static_cast<ErrorCode>(code), detail, index, path, traceId);
         }
+    }
+
+    uint64_t duration() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_duration;
+    }
+
+    uint64_t position() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_position;
+    }
+
+    std::string currentTrackName() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_currentTrackName;
     }
 
 private:
     PlayerCallbacks *m_callbacks;
+    mutable std::mutex m_mutex;
+    std::map<int, std::string> m_trackNames;
+    std::string m_currentTrackName;
+    uint64_t m_duration = 0;
+    uint64_t m_position = 0;
+    int m_currentIndex  = -1;
 };
 
 class Player::Impl {
@@ -83,7 +133,6 @@ public:
     Impl(PlayerCallbacks *callbacks, const PlayerConfig &config)
         : m_adapter(callbacks)
         , m_logDir(config.logDirectory)
-        , m_playbackMode(PlaybackMode::Sequential)
     {
         sdk::SdkLogConfig logConfig;
         logConfig.directory = config.logDirectory;
@@ -127,19 +176,49 @@ public:
         return PlayerState::Stopped;
     }
 
-    uint64_t duration() const { return m_cachedDuration; }
+    uint64_t duration() const { return m_adapter.duration(); }
 
-    uint64_t position() const { return m_cachedPosition; }
+    uint64_t position() const { return m_adapter.position(); }
 
-    std::string currentTrackName() const { return m_cachedTrackName; }
+    std::string currentTrackName() const { return m_adapter.currentTrackName(); }
 
     void setPlaybackMode(PlaybackMode mode)
     {
-        m_playbackMode = mode;
-        // TODO: Forward to internal implementation
+        switch (mode) {
+        case PlaybackMode::Sequential:
+            m_player->setPlaybackMode(sdk::MusicPlaybackMode::Sequential);
+            break;
+        case PlaybackMode::Loop:
+            m_player->setPlaybackMode(sdk::MusicPlaybackMode::Loop);
+            break;
+        case PlaybackMode::Random:
+            m_player->setPlaybackMode(sdk::MusicPlaybackMode::Random);
+            break;
+        case PlaybackMode::SingleOnce:
+            m_player->setPlaybackMode(sdk::MusicPlaybackMode::CurrentItemOnce);
+            break;
+        case PlaybackMode::SingleLoop:
+            m_player->setPlaybackMode(sdk::MusicPlaybackMode::CurrentItemInLoop);
+            break;
+        }
     }
 
-    PlaybackMode playbackMode() const { return m_playbackMode; }
+    PlaybackMode playbackMode() const
+    {
+        switch (m_player->playbackMode()) {
+        case sdk::MusicPlaybackMode::Sequential:
+            return PlaybackMode::Sequential;
+        case sdk::MusicPlaybackMode::Loop:
+            return PlaybackMode::Loop;
+        case sdk::MusicPlaybackMode::Random:
+            return PlaybackMode::Random;
+        case sdk::MusicPlaybackMode::CurrentItemOnce:
+            return PlaybackMode::SingleOnce;
+        case sdk::MusicPlaybackMode::CurrentItemInLoop:
+            return PlaybackMode::SingleLoop;
+        }
+        return PlaybackMode::Sequential;
+    }
 
     void setAutoSkipOnError(bool enabled) { m_player->setAutoSkipOnError(enabled); }
 
@@ -149,10 +228,6 @@ private:
     PlayerCallbacksAdapter m_adapter;
     std::shared_ptr<sdk::MusicPlayer> m_player;
     std::string m_logDir;
-    PlaybackMode m_playbackMode;
-    uint64_t m_cachedDuration = 0;
-    uint64_t m_cachedPosition = 0;
-    std::string m_cachedTrackName;
 };
 
 Player::Player(PlayerCallbacks *callbacks, const PlayerConfig &config)

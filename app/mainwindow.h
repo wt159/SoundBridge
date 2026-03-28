@@ -9,6 +9,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 *******************************************************************/
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
+#include "playercontroller.h"
 #include "soundbridge/sdk.h"
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -35,7 +36,7 @@ struct MediaObjectInfo {
     QString filePath;
 };
 
-class MainWindow : public QMainWindow, public PlayerCallbacks {
+class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
@@ -48,8 +49,9 @@ public:
     static const QColor kPlayBar;
 
 private:
-    /* Music player instance. */
-    std::unique_ptr<Player> mPlayer;
+    std::unique_ptr<PlayerController> mController;
+    QStringList mRenderedPlaylist;
+    int mRenderedTrackIndex = -1;
 
     /* Music list. */
     QListWidget *mListWidget;
@@ -81,14 +83,8 @@ private:
     /* Mask for list overlay. */
     QWidget *mListMask;
 
-    /* Media info storage. */
-    QVector<MediaObjectInfo> mMediaObjectInfo;
-
     std::string mAppDir;
     std::string mLogDir;
-    PlayerState mState;
-    int mPlayingIndex     = -1;
-    bool mAutoSkipOnError = true;
 
 protected:
     /* Build the music UI layout. */
@@ -106,17 +102,10 @@ protected:
     void applyWindowPolicy();
     void restoreWindowState();
     void persistWindowState();
+    void updatePlaybackModeButton(PlaybackMode mode);
+    QString playbackModeText(PlaybackMode mode) const;
 
 protected:
-    /* PlayerCallbacks implementation */
-    void onStateChanged(PlayerState state) override;
-    void onTrackChanged(int index) override;
-    void onDurationChanged(uint64_t durationMs) override;
-    void onPositionChanged(uint64_t positionMs) override;
-    void onPlaylistChanged(const std::list<TrackInfo> &tracks) override;
-    void onError(ErrorCode code, const std::string &detail, int trackIndex,
-                 const std::string &path) override;
-
 private slots:
     /* Play button clicked. */
     void btn_play_clicked();
@@ -147,5 +136,9 @@ private slots:
 
     /* Auto skip checkbox toggled. */
     void autoSkipToggled(bool checked);
+
+    void renderPlayerViewState(PlayerViewState viewState);
+    void handlePlayerError(int code, const QString &detail, int trackIndex, const QString &path,
+                           const QString &traceId, bool autoSkipEnabled);
 };
 #endif // MAINWINDOW_H

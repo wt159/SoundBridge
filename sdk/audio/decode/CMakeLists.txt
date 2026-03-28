@@ -18,6 +18,7 @@ set(DECODE_SOURCE_FILES
     FLACDecode.cpp
     VorbisDecode.cpp
     AudioDecodeProcess.cpp
+    AudioStreamDecoder.cpp
     )
 
 add_library(AudioDecode ${DECODE_SOURCE_FILES})
@@ -39,4 +40,5 @@ target_include_directories(AudioDecode
                             ${CMAKE_CURRENT_SOURCE_DIR}
                             ${3RDPARTY_DIST_DIR}/include
                             ${CMAKE_CURRENT_SOURCE_DIR}/../common
+                            ${SDK_ROOT_DIR}/utils
 )
