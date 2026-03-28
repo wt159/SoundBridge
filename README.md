@@ -76,6 +76,10 @@ cmake --build .
 .\app\SoundBridge.exe
 ```
 
+Windows 直接运行仅适用于 Qt 与第三方 DLL 已经可被系统搜索到的环境（例如已配置 `PATH`）。
+如果出现缺少 DLL，优先使用下方 `package_portable` 流程，或先执行 `windeployqt` 并补齐
+`sdk/3rdparty/dist/<windows-dist>/bin` 中的 DLL。
+
 ### Portable 运行（推荐）
 
 在仓库根目录先执行打包，再运行打包产物，可减少缺少运行库的问题。
@@ -143,27 +147,35 @@ cmake --build . --target package_portable
 可选参数（首次配置时传入）：
 
 ```bat
-# 自定义输出目录与 windeployqt 路径
-cmake .. -DSOUNDBRIDGE_PACKAGE_DIR="E:/flushbonad/github/SoundBridge/package/SoundBridge_portable_v3" ^
-         -DSOUNDBRIDGE_WINDEPLOYQT="F:/Qt/Qt5.14.2/5.14.2/mingw73_64/bin/windeployqt.exe"
+# 自定义输出目录、windeployqt 路径与 Qt 测试 bin 目录
+cmake .. -DSOUNDBRIDGE_PACKAGE_DIR="<package-dir>" ^
+         -DSOUNDBRIDGE_WINDEPLOYQT="<path-to-windeployqt>" ^
+         -DSOUNDBRIDGE_QT_TEST_BIN_DIR="<path-to-qt-tools-bin>"
 ```
 
 ### 在 `cmd.exe` 中执行
 
 ```bat
-powershell -NoProfile -Command "$pkg='E:\flushbonad\github\SoundBridge\package\SoundBridge_portable_v3'; if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }; New-Item -ItemType Directory -Path $pkg | Out-Null; Copy-Item 'E:\flushbonad\github\SoundBridge\build\app\SoundBridge.exe' $pkg; & 'F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe' --force --compiler-runtime \"$pkg\SoundBridge.exe\"; Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll' $pkg -Force; if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' \"$pkg\music\" -Recurse -Force }"
+set "SB_ROOT=%CD%"
+set "SB_PKG=%SB_ROOT%\package\SoundBridge_portable_v3"
+set "SB_QT_DEPLOY=<path-to-windeployqt>"
+set "SB_3RDPARTY_BIN=%SB_ROOT%\sdk\3rdparty\dist\<windows-dist>\bin"
+powershell -NoProfile -Command "$pkg=$env:SB_PKG; if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }; New-Item -ItemType Directory -Path $pkg | Out-Null; Copy-Item (Join-Path $env:SB_ROOT 'build\app\SoundBridge.exe') $pkg; & $env:SB_QT_DEPLOY --force --compiler-runtime \"$pkg\SoundBridge.exe\"; Copy-Item (Join-Path $env:SB_3RDPARTY_BIN '*.dll') $pkg -Force; if (Test-Path (Join-Path $env:SB_ROOT 'music')) { Copy-Item (Join-Path $env:SB_ROOT 'music') \"$pkg\music\" -Recurse -Force }"
 ```
 
 ### 在 `PowerShell` 中执行
 
 ```powershell
-$pkg='E:\flushbonad\github\SoundBridge\package\SoundBridge_portable_v3'
+$root = (Resolve-Path .).Path
+$pkg = Join-Path $root 'package\SoundBridge_portable_v3'
+$qtDeploy = '<path-to-windeployqt>'
+$thirdPartyBin = Join-Path $root 'sdk\3rdparty\dist\<windows-dist>\bin'
 if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
 New-Item -ItemType Directory -Path $pkg | Out-Null
-Copy-Item 'E:\flushbonad\github\SoundBridge\build\app\SoundBridge.exe' $pkg
-& 'F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe' --force --compiler-runtime "$pkg\SoundBridge.exe"
-Copy-Item 'E:\flushbonad\github\SoundBridge\sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll' $pkg -Force
-if (Test-Path 'E:\flushbonad\github\SoundBridge\music') { Copy-Item 'E:\flushbonad\github\SoundBridge\music' "$pkg\music" -Recurse -Force }
+Copy-Item (Join-Path $root 'build\app\SoundBridge.exe') $pkg
+& $qtDeploy --force --compiler-runtime "$pkg\SoundBridge.exe"
+Copy-Item (Join-Path $thirdPartyBin '*.dll') $pkg -Force
+if (Test-Path (Join-Path $root 'music')) { Copy-Item (Join-Path $root 'music') "$pkg\music" -Recurse -Force }
 ```
 
 ## Linux 打包（Portable）
@@ -199,6 +211,10 @@ LD_LIBRARY_PATH=./package/SoundBridge_portable/lib ./package/SoundBridge_portabl
 
 测试依赖样本文件和 DLL，建议先使用一键脚本准备运行目录，再执行 CTest。
 
+注意：当前仓库中的 `sdk/test/CMakeLists.txt` 通过
+`SOUNDBRIDGE_QT_TEST_BIN_DIR` 缓存变量控制 Qt 测试运行目录。若本机 Qt 路径与默认配置不同，请在首次
+`cmake ..` 时显式传入该变量，或优先使用 `scripts/run_sdk_tests.ps1`。
+
 ### PowerShell 一键执行
 
 ```powershell
@@ -208,7 +224,7 @@ LD_LIBRARY_PATH=./package/SoundBridge_portable/lib ./package/SoundBridge_portabl
 ### 自定义 windeployqt 路径（可选）
 
 ```powershell
-.\scripts\run_sdk_tests.ps1 -QtDeploy "F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe"
+.\scripts\run_sdk_tests.ps1 -QtRootPath '<qt-root>' -QtVersion '<qt-version>' -QtMingwDir '<qt-mingw-dir>'
 ```
 
 ### CTest 分组（与 AGENTS.md 一致）

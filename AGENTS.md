@@ -82,6 +82,10 @@ cmake --build . --target package_portable
 - 测试类命名：`*Test`（如 `AudioDecodeTest`）
 
 ### 单元测试
+> Windows 注意：当前 `sdk/test/CMakeLists.txt` 通过顶层缓存变量
+> `SOUNDBRIDGE_QT_TEST_BIN_DIR` 注入 Qt 测试运行目录。若 Qt 安装路径与默认配置不同，
+> 需在首次 `cmake ..` 时覆盖该变量，或改用 `scripts/run_sdk_tests.ps1`。
+
 ```bash
 # 构建测试
 cmake --build . --target TestSdkSuite

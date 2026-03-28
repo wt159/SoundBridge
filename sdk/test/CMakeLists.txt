@@ -30,7 +30,11 @@ target_include_directories(TestSdkSuite
     ${SDK_ROOT_DIR}/audio/decode
 )
 
-set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;F:/Qt/Qt5.14.2/Tools/mingw730_64/bin;$ENV{PATH}")
+set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;$ENV{PATH}")
+
+if(WIN32 AND DEFINED SOUNDBRIDGE_QT_TEST_BIN_DIR AND NOT "${SOUNDBRIDGE_QT_TEST_BIN_DIR}" STREQUAL "")
+    set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;${SOUNDBRIDGE_QT_TEST_BIN_DIR};$ENV{PATH}")
+endif()
 
 add_test(
     NAME sdk_core_tests

@@ -21,6 +21,11 @@ add_subdirectory(${SDK_DIR})
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/app)
 
 if(WIN32)
+    set(SOUNDBRIDGE_QT_TEST_BIN_DIR
+        "${QT_TOOLS_BIN_PATH}"
+        CACHE PATH "Qt bin directory used when running Windows SDK tests"
+    )
+
     set(SOUNDBRIDGE_PACKAGE_DIR
         "${CMAKE_CURRENT_LIST_DIR}/package/SoundBridge_portable_v3"
         CACHE PATH "Portable package output directory"

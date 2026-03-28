@@ -1,5 +1,9 @@
 ﻿param(
-    [string]$QtDeploy = "F:\Qt\Qt5.14.2\5.14.2\mingw73_64\bin\windeployqt.exe"
+    [string]$QtRootPath = "F:\Qt\Qt5.14.2",
+    [string]$QtVersion = "5.14.2",
+    [string]$QtMingwDir = "mingw73_64",
+    [string]$ThirdPartyDistName = "windows_x86_64_gcc_debug",
+    [string]$QtDeploy = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,9 +11,13 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptDir
 
+if ([string]::IsNullOrWhiteSpace($QtDeploy)) {
+    $QtDeploy = Join-Path $QtRootPath "$QtVersion\$QtMingwDir\bin\windeployqt.exe"
+}
+
 $pkg = Join-Path $root "package\SoundBridge_test_runtime"
 $testExe = Join-Path $root "build\sdk\test\TestSdkSuite.exe"
-$thirdPartyDlls = Join-Path $root "sdk\3rdparty\dist\windows_x86_64_gcc_debug\bin\*.dll"
+$thirdPartyDlls = Join-Path $root "sdk\3rdparty\dist\$ThirdPartyDistName\bin\*.dll"
 
 if (-not (Test-Path $testExe)) {
     Write-Error "TestSdkSuite.exe not found: $testExe"
