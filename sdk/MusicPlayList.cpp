@@ -296,141 +296,16 @@ bool MusicPlayList::startStreaming(const MusicPropertiesPtr &musicProperties)
         musicProperties->ringBuffer.reset();
     }
 
-    if (musicProperties->rawBuffer != nullptr) {
-        Metrics::RecordCount("buffer_hit", 1,
-                             MetricTags { currentTraceId(),
-                                          musicProperties->fileProperties.fullPath,
-                                          static_cast<int>(musicProperties->index) });
-    } else {
-        Metrics::RecordCount("buffer_miss", 1,
-                             MetricTags { currentTraceId(),
-                                          musicProperties->fileProperties.fullPath,
-                                          static_cast<int>(musicProperties->index) });
-
-        ProcessProperties &processProperties = musicProperties->processProperties;
-        if (processProperties.extractor == nullptr) {
-            reportError(ErrorCode::ExtractorInitFailed, "extractor is nullptr", musicProperties);
-            return false;
-        }
-
-        int ret          = 0;
-        auto decodeStart = std::chrono::steady_clock::now();
-        std::shared_ptr<AudioDecodeProcess> decode(
-            new AudioDecodeProcess(processProperties.extractor.get()));
-        if (decode == nullptr || decode->initCheck() != OK) {
-            reportError(ErrorCode::DecodeInitFailed, "AudioDecodeProcess initCheck failed",
-                        musicProperties);
-            return false;
-        }
-        processProperties.decode = decode;
-
-        SignalProperties &signalProperties    = musicProperties->signalProperties;
-        signalProperties.spec                 = decode->getDecodeSpec();
-        AudioBuffer::AudioBufferPtr decBufPtr = decode->getDecodeBuffer();
-        if (decBufPtr == nullptr) {
-            reportError(ErrorCode::DecodeFailed, "decode buffer is null", musicProperties);
-            return false;
-        }
-        auto decodeEnd = std::chrono::steady_clock::now();
-        auto decodeMs
-            = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart)
-                  .count();
-        MetricTags tags { currentTraceId(), musicProperties->fileProperties.fullPath,
-                          static_cast<int>(musicProperties->index) };
-        Metrics::RecordTiming("decode_total_ms", static_cast<uint64_t>(decodeMs), tags);
-        Metrics::RecordTiming("first_frame_ms", static_cast<uint64_t>(decodeMs), tags);
-        signalProperties.dataSize   = decBufPtr->size();
-        signalProperties.durationMs = signalProperties.spec.durationMs;
-        LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
-        LOG_INFO(LOG_TAG, "dataSize      : %lld", signalProperties.dataSize);
-        if (signalProperties.durationMs > 0) {
-            double durationSec       = static_cast<double>(signalProperties.durationMs) / 1000.0;
-            double avgDecodeMsPerSec = static_cast<double>(decodeMs) / durationSec;
-            Metrics::RecordGauge("decode_ms_per_sec", avgDecodeMsPerSec, tags, "ms/s");
-        }
-        if (decBufPtr->size() > 0) {
-            double mb = static_cast<double>(decBufPtr->size()) / (1024.0 * 1024.0);
-            if (mb > 0.0) {
-                double avgDecodeMsPerMb = static_cast<double>(decodeMs) / mb;
-                Metrics::RecordGauge("decode_ms_per_mb", avgDecodeMsPerMb, tags, "ms/mb");
-            }
-        }
-
-        if (signalProperties.spec == m_devSpec) {
-            LOG_INFO(LOG_TAG, "audio spec is same");
-            processProperties.resample = nullptr;
-            musicProperties->rawBuffer = decBufPtr;
-        } else {
-            LOG_INFO(LOG_TAG, "audio spec is not same, need resample");
-            AudioSpec inSpec  = signalProperties.spec;
-            AudioSpec outSpec = m_devSpec;
-            LOGD("in  spec %d %d %d", inSpec.sampleRate, inSpec.numChannel, inSpec.bytesPerSample);
-            LOGD("out spec %d %d %d", outSpec.sampleRate, outSpec.numChannel,
-                 outSpec.bytesPerSample);
-            inSpec.samples             = 1024;
-            processProperties.resample = std::make_shared<AudioResample>(inSpec, outSpec);
-            if (processProperties.resample == nullptr
-                || processProperties.resample->initCheck() != OK) {
-                reportError(ErrorCode::ResampleInitFailed, "AudioResample initCheck failed",
-                            musicProperties);
-                return false;
-            }
-            LOG_INFO(LOG_TAG, "resampleBufSize : %lu", decBufPtr->size());
-            size_t resampleBufSize = (double)((double)decBufPtr->size() * (double)outSpec.sampleRate
-                                              / (double)inSpec.sampleRate);
-            LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
-            resampleBufSize = resampleBufSize * outSpec.numChannel / inSpec.numChannel;
-            LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
-            resampleBufSize = resampleBufSize * outSpec.bytesPerSample / inSpec.bytesPerSample;
-            LOG_INFO(LOG_TAG, "resampleBufSize : %lu", resampleBufSize);
-
-            AudioBuffer::AudioBufferPtr resampleBufPtr(new AudioBuffer(resampleBufSize));
-            char *resampleBuf  = resampleBufPtr->data();
-            char *decOutputBuf = decBufPtr->data();
-            size_t inOnceSize  = inSpec.samples * inSpec.numChannel * inSpec.bytesPerSample;
-            LOG_INFO(LOG_TAG, "inOnceSize : %lu", inOnceSize);
-            size_t inSize  = 0;
-            size_t outSize = 0, outOnceSize = resampleBufSize;
-            auto resampleStart = std::chrono::steady_clock::now();
-            while (1) {
-                ret = processProperties.resample->resample(decOutputBuf + inSize, inOnceSize,
-                                                           resampleBuf + outSize, &outOnceSize);
-                if (ret < 0) {
-                    reportError(ErrorCode::ResampleFailed, "resample failed", musicProperties);
-                    return false;
-                }
-                inSize  += inOnceSize;
-                outSize += outOnceSize;
-                if ((inSize + inOnceSize) > decBufPtr->size()) {
-                    inOnceSize  = decBufPtr->size() - inSize;
-                    outOnceSize = resampleBufSize - outSize;
-                    LOG_DEBUG(LOG_TAG, "inOnceSize : %d, outOnceSize : %d", inOnceSize,
-                              outOnceSize);
-                }
-                if (inSize >= decBufPtr->size()) {
-                    break;
-                }
-            }
-            auto resampleEnd = std::chrono::steady_clock::now();
-            auto resampleMs
-                = std::chrono::duration_cast<std::chrono::milliseconds>(resampleEnd - resampleStart)
-                      .count();
-            Metrics::RecordTiming("resample_ms", static_cast<uint64_t>(resampleMs), tags);
-            LOG_INFO(LOG_TAG, "resampleBufSize : %llu", resampleBufSize);
-            signalProperties.dataSize  = outSize;
-            musicProperties->rawBuffer = resampleBufPtr;
-        }
-    }
-
-    if (musicProperties->rawBuffer == nullptr) {
+    ProcessProperties &processProperties = musicProperties->processProperties;
+    if (processProperties.extractor == nullptr) {
+        reportError(ErrorCode::ExtractorInitFailed, "extractor is nullptr", musicProperties);
         return false;
     }
 
-    auto ringBuffer = std::make_shared<AudioRingBuffer>(AudioRingBuffer::kDefaultCapacity);
-    auto decoder    = std::make_shared<AudioStreamDecoder>(
-        ringBuffer.get(), m_devSpec, musicProperties->signalProperties.durationMs);
-    decoder->start(musicProperties->rawBuffer);
-    if (decoder->state() == StreamDecoderState::ERROR) {
+    auto ringBuffer         = std::make_shared<AudioRingBuffer>(AudioRingBuffer::kDefaultCapacity);
+    auto decoder            = std::make_shared<AudioStreamDecoder>(ringBuffer.get(), m_devSpec);
+    sdk_utils::status_t ret = decoder->start(processProperties.extractor.get());
+    if (ret != OK || decoder->state() == StreamDecoderState::ERROR) {
         return false;
     }
 
@@ -453,9 +328,6 @@ void MusicPlayList::releaseDecodedBuffersExcept(size_t keepIndex, size_t keepInd
         }
         item->streamDecoder.reset();
         item->ringBuffer.reset();
-        item->rawBuffer.reset();
-        item->processProperties.decode.reset();
-        item->processProperties.resample.reset();
         item->signalProperties.curDataOffset = 0;
         item->signalProperties.curPositionMs = 0;
         item->signalProperties.dataSize      = 0;

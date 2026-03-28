@@ -2,9 +2,6 @@
 
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
-#include "AudioDecode.h"
-#include "AudioDecodeProcess.h"
-#include "AudioResample.h"
 #include "AudioRingBuffer.h"
 #include "AudioStreamDecoder.h"
 #include "ErrorCode.hpp"
@@ -63,8 +60,6 @@ struct SignalProperties {
 struct ProcessProperties {
     std::shared_ptr<DataSource> source;
     std::shared_ptr<ExtractorHelper> extractor;
-    std::shared_ptr<AudioDecodeProcess> decode;
-    std::shared_ptr<AudioResample> resample;
 };
 
 struct MusicProperties {
@@ -72,7 +67,6 @@ struct MusicProperties {
     FileProperties fileProperties;
     SignalProperties signalProperties;
     ProcessProperties processProperties;
-    AudioBuffer::AudioBufferPtr rawBuffer;
     std::shared_ptr<AudioRingBuffer> ringBuffer;
     std::shared_ptr<AudioStreamDecoder> streamDecoder;
 };

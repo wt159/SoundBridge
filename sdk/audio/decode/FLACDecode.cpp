@@ -10,6 +10,7 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
     , m_inBuf(nullptr)
     , m_decSpec()
     , m_decOffset(0)
+    , m_abortFlag(nullptr)
 {
     ::FLAC__StreamDecoderInitStatus init_status = this->init();
     if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
@@ -49,6 +50,11 @@ int FLACDecode::decode(AudioBufferPtr &inBuf)
     return this->process_until_end_of_stream() == true ? 0 : -1;
 }
 
+void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
+{
+    m_abortFlag = flag;
+}
+
 ::FLAC__StreamDecoderReadStatus FLACDecode::read_callback(FLAC__byte buffer[], size_t *bytes)
 {
     ::FLAC__StreamDecoderReadStatus status = ::FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
@@ -70,6 +76,10 @@ int FLACDecode::decode(AudioBufferPtr &inBuf)
 ::FLAC__StreamDecoderWriteStatus FLACDecode::write_callback(const ::FLAC__Frame *frame,
                                                             const FLAC__int32 *const buffer[])
 {
+    if (m_abortFlag != nullptr && m_abortFlag->load()) {
+        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+    }
+
     ::FLAC__StreamDecoderWriteStatus status = ::FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
     if (frame->header.number.sample_number == 0) {
         m_decSpec.spec.numChannel     = this->get_channels();

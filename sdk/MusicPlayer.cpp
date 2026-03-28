@@ -323,12 +323,13 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         return;
     }
 
-    AudioSpec &spec = m_devSpec;
-    size_t byteOffset
-        = static_cast<size_t>(pos * spec.sampleRate * spec.numChannel * spec.bytesPerSample / 1000);
-    cur->signalProperties.curDataOffset.store(static_cast<off64_t>(byteOffset));
+    AudioSpec &spec     = m_devSpec;
+    uint64_t bytesPerMs = static_cast<uint64_t>(spec.sampleRate)
+        * static_cast<uint64_t>(spec.numChannel) * static_cast<uint64_t>(spec.bytesPerSample)
+        / 1000;
+    cur->signalProperties.curDataOffset.store(static_cast<off64_t>(pos * bytesPerMs));
     cur->signalProperties.curPositionMs = pos;
-    cur->streamDecoder->seekToOffset(byteOffset);
+    cur->streamDecoder->seekToMs(pos);
     m_listener->onMusicPlayerPositionChanged(pos);
 }
 
@@ -410,7 +411,12 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
     }
 
     AudioRingBuffer *ring = cur->ringBuffer.get();
-    size_t got            = ring->read(static_cast<char *>(data), static_cast<size_t>(len));
+    if (cur->streamDecoder->state() == StreamDecoderState::SEEKING) {
+        fillSilence(data, len);
+        return;
+    }
+
+    size_t got = ring->read(static_cast<char *>(data), static_cast<size_t>(len));
     if (got < static_cast<size_t>(len)) {
         std::memset(static_cast<char *>(data) + got, 0, static_cast<size_t>(len) - got);
     }
@@ -435,7 +441,7 @@ void MusicPlayer::Impl::getAudioData(void *data, int len)
 
     StreamDecoderState st = cur->streamDecoder->state();
     if (st == StreamDecoderState::EOS && ring->availableRead() == 0) {
-        if (!isShuttingDown() && !m_switching.exchange(true)) {
+        if (!isShuttingDown() && !m_switching.load() && !m_switching.exchange(true)) {
             m_workQueue.asyncRunTask([this]() {
                 if (!isShuttingDown()) {
                     if (!m_musicList->advanceToNextTrack()) {

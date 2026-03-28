@@ -2,6 +2,7 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
+#include <atomic>
 #include <vorbis/codec.h>
 
 class VorbisDecode {
@@ -10,6 +11,7 @@ private:
     AudioBufferPtr m_inBuf;
     AudioDecodeSpec m_decSpec;
     off64_t m_decOffset;
+    std::atomic<bool> *m_abortFlag;
     ogg_sync_state oy;
     ogg_stream_state os;
     ogg_page og;
@@ -24,6 +26,7 @@ public:
     ~VorbisDecode();
     int decode(const char *data, ssize_t size);
     int decode(AudioBufferPtr &inBuf);
+    void setAbortFlag(std::atomic<bool> *flag);
 
 protected:
 };

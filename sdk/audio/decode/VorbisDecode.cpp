@@ -7,6 +7,7 @@
 
 VorbisDecode::VorbisDecode(AudioDecodeCallback *callback)
     : m_callback(callback)
+    , m_abortFlag(nullptr)
 {
 }
 
@@ -47,6 +48,9 @@ int VorbisDecode::decode(const char *data, ssize_t size)
     ogg_sync_init(&oy);
 
     while (1) { /* we repeat if the bitstream is chained */
+        if (m_abortFlag != nullptr && m_abortFlag->load()) {
+            break;
+        }
         int eos = 0;
         int i;
 
@@ -137,7 +141,15 @@ int VorbisDecode::decode(const char *data, ssize_t size)
 
             /* The rest is just a straight decode loop until end of stream */
             while (!eos) {
+                if (m_abortFlag != nullptr && m_abortFlag->load()) {
+                    eos = 1;
+                    break;
+                }
                 while (!eos) {
+                    if (m_abortFlag != nullptr && m_abortFlag->load()) {
+                        eos = 1;
+                        break;
+                    }
                     int result = ogg_sync_pageout(&oy, &og);
                     if (result == 0)
                         break; /* need more data */
@@ -147,6 +159,10 @@ int VorbisDecode::decode(const char *data, ssize_t size)
                         ogg_stream_pagein(&os, &og); /* can safely ignore errors at
                                                         this point */
                         while (1) {
+                            if (m_abortFlag != nullptr && m_abortFlag->load()) {
+                                eos = 1;
+                                break;
+                            }
                             result = ogg_stream_packetout(&os, &op);
 
                             if (result == 0)
@@ -168,6 +184,10 @@ int VorbisDecode::decode(const char *data, ssize_t size)
                                 (-1.<=range<=1.) to whatever PCM format and write it out */
 
                                 while ((samples = vorbis_synthesis_pcmout(&vd, &pcm)) > 0) {
+                                    if (m_abortFlag != nullptr && m_abortFlag->load()) {
+                                        eos = 1;
+                                        break;
+                                    }
                                     int j;
                                     int clipflag = 0;
                                     int bout     = samples;
@@ -259,6 +279,11 @@ int VorbisDecode::decode(const char *data, ssize_t size)
     /* OK, clean up the framer */
     ogg_sync_clear(&oy);
     return ret;
+}
+
+void VorbisDecode::setAbortFlag(std::atomic<bool> *flag)
+{
+    m_abortFlag = flag;
 }
 
 int VorbisDecode::decode(AudioBufferPtr &inBuf)
