@@ -3,27 +3,35 @@
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
 #include <atomic>
-#include <vorbis/codec.h>
+#include <vector>
+#include <vorbis/vorbisfile.h>
 
 class VorbisDecode {
 private:
     AudioDecodeCallback *m_callback;
-    AudioBufferPtr m_inBuf;
     AudioDecodeSpec m_decSpec;
-    off64_t m_decOffset;
     std::atomic<bool> *m_abortFlag;
-    ogg_sync_state oy;
-    ogg_stream_state os;
-    ogg_page og;
-    ogg_packet op;
-    vorbis_info vi;
-    vorbis_comment vc;
-    vorbis_dsp_state vd;
-    vorbis_block vb;
+    const uint8_t *m_data;
+    size_t m_size;
+    size_t m_pos;
+    OggVorbis_File m_vf;
+    bool m_vfOpened;
+    std::vector<uint8_t> m_interleavedBuf;
+
+    static size_t readCallback(void *ptr, size_t size, size_t nmemb, void *datasource);
+    static int seekCallback(void *datasource, ogg_int64_t offset, int whence);
+    static int closeCallback(void *datasource);
+    static long tellCallback(void *datasource);
+
+    void clearDecodeSpec();
+    bool ensureDecodeSpec(int channels, int sampleRate, uint64_t samples);
 
 public:
     VorbisDecode(AudioDecodeCallback *callback);
     ~VorbisDecode();
+    bool initVF(const char *data, size_t size);
+    int decodeOne();
+    bool seekToMs(uint64_t targetMs);
     int decode(const char *data, ssize_t size);
     int decode(AudioBufferPtr &inBuf);
     void setAbortFlag(std::atomic<bool> *flag);

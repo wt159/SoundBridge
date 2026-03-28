@@ -30,6 +30,7 @@ set(DECODE_LIBS
     FLAC++
     FLAC
     Vorbis::vorbis
+    Vorbis::vorbisfile
     Ogg::ogg
     LogWrapper
     )

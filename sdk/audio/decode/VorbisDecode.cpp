@@ -1,17 +1,104 @@
 #include "VorbisDecode.h"
 #include "LogWrapper.h"
-#include <cmath>
+#include <algorithm>
 #include <cstring>
 
 #define LOG_TAG "VorbisDecode"
 
 VorbisDecode::VorbisDecode(AudioDecodeCallback *callback)
     : m_callback(callback)
+    , m_decSpec()
     , m_abortFlag(nullptr)
+    , m_data(nullptr)
+    , m_size(0)
+    , m_pos(0)
+    , m_vf()
+    , m_vfOpened(false)
+    , m_interleavedBuf()
 {
 }
 
 VorbisDecode::~VorbisDecode()
+{
+    if (m_vfOpened) {
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+    }
+    clearDecodeSpec();
+}
+
+size_t VorbisDecode::readCallback(void *ptr, size_t size, size_t nmemb, void *datasource)
+{
+    if (ptr == nullptr || datasource == nullptr || size == 0 || nmemb == 0) {
+        return 0;
+    }
+
+    VorbisDecode *self = static_cast<VorbisDecode *>(datasource);
+    if (self->m_data == nullptr || self->m_pos >= self->m_size) {
+        return 0;
+    }
+
+    size_t requestBytes = size * nmemb;
+    size_t remainBytes  = self->m_size - self->m_pos;
+    size_t copyBytes    = std::min(requestBytes, remainBytes);
+    if (copyBytes == 0) {
+        return 0;
+    }
+
+    std::memcpy(ptr, self->m_data + self->m_pos, copyBytes);
+    self->m_pos += copyBytes;
+    return copyBytes / size;
+}
+
+int VorbisDecode::seekCallback(void *datasource, ogg_int64_t offset, int whence)
+{
+    if (datasource == nullptr) {
+        return -1;
+    }
+
+    VorbisDecode *self = static_cast<VorbisDecode *>(datasource);
+    ogg_int64_t base   = 0;
+    switch (whence) {
+    case SEEK_SET:
+        base = 0;
+        break;
+    case SEEK_CUR:
+        base = static_cast<ogg_int64_t>(self->m_pos);
+        break;
+    case SEEK_END:
+        base = static_cast<ogg_int64_t>(self->m_size);
+        break;
+    default:
+        return -1;
+    }
+
+    ogg_int64_t target = base + offset;
+    if (target < 0 || target > static_cast<ogg_int64_t>(self->m_size)) {
+        return -1;
+    }
+
+    self->m_pos = static_cast<size_t>(target);
+    return 0;
+}
+
+int VorbisDecode::closeCallback(void *datasource)
+{
+    if (datasource == nullptr) {
+        return -1;
+    }
+    return 0;
+}
+
+long VorbisDecode::tellCallback(void *datasource)
+{
+    if (datasource == nullptr) {
+        return -1;
+    }
+    VorbisDecode *self = static_cast<VorbisDecode *>(datasource);
+    return static_cast<long>(self->m_pos);
+}
+
+void VorbisDecode::clearDecodeSpec()
 {
     if (m_decSpec.lineData != nullptr) {
         for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
@@ -25,260 +112,184 @@ VorbisDecode::~VorbisDecode()
         delete[] m_decSpec.lineSize;
         m_decSpec.lineSize = nullptr;
     }
+    m_decSpec.spec = AudioSpec();
+}
+
+bool VorbisDecode::ensureDecodeSpec(int channels, int sampleRate, uint64_t samples)
+{
+    if (channels <= 0 || sampleRate <= 0 || samples == 0) {
+        return false;
+    }
+
+    if (m_decSpec.lineData == nullptr || m_decSpec.lineSize == nullptr
+        || m_decSpec.spec.numChannel != channels) {
+        clearDecodeSpec();
+        m_decSpec.spec.numChannel     = channels;
+        m_decSpec.spec.bitsPerSample  = 16;
+        m_decSpec.spec.bytesPerSample = 2;
+        m_decSpec.spec.format         = getAudioFormatByBitPreSample(m_decSpec.spec.bitsPerSample);
+        m_decSpec.spec.sampleRate     = sampleRate;
+        m_decSpec.lineData            = new uint8_t *[channels];
+        m_decSpec.lineSize            = new int[channels];
+        for (int ch = 0; ch < channels; ++ch) {
+            m_decSpec.lineData[ch] = nullptr;
+            m_decSpec.lineSize[ch] = 0;
+        }
+    } else {
+        m_decSpec.spec.sampleRate = sampleRate;
+    }
+
+    if (m_decSpec.spec.samples != samples) {
+        m_decSpec.spec.samples = samples;
+        for (int ch = 0; ch < channels; ++ch) {
+            delete[] m_decSpec.lineData[ch];
+            m_decSpec.lineSize[ch]
+                = static_cast<int>(samples * static_cast<uint64_t>(m_decSpec.spec.bytesPerSample));
+            m_decSpec.lineData[ch] = new uint8_t[m_decSpec.lineSize[ch]];
+        }
+    }
+    return true;
+}
+
+bool VorbisDecode::initVF(const char *data, size_t size)
+{
+    if (data == nullptr || size == 0) {
+        LOGE("initVF invalid input, data=%p size=%zu", data, size);
+        return false;
+    }
+
+    if (m_vfOpened) {
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+    }
+
+    m_data = reinterpret_cast<const uint8_t *>(data);
+    m_size = size;
+    m_pos  = 0;
+
+    ov_callbacks callbacks;
+    callbacks.read_func  = &VorbisDecode::readCallback;
+    callbacks.seek_func  = &VorbisDecode::seekCallback;
+    callbacks.close_func = &VorbisDecode::closeCallback;
+    callbacks.tell_func  = &VorbisDecode::tellCallback;
+
+    int ret = ov_open_callbacks(this, &m_vf, nullptr, 0, callbacks);
+    if (ret != 0) {
+        LOGE("ov_open_callbacks failed: %d", ret);
+        return false;
+    }
+
+    m_vfOpened = true;
+
+    vorbis_info *vi = ov_info(&m_vf, -1);
+    if (vi == nullptr) {
+        LOGE("ov_info failed after open");
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+        return false;
+    }
+
+    LOGI("Bitstream is %d channel, %ldHz", vi->channels, vi->rate);
+    return true;
+}
+
+int VorbisDecode::decodeOne()
+{
+    if (m_abortFlag != nullptr && m_abortFlag->load()) {
+        return -1;
+    }
+
+    if (!m_vfOpened) {
+        return -1;
+    }
+
+    constexpr int kReadBytes = 8192;
+    if (m_interleavedBuf.size() != kReadBytes) {
+        m_interleavedBuf.resize(kReadBytes);
+    }
+
+    int bitstream = 0;
+    long bytes = ov_read(&m_vf, reinterpret_cast<char *>(m_interleavedBuf.data()), kReadBytes, 0, 2,
+                         1, &bitstream);
+
+    if (bytes == 0) {
+        return 0;
+    }
+
+    if (bytes < 0) {
+        LOGE("ov_read failed: %ld", bytes);
+        return -1;
+    }
+
+    vorbis_info *vi = ov_info(&m_vf, bitstream);
+    if (vi == nullptr || vi->channels <= 0 || vi->rate <= 0) {
+        LOGE("ov_info failed in decodeOne");
+        return -1;
+    }
+
+    size_t frameBytes     = static_cast<size_t>(bytes);
+    size_t channels       = static_cast<size_t>(vi->channels);
+    size_t oneSampleBytes = channels * 2;
+    if (oneSampleBytes == 0 || frameBytes % oneSampleBytes != 0) {
+        LOGE("unexpected pcm bytes: %zu channels: %zu", frameBytes, channels);
+        return -1;
+    }
+
+    uint64_t samples = frameBytes / oneSampleBytes;
+    if (!ensureDecodeSpec(vi->channels, vi->rate, samples)) {
+        LOGE("ensureDecodeSpec failed");
+        return -1;
+    }
+
+    const int16_t *src = reinterpret_cast<const int16_t *>(m_interleavedBuf.data());
+    for (uint64_t i = 0; i < samples; ++i) {
+        for (int ch = 0; ch < vi->channels; ++ch) {
+            int16_t value = src[i * static_cast<size_t>(vi->channels) + static_cast<size_t>(ch)];
+            std::memcpy(m_decSpec.lineData[ch] + i * 2, &value, sizeof(value));
+        }
+    }
+
+    if (m_callback != nullptr) {
+        m_callback->onAudioDecodeCallback(m_decSpec);
+    }
+    return 1;
+}
+
+bool VorbisDecode::seekToMs(uint64_t targetMs)
+{
+    if (!m_vfOpened) {
+        return false;
+    }
+
+    double targetSec = static_cast<double>(targetMs) / 1000.0;
+    int ret          = ov_time_seek(&m_vf, targetSec);
+    if (ret != 0) {
+        LOGE("ov_time_seek failed: %d, targetMs=%llu", ret,
+             static_cast<unsigned long long>(targetMs));
+        return false;
+    }
+    return true;
 }
 
 int VorbisDecode::decode(const char *data, ssize_t size)
 {
-    char *buffer;
-    int bytes, ret = 0;
-    off64_t offset = 0;
-
-    auto readFormData = [&](char *buf, int len) {
-        off64_t remainSize = size - offset;
-        if (remainSize >= len) {
-            memcpy(buf, data + offset, len);
-            offset += len;
-            return len;
-        }
-        memcpy(buf, data + offset, remainSize);
-        offset += remainSize;
-        return (int)remainSize;
-    };
-
-    ogg_sync_init(&oy);
-
-    while (1) { /* we repeat if the bitstream is chained */
-        if (m_abortFlag != nullptr && m_abortFlag->load()) {
-            break;
-        }
-        int eos = 0;
-        int i;
-
-        /* submit a 4k block to libvorbis' Ogg layer */
-        buffer = ogg_sync_buffer(&oy, 4096);
-        bytes  = readFormData(buffer, 4096);
-        ogg_sync_wrote(&oy, bytes);
-
-        /* Get the first page. */
-        if (ogg_sync_pageout(&oy, &og) != 1) {
-            if (bytes < 4096)
-                break;
-            LOGE("Input does not appear to be an Ogg bitstream.");
-            return -1;
-        }
-
-        /* Get the serial number and set up the rest of decode. */
-        /* serialno first; use it to set up a logical stream */
-        ogg_stream_init(&os, ogg_page_serialno(&og));
-
-        vorbis_info_init(&vi);
-        vorbis_comment_init(&vc);
-        if (ogg_stream_pagein(&os, &og) < 0) {
-            LOGE("Error reading first page of Ogg bitstream data.");
-            return -1;
-        }
-
-        if (ogg_stream_packetout(&os, &op) != 1) {
-            LOGE("Error reading initial header packet.");
-            return -1;
-        }
-
-        if (vorbis_synthesis_headerin(&vi, &vc, &op) < 0) {
-            LOGE("This Ogg bitstream does not contain Vorbis "
-                 "audio data.");
-            return -1;
-        }
-
-        i = 0;
-        while (i < 2) {
-            while (i < 2) {
-                int result = ogg_sync_pageout(&oy, &og);
-                if (result == 0)
-                    break;
-                if (result == 1) {
-                    ogg_stream_pagein(&os, &og);
-                    while (i < 2) {
-                        result = ogg_stream_packetout(&os, &op);
-                        if (result == 0)
-                            break;
-                        if (result < 0) {
-                            LOGE("Corrupt secondary header.  Exiting.");
-                            return -1;
-                        }
-                        result = vorbis_synthesis_headerin(&vi, &vc, &op);
-                        if (result < 0) {
-                            LOGE("Corrupt secondary header.  Exiting.");
-                            return -1;
-                        }
-                        i++;
-                    }
-                }
-            }
-            /* no harm in not checking before adding more */
-            buffer = ogg_sync_buffer(&oy, 4096);
-            bytes  = readFormData(buffer, 4096);
-            if (bytes == 0 && i < 2) {
-                LOGE("End of file before finding all Vorbis headers!");
-                return -2;
-            }
-            ogg_sync_wrote(&oy, bytes);
-        }
-
-        /* Throw the comments plus a few lines about the bitstream we're
-           decoding */
-        {
-            char **ptr = vc.user_comments;
-            while (*ptr) {
-                LOGD("%s", *ptr);
-                ++ptr;
-            }
-            LOGI("Bitstream is %d channel, %ldHz", vi.channels, vi.rate);
-            LOGI("Encoded by: %s", vc.vendor);
-        }
-
-        if (vorbis_synthesis_init(&vd, &vi) == 0) { /* central decode state */
-            vorbis_block_init(&vd, &vb);
-
-            /* The rest is just a straight decode loop until end of stream */
-            while (!eos) {
-                if (m_abortFlag != nullptr && m_abortFlag->load()) {
-                    eos = 1;
-                    break;
-                }
-                while (!eos) {
-                    if (m_abortFlag != nullptr && m_abortFlag->load()) {
-                        eos = 1;
-                        break;
-                    }
-                    int result = ogg_sync_pageout(&oy, &og);
-                    if (result == 0)
-                        break; /* need more data */
-                    if (result < 0) { /* missing or corrupt data at this page position */
-                        LOGE("Corrupt or missing data in bitstream; continuing...");
-                    } else {
-                        ogg_stream_pagein(&os, &og); /* can safely ignore errors at
-                                                        this point */
-                        while (1) {
-                            if (m_abortFlag != nullptr && m_abortFlag->load()) {
-                                eos = 1;
-                                break;
-                            }
-                            result = ogg_stream_packetout(&os, &op);
-
-                            if (result == 0)
-                                break; /* need more data */
-                            if (result < 0) { /* missing or corrupt data at this page position */
-                                /* no reason to complain; already complained above */
-                            } else {
-                                /* we have a packet.  Decode it */
-                                float **pcm;
-                                int samples;
-
-                                if (vorbis_synthesis(&vb, &op) == 0) /* test for success! */
-                                    vorbis_synthesis_blockin(&vd, &vb);
-                                /*
-
-                                **pcm is a multichannel float vector.  In stereo, for
-                                example, pcm[0] is left, and pcm[1] is right.  samples is
-                                the size of each channel.  Convert the float values
-                                (-1.<=range<=1.) to whatever PCM format and write it out */
-
-                                while ((samples = vorbis_synthesis_pcmout(&vd, &pcm)) > 0) {
-                                    if (m_abortFlag != nullptr && m_abortFlag->load()) {
-                                        eos = 1;
-                                        break;
-                                    }
-                                    int j;
-                                    int clipflag = 0;
-                                    int bout     = samples;
-
-                                    if (m_decSpec.lineSize == nullptr) {
-                                        m_decSpec.spec.sampleRate    = vi.rate;
-                                        m_decSpec.spec.bitsPerSample = 16;
-                                        m_decSpec.spec.bytesPerSample
-                                            = m_decSpec.spec.bitsPerSample >> 3;
-                                        m_decSpec.spec.format = getAudioFormatByBitPreSample(
-                                            m_decSpec.spec.bitsPerSample);
-                                        m_decSpec.spec.numChannel = vi.channels;
-                                        m_decSpec.lineData
-                                            = new uint8_t *[m_decSpec.spec.numChannel];
-                                        m_decSpec.lineSize = new int[m_decSpec.spec.numChannel];
-                                        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
-                                            m_decSpec.lineSize[ch] = 0;
-                                            m_decSpec.lineData[ch] = nullptr;
-                                        }
-                                    }
-                                    if (m_decSpec.spec.samples != (uint64_t)bout) {
-                                        m_decSpec.spec.samples = bout;
-                                        for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
-                                            if (m_decSpec.lineData[ch] != nullptr)
-                                                delete[] m_decSpec.lineData[ch];
-                                            m_decSpec.lineSize[ch] = m_decSpec.spec.samples
-                                                * m_decSpec.spec.bytesPerSample;
-                                            m_decSpec.lineData[ch]
-                                                = new uint8_t[m_decSpec.lineSize[ch]];
-                                        }
-                                    }
-
-                                    /* convert floats to 16 bit signed ints (host order) and
-                                       interleave */
-                                    for (i = 0; i < vi.channels; i++) {
-                                        ogg_int16_t *ptr = (ogg_int16_t *)m_decSpec.lineData[i];
-                                        float *mono      = pcm[i];
-                                        for (j = 0; j < bout; j++) {
-#if 1
-                                            int val = floor(mono[j] * 32767.f + .5f);
-#else /* optional dither */
-                                            int val = mono[j] * 32767.f + drand48() - 0.5f;
-#endif
-                                            /* might as well guard against clipping */
-                                            if (val > 32767) {
-                                                val      = 32767;
-                                                clipflag = 1;
-                                            }
-                                            if (val < -32768) {
-                                                val      = -32768;
-                                                clipflag = 1;
-                                            }
-                                            *ptr++ = val;
-                                        }
-                                    }
-
-                                    if (clipflag) {
-                                        LOGE("Clipping in frame %ld", (long)(vd.sequence));
-                                    }
-
-                                    m_callback->onAudioDecodeCallback(m_decSpec);
-                                    vorbis_synthesis_read(&vd, bout);
-                                }
-                            }
-                        }
-                        if (ogg_page_eos(&og))
-                            eos = 1;
-                    }
-                }
-                if (!eos) {
-                    buffer = ogg_sync_buffer(&oy, 4096);
-                    bytes  = readFormData(buffer, 4096);
-                    ogg_sync_wrote(&oy, bytes);
-                    if (bytes == 0)
-                        eos = 1;
-                }
-            }
-            vorbis_block_clear(&vb);
-            vorbis_dsp_clear(&vd);
-        } else {
-            LOGE("Error: Corrupt header during playback initialization.");
-        }
-
-        ogg_stream_clear(&os);
-        vorbis_comment_clear(&vc);
-        vorbis_info_clear(&vi); /* must be called last */
+    if (size <= 0) {
+        return -1;
     }
 
-    /* OK, clean up the framer */
-    ogg_sync_clear(&oy);
-    return ret;
+    if (!initVF(data, static_cast<size_t>(size))) {
+        return -1;
+    }
+
+    while (true) {
+        int ret = decodeOne();
+        if (ret == 0) {
+            return 0;
+        }
+        if (ret < 0) {
+            return -1;
+        }
+    }
 }
 
 void VorbisDecode::setAbortFlag(std::atomic<bool> *flag)
@@ -288,5 +299,8 @@ void VorbisDecode::setAbortFlag(std::atomic<bool> *flag)
 
 int VorbisDecode::decode(AudioBufferPtr &inBuf)
 {
+    if (inBuf == nullptr) {
+        return -1;
+    }
     return decode(inBuf->data(), inBuf->size());
 }

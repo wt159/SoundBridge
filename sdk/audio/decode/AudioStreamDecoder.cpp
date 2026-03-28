@@ -183,6 +183,62 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
+    if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr || extPtr->size() == 0) {
+            LOGE("extractor getMetaData failed");
+            m_state.store(StreamDecoderState::ERROR);
+            return;
+        }
+
+        VorbisDecode vorbis(this);
+        vorbis.setAbortFlag(&m_abortDecode);
+        if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
+            m_state.store(StreamDecoderState::ERROR);
+            return;
+        }
+
+        while (!m_stopRequest.load()) {
+            int64_t seekMs = m_seekRequestMs.exchange(-1);
+            if (seekMs >= 0) {
+                m_state.store(StreamDecoderState::SEEKING);
+                std::this_thread::sleep_for(std::chrono::milliseconds(12));
+                m_ring->reset();
+                m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
+                m_processedBytes   = m_consumedBytes.load();
+                m_seekDiscardBytes = 0;
+                if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
+                    m_state.store(StreamDecoderState::ERROR);
+                    break;
+                }
+                m_abortDecode.store(false);
+                m_state.store(StreamDecoderState::DECODING);
+            }
+
+            int ret = vorbis.decodeOne();
+            if (ret == 0) {
+                m_state.store(StreamDecoderState::EOS);
+                break;
+            }
+            if (ret < 0) {
+                if (m_stopRequest.load()) {
+                    break;
+                }
+                if (m_seekRequestMs.load() >= 0) {
+                    m_abortDecode.store(false);
+                    continue;
+                }
+                m_state.store(StreamDecoderState::ERROR);
+                break;
+            }
+        }
+
+        if (m_stopRequest.load()) {
+            m_state.store(StreamDecoderState::IDLE);
+        }
+        return;
+    }
+
     for (;;) {
         int64_t seekMs = m_seekRequestMs.load();
         if (seekMs >= 0) {

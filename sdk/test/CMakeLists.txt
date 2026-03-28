@@ -37,39 +37,55 @@ if(WIN32 AND DEFINED SOUNDBRIDGE_QT_TEST_BIN_DIR AND NOT "${SOUNDBRIDGE_QT_TEST_
     set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;${SOUNDBRIDGE_QT_TEST_BIN_DIR};$ENV{PATH}")
 endif()
 
+if(UNIX)
+    set(SDK_TEST_LD_PATH "${3RDPARTY_DIST_DIR}/lib")
+endif()
+
 add_test(
     NAME sdk_core_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> core
 )
-set_tests_properties(sdk_core_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_core_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 add_test(
     NAME sdk_resample_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> resample
 )
-set_tests_properties(sdk_resample_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_resample_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 add_test(
     NAME sdk_decode_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> decode
 )
-set_tests_properties(sdk_decode_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_decode_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 add_test(
     NAME sdk_player_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> player
 )
-set_tests_properties(sdk_player_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_player_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 add_test(
     NAME sdk_all_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> all
 )
-set_tests_properties(sdk_all_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_all_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 set(SB_MEDIA_DIR "${SDK_ROOT_DIR}/../music")
 add_test(
     NAME sdk_media_smoke
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" "SB_MEDIA_DIR=${SB_MEDIA_DIR}" $<TARGET_FILE:TestSdkSuite> media
 )
-set_tests_properties(sdk_media_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sdk_media_smoke PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
