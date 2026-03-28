@@ -45,9 +45,39 @@ int FLACDecode::decode(const char *data, ssize_t size)
 
 int FLACDecode::decode(AudioBufferPtr &inBuf)
 {
+    setInputBuffer(inBuf);
+    return this->process_until_end_of_stream() == true ? 0 : -1;
+}
+
+void FLACDecode::setInputBuffer(const AudioBufferPtr &inBuf)
+{
     m_inBuf     = inBuf;
     m_decOffset = 0;
-    return this->process_until_end_of_stream() == true ? 0 : -1;
+}
+
+int FLACDecode::processOne()
+{
+    if (m_inBuf == nullptr) {
+        return -1;
+    }
+
+    if (this->get_state() == FLAC__STREAM_DECODER_END_OF_STREAM) {
+        return 0;
+    }
+
+    bool ret = this->process_single();
+    if (!ret) {
+        return (this->get_state() == FLAC__STREAM_DECODER_END_OF_STREAM) ? 0 : -1;
+    }
+    return (this->get_state() == FLAC__STREAM_DECODER_END_OF_STREAM) ? 0 : 1;
+}
+
+bool FLACDecode::seekToSample(FLAC__uint64 sample)
+{
+    if (m_inBuf == nullptr) {
+        return false;
+    }
+    return this->seek_absolute(sample);
 }
 
 void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
@@ -57,6 +87,10 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 ::FLAC__StreamDecoderReadStatus FLACDecode::read_callback(FLAC__byte buffer[], size_t *bytes)
 {
+    if (m_inBuf == nullptr) {
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+    }
+
     ::FLAC__StreamDecoderReadStatus status = ::FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
     if (*bytes > 0) {
         size_t size = m_inBuf->size() - m_decOffset;
@@ -71,6 +105,44 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
     } else
         status = FLAC__STREAM_DECODER_READ_STATUS_ABORT;
     return status;
+}
+
+::FLAC__StreamDecoderSeekStatus FLACDecode::seek_callback(FLAC__uint64 absolute_byte_offset)
+{
+    if (m_inBuf == nullptr) {
+        return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
+    }
+    if (absolute_byte_offset > static_cast<FLAC__uint64>(m_inBuf->size())) {
+        return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
+    }
+    m_decOffset = static_cast<size_t>(absolute_byte_offset);
+    return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
+}
+
+::FLAC__StreamDecoderTellStatus FLACDecode::tell_callback(FLAC__uint64 *absolute_byte_offset)
+{
+    if (m_inBuf == nullptr || absolute_byte_offset == nullptr) {
+        return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
+    }
+    *absolute_byte_offset = static_cast<FLAC__uint64>(m_decOffset);
+    return FLAC__STREAM_DECODER_TELL_STATUS_OK;
+}
+
+::FLAC__StreamDecoderLengthStatus FLACDecode::length_callback(FLAC__uint64 *stream_length)
+{
+    if (m_inBuf == nullptr || stream_length == nullptr) {
+        return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
+    }
+    *stream_length = static_cast<FLAC__uint64>(m_inBuf->size());
+    return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
+}
+
+bool FLACDecode::eof_callback()
+{
+    if (m_inBuf == nullptr) {
+        return true;
+    }
+    return m_decOffset >= m_inBuf->size();
 }
 
 ::FLAC__StreamDecoderWriteStatus FLACDecode::write_callback(const ::FLAC__Frame *frame,

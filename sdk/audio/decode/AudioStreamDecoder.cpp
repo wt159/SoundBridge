@@ -128,6 +128,61 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
+    if (m_codecID == AUDIO_CODEC_ID_FLAC) {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr || extPtr->size() == 0) {
+            LOGE("extractor getMetaData failed");
+            m_state.store(StreamDecoderState::ERROR);
+            return;
+        }
+
+        FLACDecode flac(this);
+        flac.setAbortFlag(&m_abortDecode);
+        flac.setInputBuffer(extPtr);
+
+        while (!m_stopRequest.load()) {
+            int64_t seekMs = m_seekRequestMs.exchange(-1);
+            if (seekMs >= 0) {
+                m_state.store(StreamDecoderState::SEEKING);
+                std::this_thread::sleep_for(std::chrono::milliseconds(12));
+                m_ring->reset();
+                m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
+                m_processedBytes   = m_consumedBytes.load();
+                m_seekDiscardBytes = 0;
+                FLAC__uint64 targetSample
+                    = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
+                if (!flac.seekToSample(targetSample)) {
+                    m_state.store(StreamDecoderState::ERROR);
+                    break;
+                }
+                m_abortDecode.store(false);
+                m_state.store(StreamDecoderState::DECODING);
+            }
+
+            int ret = flac.processOne();
+            if (ret == 0) {
+                m_state.store(StreamDecoderState::EOS);
+                break;
+            }
+            if (ret < 0) {
+                if (m_stopRequest.load()) {
+                    break;
+                }
+                if (m_seekRequestMs.load() >= 0) {
+                    m_abortDecode.store(false);
+                    continue;
+                }
+                m_state.store(StreamDecoderState::ERROR);
+                break;
+            }
+        }
+
+        if (m_stopRequest.load()) {
+            m_state.store(StreamDecoderState::IDLE);
+        }
+        return;
+    }
+
     for (;;) {
         int64_t seekMs = m_seekRequestMs.load();
         if (seekMs >= 0) {
