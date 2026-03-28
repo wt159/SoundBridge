@@ -3,6 +3,7 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "ByteUtils.h"
+#include "DataSource.hpp"
 #include "ErrorUtils.h"
 #include <string>
 #include <unordered_map>
@@ -58,6 +59,9 @@ public:
         (void)targetMs;
         return sdk_utils::INVALID_OPERATION;
     }
+    virtual DataSourceBase *getDataSource() { return nullptr; }
+    virtual off64_t getDataSize() { return 0; }
+    virtual off64_t getAudioDataOffset() { return 0; }
 
 protected:
     ExtractorHelper() { }

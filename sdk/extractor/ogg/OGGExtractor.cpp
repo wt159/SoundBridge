@@ -34,6 +34,7 @@ OGGExtractor::OGGExtractor(DataSourceBase *source)
     , m_metaBuf(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
+    , m_dataSize(0)
 {
     m_initCheck = init();
 }
@@ -146,13 +147,7 @@ status_t OGGExtractor::init()
         return NO_INIT;
     }
     LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
-    off64_t dataSize = 0;
-    m_dataSource->getSize(&dataSize);
-    m_metaBuf = std::make_shared<AudioBuffer>(dataSize);
-    if (m_dataSource->readAt(0, m_metaBuf->data(), dataSize) < dataSize) {
-        LOGE("read meta data failed");
-        return NO_INIT;
-    }
+    m_dataSource->getSize(&m_dataSize);
 
     return OK;
 }

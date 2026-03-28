@@ -129,16 +129,24 @@ void AudioStreamDecoder::threadFunc()
     }
 
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
-        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-        if (extPtr == nullptr || extPtr->size() == 0) {
-            LOGE("extractor getMetaData failed");
-            m_state.store(StreamDecoderState::ERROR);
-            return;
-        }
-
         FLACDecode flac(this);
         flac.setAbortFlag(&m_abortDecode);
-        flac.setInputBuffer(extPtr);
+        DataSourceBase *ds = m_extractor->getDataSource();
+        if (ds != nullptr) {
+            if (!flac.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
+                                         m_extractor->getDataSize())) {
+                m_state.store(StreamDecoderState::ERROR);
+                return;
+            }
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr || extPtr->size() == 0) {
+                LOGE("extractor getMetaData failed");
+                m_state.store(StreamDecoderState::ERROR);
+                return;
+            }
+            flac.setInputBuffer(extPtr);
+        }
 
         while (!m_stopRequest.load()) {
             int64_t seekMs = m_seekRequestMs.exchange(-1);
@@ -184,18 +192,25 @@ void AudioStreamDecoder::threadFunc()
     }
 
     if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
-        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-        if (extPtr == nullptr || extPtr->size() == 0) {
-            LOGE("extractor getMetaData failed");
-            m_state.store(StreamDecoderState::ERROR);
-            return;
-        }
-
         VorbisDecode vorbis(this);
         vorbis.setAbortFlag(&m_abortDecode);
-        if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
-            m_state.store(StreamDecoderState::ERROR);
-            return;
+        DataSourceBase *ds = m_extractor->getDataSource();
+        if (ds != nullptr) {
+            if (!vorbis.initVFFromSource(ds, m_extractor->getDataSize())) {
+                m_state.store(StreamDecoderState::ERROR);
+                return;
+            }
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr || extPtr->size() == 0) {
+                LOGE("extractor getMetaData failed");
+                m_state.store(StreamDecoderState::ERROR);
+                return;
+            }
+            if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
+                m_state.store(StreamDecoderState::ERROR);
+                return;
+            }
         }
 
         while (!m_stopRequest.load()) {
@@ -394,13 +409,12 @@ int AudioStreamDecoder::runDecode()
         return kDecodeError;
     }
 
-    AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-    if (extPtr == nullptr || extPtr->size() == 0) {
-        LOGE("extractor getMetaData failed");
-        return kDecodeError;
-    }
-
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr || extPtr->size() == 0) {
+            LOGE("extractor getMetaData failed");
+            return kDecodeError;
+        }
         if (!writeDecodedBytes(extPtr->data(), extPtr->size())) {
             return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
         }
@@ -410,7 +424,20 @@ int AudioStreamDecoder::runDecode()
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flacDecode(this);
         flacDecode.setAbortFlag(&m_abortDecode);
-        int ret = flacDecode.decode(extPtr);
+        DataSourceBase *ds = m_extractor->getDataSource();
+        int ret            = -1;
+        if (ds != nullptr) {
+            flacDecode.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
+                                          m_extractor->getDataSize());
+            ret = flacDecode.process_until_end_of_stream() ? 0 : -1;
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr || extPtr->size() == 0) {
+                LOGE("extractor getMetaData failed");
+                return kDecodeError;
+            }
+            ret = flacDecode.decode(extPtr);
+        }
         if (ret < 0) {
             return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
         }
@@ -420,11 +447,39 @@ int AudioStreamDecoder::runDecode()
     if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
         VorbisDecode vorbisDecode(this);
         vorbisDecode.setAbortFlag(&m_abortDecode);
-        int ret = vorbisDecode.decode(extPtr);
+        int ret            = -1;
+        DataSourceBase *ds = m_extractor->getDataSource();
+        if (ds != nullptr) {
+            if (!vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize())) {
+                return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+            }
+            while (true) {
+                ret = vorbisDecode.decodeOne();
+                if (ret == 0) {
+                    break;
+                }
+                if (ret < 0) {
+                    break;
+                }
+            }
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr || extPtr->size() == 0) {
+                LOGE("extractor getMetaData failed");
+                return kDecodeError;
+            }
+            ret = vorbisDecode.decode(extPtr);
+        }
         if (ret < 0) {
             return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
         }
         return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
+    }
+
+    AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+    if (extPtr == nullptr || extPtr->size() == 0) {
+        LOGE("extractor getMetaData failed");
+        return kDecodeError;
     }
 
     AudioCodecConfig config;

@@ -2,6 +2,7 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
+#include "DataSource.hpp"
 #include <FLAC++/decoder.h>
 #include <atomic>
 
@@ -9,6 +10,9 @@ class FLACDecode : public FLAC::Decoder::Stream {
 private:
     AudioDecodeCallback *m_callback;
     AudioBufferPtr m_inBuf;
+    DataSourceBase *m_dataSource;
+    off64_t m_audioDataOffset;
+    off64_t m_dataSourceSize;
     AudioDecodeSpec m_decSpec;
     size_t m_decOffset;
     std::atomic<bool> *m_abortFlag;
@@ -18,6 +22,7 @@ public:
     ~FLACDecode();
     int decode(const char *data, ssize_t size);
     int decode(AudioBufferPtr &inBuf);
+    bool initFromDataSource(DataSourceBase *src, off64_t audioOffset, off64_t dataSize);
     void setInputBuffer(const AudioBufferPtr &inBuf);
     int processOne();
     bool seekToSample(FLAC__uint64 sample);

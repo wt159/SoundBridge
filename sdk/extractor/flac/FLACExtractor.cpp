@@ -27,6 +27,8 @@ FLACExtractor::FLACExtractor(DataSourceBase *source)
     , m_metaBuf(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
+    , m_audioDataOffset(0)
+    , m_dataSize(0)
 {
     m_initCheck = init();
 }
@@ -37,7 +39,7 @@ status_t FLACExtractor::init()
 {
     // Check file format
     uint8_t id[4];
-    int offset = 0;
+    off64_t offset = 0;
     if (m_dataSource->readAt(0, &id, 4) < 4) {
         return NO_INIT;
     }
@@ -128,6 +130,7 @@ status_t FLACExtractor::init()
             m_header.metaDataBlockVec.push_back(block);
 
             if (block.header.isLastBlock) {
+                m_audioDataOffset = offset;
                 break;
             }
         }
@@ -157,13 +160,8 @@ status_t FLACExtractor::init()
     m_audioCodecID = AUDIO_CODEC_ID_FLAC;
 
     off64_t fileSize = 0;
-    m_dataSource->getSize(&fileSize);
-    fileSize  -= offset;
-    m_metaBuf  = std::make_shared<AudioBuffer>(fileSize);
-    if (m_dataSource->readAt(offset, m_metaBuf->data(), fileSize) < fileSize) {
-        LOGE("readAt failed");
-        return NO_MEMORY;
-    }
+    static_cast<DataSource *>(m_dataSource)->getSize(&fileSize);
+    m_dataSize = fileSize;
 
     LOGI("sampleRate: %d, numChannel: %d, bytesPerSample: %d, samples:%d", m_spec.sampleRate,
          m_spec.numChannel, m_spec.bytesPerSample, m_spec.samples);

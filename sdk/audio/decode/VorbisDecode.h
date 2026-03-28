@@ -2,6 +2,7 @@
 #include "AudioBuffer.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
+#include "DataSource.hpp"
 #include <atomic>
 #include <vector>
 #include <vorbis/vorbisfile.h>
@@ -14,6 +15,7 @@ private:
     const uint8_t *m_data;
     size_t m_size;
     size_t m_pos;
+    DataSourceBase *m_dataSourcePtr;
     OggVorbis_File m_vf;
     bool m_vfOpened;
     std::vector<uint8_t> m_interleavedBuf;
@@ -30,6 +32,7 @@ public:
     VorbisDecode(AudioDecodeCallback *callback);
     ~VorbisDecode();
     bool initVF(const char *data, size_t size);
+    bool initVFFromSource(DataSourceBase *src, off64_t size);
     int decodeOne();
     bool seekToMs(uint64_t targetMs);
     int decode(const char *data, ssize_t size);

@@ -51,6 +51,9 @@ public:
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    virtual DataSourceBase *getDataSource() { return m_dataSource; }
+    virtual off64_t getDataSize() { return m_dataSize; }
+    virtual off64_t getAudioDataOffset() { return 0; }
     virtual ~OGGExtractor();
 
 private:
@@ -64,4 +67,5 @@ private:
     bool m_validFormat;
     AudioSpec m_spec;
     std::vector<OGG::Page> m_pageVec;
+    off64_t m_dataSize;
 };

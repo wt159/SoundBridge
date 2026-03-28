@@ -12,6 +12,7 @@ VorbisDecode::VorbisDecode(AudioDecodeCallback *callback)
     , m_data(nullptr)
     , m_size(0)
     , m_pos(0)
+    , m_dataSourcePtr(nullptr)
     , m_vf()
     , m_vfOpened(false)
     , m_interleavedBuf()
@@ -34,13 +35,29 @@ size_t VorbisDecode::readCallback(void *ptr, size_t size, size_t nmemb, void *da
     }
 
     VorbisDecode *self = static_cast<VorbisDecode *>(datasource);
+    size_t toRead      = size * nmemb;
+    if (self->m_dataSourcePtr != nullptr) {
+        off64_t remaining = static_cast<off64_t>(self->m_size) - static_cast<off64_t>(self->m_pos);
+        if (remaining <= 0) {
+            return 0;
+        }
+        if (static_cast<off64_t>(toRead) > remaining) {
+            toRead = static_cast<size_t>(remaining);
+        }
+        ssize_t got = self->m_dataSourcePtr->readAt(static_cast<off64_t>(self->m_pos), ptr, toRead);
+        if (got <= 0) {
+            return 0;
+        }
+        self->m_pos += static_cast<size_t>(got);
+        return static_cast<size_t>(got) / size;
+    }
+
     if (self->m_data == nullptr || self->m_pos >= self->m_size) {
         return 0;
     }
 
-    size_t requestBytes = size * nmemb;
-    size_t remainBytes  = self->m_size - self->m_pos;
-    size_t copyBytes    = std::min(requestBytes, remainBytes);
+    size_t remainBytes = self->m_size - self->m_pos;
+    size_t copyBytes   = std::min(toRead, remainBytes);
     if (copyBytes == 0) {
         return 0;
     }
@@ -163,9 +180,10 @@ bool VorbisDecode::initVF(const char *data, size_t size)
         m_vfOpened = false;
     }
 
-    m_data = reinterpret_cast<const uint8_t *>(data);
-    m_size = size;
-    m_pos  = 0;
+    m_data          = reinterpret_cast<const uint8_t *>(data);
+    m_size          = size;
+    m_pos           = 0;
+    m_dataSourcePtr = nullptr;
 
     ov_callbacks callbacks;
     callbacks.read_func  = &VorbisDecode::readCallback;
@@ -190,6 +208,33 @@ bool VorbisDecode::initVF(const char *data, size_t size)
     }
 
     LOGI("Bitstream is %d channel, %ldHz", vi->channels, vi->rate);
+    return true;
+}
+
+bool VorbisDecode::initVFFromSource(DataSourceBase *src, off64_t size)
+{
+    if (src == nullptr || size <= 0) {
+        return false;
+    }
+
+    if (m_vfOpened) {
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+    }
+    m_dataSourcePtr = src;
+    m_data          = nullptr;
+    m_size          = static_cast<size_t>(size);
+    m_pos           = 0;
+    ov_callbacks cb;
+    cb.read_func  = &VorbisDecode::readCallback;
+    cb.seek_func  = &VorbisDecode::seekCallback;
+    cb.close_func = &VorbisDecode::closeCallback;
+    cb.tell_func  = &VorbisDecode::tellCallback;
+    int ret       = ov_open_callbacks(this, &m_vf, nullptr, 0, cb);
+    if (ret < 0) {
+        return false;
+    }
+    m_vfOpened = true;
     return true;
 }
 

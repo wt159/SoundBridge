@@ -8,6 +8,9 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
     : FLAC::Decoder::Stream()
     , m_callback(callback)
     , m_inBuf(nullptr)
+    , m_dataSource(nullptr)
+    , m_audioDataOffset(0)
+    , m_dataSourceSize(0)
     , m_decSpec()
     , m_decOffset(0)
     , m_abortFlag(nullptr)
@@ -49,15 +52,28 @@ int FLACDecode::decode(AudioBufferPtr &inBuf)
     return this->process_until_end_of_stream() == true ? 0 : -1;
 }
 
+bool FLACDecode::initFromDataSource(DataSourceBase *src, off64_t audioOffset, off64_t dataSize)
+{
+    m_dataSource      = src;
+    m_audioDataOffset = audioOffset;
+    m_dataSourceSize  = dataSize - audioOffset;
+    m_decOffset       = 0;
+    m_inBuf           = nullptr;
+    return true;
+}
+
 void FLACDecode::setInputBuffer(const AudioBufferPtr &inBuf)
 {
-    m_inBuf     = inBuf;
-    m_decOffset = 0;
+    m_inBuf           = inBuf;
+    m_decOffset       = 0;
+    m_dataSource      = nullptr;
+    m_audioDataOffset = 0;
+    m_dataSourceSize  = 0;
 }
 
 int FLACDecode::processOne()
 {
-    if (m_inBuf == nullptr) {
+    if (m_inBuf == nullptr && m_dataSource == nullptr) {
         return -1;
     }
 
@@ -74,7 +90,7 @@ int FLACDecode::processOne()
 
 bool FLACDecode::seekToSample(FLAC__uint64 sample)
 {
-    if (m_inBuf == nullptr) {
+    if (m_inBuf == nullptr && m_dataSource == nullptr) {
         return false;
     }
     return this->seek_absolute(sample);
@@ -87,6 +103,26 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 ::FLAC__StreamDecoderReadStatus FLACDecode::read_callback(FLAC__byte buffer[], size_t *bytes)
 {
+    if (m_dataSource != nullptr) {
+        off64_t remaining = m_dataSourceSize - static_cast<off64_t>(m_decOffset);
+        if (remaining <= 0) {
+            *bytes = 0;
+            return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        }
+        if (static_cast<off64_t>(*bytes) > remaining) {
+            *bytes = static_cast<size_t>(remaining);
+        }
+        ssize_t got = m_dataSource->readAt(m_audioDataOffset + static_cast<off64_t>(m_decOffset),
+                                           buffer, *bytes);
+        if (got <= 0) {
+            *bytes = 0;
+            return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        }
+        *bytes       = static_cast<size_t>(got);
+        m_decOffset += *bytes;
+        return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+    }
+
     if (m_inBuf == nullptr) {
         return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
     }
@@ -109,6 +145,14 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 ::FLAC__StreamDecoderSeekStatus FLACDecode::seek_callback(FLAC__uint64 absolute_byte_offset)
 {
+    if (m_dataSource != nullptr) {
+        if (absolute_byte_offset > static_cast<FLAC__uint64>(m_dataSourceSize)) {
+            return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
+        }
+        m_decOffset = static_cast<size_t>(absolute_byte_offset);
+        return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
+    }
+
     if (m_inBuf == nullptr) {
         return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
     }
@@ -121,24 +165,48 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 ::FLAC__StreamDecoderTellStatus FLACDecode::tell_callback(FLAC__uint64 *absolute_byte_offset)
 {
-    if (m_inBuf == nullptr || absolute_byte_offset == nullptr) {
+    if (absolute_byte_offset == nullptr) {
         return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
     }
+
+    if (m_dataSource != nullptr) {
+        *absolute_byte_offset = static_cast<FLAC__uint64>(m_decOffset);
+        return FLAC__STREAM_DECODER_TELL_STATUS_OK;
+    }
+
+    if (m_inBuf == nullptr) {
+        return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
+    }
+
     *absolute_byte_offset = static_cast<FLAC__uint64>(m_decOffset);
     return FLAC__STREAM_DECODER_TELL_STATUS_OK;
 }
 
 ::FLAC__StreamDecoderLengthStatus FLACDecode::length_callback(FLAC__uint64 *stream_length)
 {
-    if (m_inBuf == nullptr || stream_length == nullptr) {
+    if (stream_length == nullptr) {
         return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
     }
+
+    if (m_dataSource != nullptr) {
+        *stream_length = static_cast<FLAC__uint64>(m_dataSourceSize);
+        return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
+    }
+
+    if (m_inBuf == nullptr) {
+        return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
+    }
+
     *stream_length = static_cast<FLAC__uint64>(m_inBuf->size());
     return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
 }
 
 bool FLACDecode::eof_callback()
 {
+    if (m_dataSource != nullptr) {
+        return m_decOffset >= static_cast<size_t>(m_dataSourceSize);
+    }
+
     if (m_inBuf == nullptr) {
         return true;
     }
