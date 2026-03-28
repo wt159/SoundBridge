@@ -115,15 +115,9 @@ start .\package\SoundBridge_portable_v3\SoundBridge.exe
 - 用户界面模块
 - 音频解码模块
 - 音频信息模块
-
-#### 进行中
-
 - ASF 文件解码
-
-#### 待办
-
-- M4A
-- AMR
+- M4A 文件解码
+- AMR 文件解码
 
 ### 维护约定
 
@@ -253,7 +247,8 @@ ctest -R sdk_media_smoke --output-on-failure
 如需过滤扩展名或限制数量，可直接运行测试程序：
 
 ```bat
-E:\flushbonad\github\SoundBridge\build\sdk\test\TestSdkSuite.exe media .m4a
+:: (在 build 目录执行)
+.\sdk\test\TestSdkSuite.exe media .m4a
 ```
 
 ### 按改动类型最小回归
