@@ -22,12 +22,32 @@ cmake --install .
 ```shell
 cd SoundBridge/sdk/3rdparty
 mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DBUILD_OPTION_FFMPEG=ON -DBUILD_OPTION_BOOST=ON -G "Unix Makefiles"
+cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug \
+    -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+    -G "Unix Makefiles" \
+    -DBUILD_OPTION_BOOST=OFF \
+    -DBUILD_OPTION_FFMPEG=OFF \
+    -DBUILD_OPTION_FLAC=OFF \
+    -DBUILD_OPTION_OGG=OFF \
+    -DBUILD_OPTION_VORBIS=OFF \
+    -DBUILD_OPTION_SDL2=ON \
+    -DBUILD_OPTION_ZLIB=OFF
 cmake --build .
 cmake --install .
 ```
 
 ### 注意事项
+
+**Linux 平台编译 SDL 时强制依赖 PulseAudio**。若未安装，cmake 配置阶段会报错并提示安装命令：
+
+```shell
+# Ubuntu/Debian
+sudo apt install libpulse-dev
+# Fedora/RHEL
+sudo dnf install pulseaudio-libs-devel
+# Arch Linux
+sudo pacman -S libpulse
+```
 
 Ubuntu下编译需要安装一些依赖：
 

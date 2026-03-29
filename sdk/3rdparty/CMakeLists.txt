@@ -107,6 +107,20 @@ endif()
 
 # SDL
 if(BUILD_OPTION_SDL2 STREQUAL "ON")
+    # Linux: PulseAudio is required. Fail fast if libpulse-simple is not installed.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SB_PULSEAUDIO libpulse-simple)
+        if(NOT SB_PULSEAUDIO_FOUND)
+            message(FATAL_ERROR
+                "[SoundBridge] PulseAudio development library (libpulse-simple) not found.\n"
+                "Please install it before building SDL:\n"
+                "  Ubuntu/Debian: sudo apt install libpulse-dev\n"
+                "  Fedora/RHEL:   sudo dnf install pulseaudio-libs-devel\n"
+                "  Arch Linux:    sudo pacman -S libpulse\n")
+        endif()
+        set(SDL_PULSEAUDIO ON CACHE BOOL "Use PulseAudio (forced on Linux)" FORCE)
+    endif()
     add_subdirectory(${3RDPARTY_DIR}/SDL-release-2.28.1)
 endif()
 
