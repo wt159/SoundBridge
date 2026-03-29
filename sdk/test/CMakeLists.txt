@@ -153,6 +153,7 @@ set(UNIT_TEST_SOURCES
     unit/test_cosmos.cpp
     unit/test_utils.cpp
     unit/test_audio.cpp
+    unit/test_audio_device.cpp
     unit/test_extractor.cpp
     unit/test_decode.cpp
 )
@@ -166,6 +167,7 @@ target_link_libraries(UnitTests
     Extractor
     AudioResample
     AudioDecode
+    AudioDevice
     utils
 )
 
@@ -177,6 +179,7 @@ target_include_directories(UnitTests
     ${SDK_ROOT_DIR}/audio/common
     ${SDK_ROOT_DIR}/audio/resample
     ${SDK_ROOT_DIR}/audio/decode
+    ${SDK_ROOT_DIR}/audio/device
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
     ${CMAKE_CURRENT_SOURCE_DIR}/mocks

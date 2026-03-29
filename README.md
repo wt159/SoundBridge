@@ -234,6 +234,16 @@ ctest -R sdk_decode_tests --output-on-failure
 ctest -R sdk_all_tests --output-on-failure
 ```
 
+### UnitTests（Doctest）
+
+```bash
+# 构建 UnitTests
+cmake --build . --target UnitTests
+
+# 运行所有单元测试
+ctest -R sdk_unit_tests --output-on-failure
+```
+
 ### 轻量解封装/解码冒烟测试
 
 针对 `music` 目录的媒体文件进行快速验证（无需整编 APP）：
@@ -256,5 +266,6 @@ ctest -R sdk_media_smoke --output-on-failure
 - `utils / LogWrapper`：`ctest -R sdk_core_tests --output-on-failure`
 - `audio/resample`：`ctest -R sdk_resample_tests --output-on-failure`
 - `audio/decode`：`ctest -R sdk_decode_tests --output-on-failure`
+- `audio/device`：`ctest -R sdk_unit_tests --output-on-failure`
 - `extractor / 媒体格式兼容`：`ctest -R sdk_decode_tests --output-on-failure` + `ctest -R sdk_media_smoke --output-on-failure`
 - `跨模块或发布前`：`ctest -R sdk_ --output-on-failure`

@@ -38,7 +38,6 @@ private:
     void printInfo();
     void printfSDLAudioSpec(SDL_AudioSpec *spec);
     void SDLAudioSpec2AudioSpec(SDL_AudioSpec *sdlSpec, AudioSpec &spec);
-    void AudioSpec2SDLAudioSpec(AudioSpec &spec, SDL_AudioSpec *sdlSpec);
     static void audioCallback(void *userdata, Uint8 *stream, int len);
 };
 
@@ -234,47 +233,6 @@ void AudioDevice::Impl::SDLAudioSpec2AudioSpec(SDL_AudioSpec *sdlSpec, AudioSpec
     }
     spec.bytesPerSample = getBytePreSampleByAudioFormat(spec.format);
     spec.bitsPerSample  = spec.bytesPerSample * 8;
-}
-
-void AudioDevice::Impl::AudioSpec2SDLAudioSpec(AudioSpec &spec, SDL_AudioSpec *sdlSpec)
-{
-    sdlSpec->freq     = spec.sampleRate;
-    sdlSpec->channels = spec.numChannel;
-    switch (spec.format) {
-    case AudioFormatU8:
-        sdlSpec->format = AUDIO_U8;
-        break;
-    case AudioFormatS8:
-        sdlSpec->format = AUDIO_S8;
-        break;
-    case AudioFormatU16:
-        sdlSpec->format = AUDIO_U16;
-        break;
-    case AudioFormatU16BE:
-        sdlSpec->format = AUDIO_U16MSB;
-        break;
-    case AudioFormatS16:
-        sdlSpec->format = AUDIO_S16;
-        break;
-    case AudioFormatS16BE:
-        sdlSpec->format = AUDIO_S16MSB;
-        break;
-    case AudioFormatS32:
-        sdlSpec->format = AUDIO_S32;
-        break;
-    case AudioFormatS32BE:
-        sdlSpec->format = AUDIO_S32MSB;
-        break;
-    case AudioFormatFLT32:
-        sdlSpec->format = AUDIO_F32;
-        break;
-    case AudioFormatFLT32BE:
-        sdlSpec->format = AUDIO_F32MSB;
-        break;
-    default:
-        LOG_FATAL(LOG_TAG, "Audio format not supported");
-        break;
-    }
 }
 
 void AudioDevice::Impl::audioCallback(void *userdata, Uint8 *stream, int len)

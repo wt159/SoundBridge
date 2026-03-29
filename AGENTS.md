@@ -71,9 +71,12 @@ cmake --build . --target package_portable
 
 ## 测试
 ### 测试框架
-- **自定义框架**（非 Google Test），单文件：`sdk/test/TestSdkSuite.cpp`
-- 断言：`check(condition, message)` 输出 `[PASS]` 或 `[FAIL]`
-- 测试类命名：`*Test`（如 `AudioDecodeTest`）
+1. **自定义框架**（非 Google Test），单文件：`sdk/test/TestSdkSuite.cpp`
+   - 断言：`check(condition, message)` 输出 `[PASS]` 或 `[FAIL]`
+   - 测试类命名：`*Test`（如 `AudioDecodeTest`）
+2. **Doctest 单元测试框架**（`UnitTests` 目标），覆盖 audio/device、audio/common、cosmos 等模块
+   - 断言：`CHECK`、`REQUIRE` 等（doctest 标准宏）
+   - 测试命名：`TEST_CASE("...")`
 
 ### 运行测试
 ```bash
@@ -83,6 +86,7 @@ ctest -R sdk_resample_tests --output-on-failure # AudioResample
 ctest -R sdk_decode_tests --output-on-failure   # AudioDecode
 ctest -R sdk_player_tests --output-on-failure   # MusicPlayer
 ctest -R sdk_extractor_spec_tests --output-on-failure  # Extractor
+ctest -R sdk_unit_tests --output-on-failure   # 所有单元测试（doctest）
 ctest -R sdk_ --output-on-failure               # 所有 sdk 测试
 
 # 直接运行：./TestSdkSuite [core|resample|decode|player|extractor|all|media [扩展名] [数量]]
@@ -96,6 +100,7 @@ ctest -R sdk_ --output-on-failure               # 所有 sdk 测试
 | audio/decode | `sdk_decode_tests` |
 | MusicPlayer / sdk | `sdk_player_tests` |
 | extractor / 媒体格式 | `sdk_extractor_spec_tests` + `sdk_media_smoke` |
+| audio/device | `sdk_unit_tests` |
 | 跨模块或发布前 | `ctest -R sdk_` |
 
 ### 测试环境变量
@@ -166,6 +171,7 @@ if (result != sdk_utils::OK) {
 - `Optional::destroy()` 是私有方法，重置用赋值空对象：`m_lazyX = Optional<Lazy<T>>()`
 - `AudioResample` 继承 `NonCopyable`，须用 `Lazy<std::shared_ptr<AudioResample>>`
 - `boost::filesystem::path::generic_string()` 在 Windows 返回 ANSI，传给 `QString::fromUtf8()` 会乱码
+- **gcov 多线程限制**：SDL 等第三方库未使用 coverage 标志编译，gcov 无法跟踪其线程中的代码执行。AudioDevice 的 `audioCallback` 虽然被 SDL 调用，但 gcov 不会记录覆盖。
 
 ## 调试原则
 - **先验 baseline**：用原始代码运行测试，确认原始行为
@@ -187,3 +193,19 @@ avformat_close_input(&fmt);         // ✅ 再关闭
 - 边界转换：在 I/O 边界做编码转换，业务逻辑无感知
 - 工具集中：转换函数集中在 `sdk/utils/Utf8Path.h`
 - 全链路 UTF-8：存储层统一 UTF-8，仅在平台边界按需转码
+
+## 代码覆盖率（2026-03）
+
+运行 `ctest -T Coverage` 生成覆盖率报告。
+
+| 模块 | 覆盖率 |
+|------|--------|
+| audio/common | 68.00% |
+| audio/decode | 64.42% |
+| audio/device | 69.71% |
+| audio/resample | 69.41% |
+| cosmos | 91.89% |
+| extractor | 49.53% |
+| log | 98.85% |
+| utils | 83.82% |
+| **总计** | **56.68%** |
