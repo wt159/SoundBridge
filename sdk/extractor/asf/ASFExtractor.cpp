@@ -318,8 +318,11 @@ status_t ASFExtractor::initWithFFmpegDemux()
     m_audioSpec.bytesPerSample
         = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate          = static_cast<int>(par->bit_rate);
-    m_blockAlign       = static_cast<int>(par->block_align);
+    if (fmt->duration > 0) {
+        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
+    }
+    m_bitRate    = static_cast<int>(par->bit_rate);
+    m_blockAlign = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
         m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);

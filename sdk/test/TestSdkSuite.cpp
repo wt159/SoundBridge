@@ -454,6 +454,125 @@ bool test_player_api()
     return ok;
 }
 
+bool test_extractor_single(const char *ext, const char *filename)
+{
+    printf("  test_extractor_single: START\n");
+    fflush(stdout);
+
+    std::string media_dir = get_env_or_default("SB_MEDIA_DIR", "../../music");
+    std::string path      = media_dir + "/" + filename;
+    printf("  test_extractor_single: path=%s\n", path.c_str());
+    fflush(stdout);
+
+    printf("  test_extractor_single: creating FileSource\n");
+    fflush(stdout);
+    std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+    printf("  test_extractor_single: FileSource created, initCheck=%d\n", src->initCheck());
+    fflush(stdout);
+
+    if (!src || src->initCheck() != sdk_utils::OK) {
+        printf("[SKIP] %s (file not found)\n", ext);
+        return true;
+    }
+
+    printf("  test_extractor_single: creating extractor for %s\n", ext);
+    fflush(stdout);
+
+    printf("  calling ExtractorFactory::createExtractor...\n");
+    fflush(stdout);
+    ExtractorHelper *raw_ext = ExtractorFactory::createExtractor(src.get(), ext, true);
+    printf("  ExtractorFactory::createExtractor returned\n");
+    fflush(stdout);
+
+    std::unique_ptr<ExtractorHelper> extHelper(raw_ext);
+    printf("  test_extractor_single: extractor created\n");
+    fflush(stdout);
+
+    bool ok = extHelper && extHelper->initCheck() == sdk_utils::OK;
+    printf("  %s initCheck: %s\n", ext, ok ? "OK" : "FAIL");
+    fflush(stdout);
+
+    if (ok) {
+        AudioSpec s = extHelper->getAudioSpec();
+        printf("  sampleRate: %d, numChannel: %d, durationMs: %zu\n", s.sampleRate, s.numChannel,
+               s.durationMs);
+    }
+
+    printf("  about to destroy extractor...\n");
+    fflush(stdout);
+    extHelper.reset();
+    printf("  extractor destroyed\n");
+    fflush(stdout);
+
+    printf("  about to destroy FileSource...\n");
+    fflush(stdout);
+    src.reset();
+    printf("  FileSource destroyed\n");
+    fflush(stdout);
+
+    printf("  %s completed\n", ext);
+    fflush(stdout);
+    return ok;
+}
+
+bool test_extractor_isolated()
+{
+    printf("\n=== Testing extractors one by one ===\n");
+    fflush(stdout);
+
+    printf("\n1. Testing WAV...\n");
+    fflush(stdout);
+    bool ok = test_extractor_single(".wav", "music.wav");
+    printf("   WAV done, ok=%d\n", ok);
+
+    printf("\n2. Testing AIFF...\n");
+    ok &= test_extractor_single(".aiff", "俱乐部音乐循环-Freesound.aiff");
+    printf("   AIFF done, ok=%d\n", ok);
+
+    printf("\n3. Testing FLAC...\n");
+    ok &= test_extractor_single(".flac", "小镇姑娘-陶喆.flac");
+    printf("   FLAC done, ok=%d\n", ok);
+
+    printf("\n4. Testing MP3...\n");
+    ok &= test_extractor_single(".mp3", "消愁-毛不易.320.mp3");
+    printf("   MP3 done, ok=%d\n", ok);
+
+    printf("\n5. Testing OGG...\n");
+    ok &= test_extractor_single(".ogg", "Ringtones-耳聆网.ogg");
+    printf("   OGG done, ok=%d\n", ok);
+
+    printf("\n6. Testing AAC...\n");
+    ok &= test_extractor_single(".aac", "48000_fltp_1.aac");
+    printf("   AAC done, ok=%d\n", ok);
+
+    printf("\n7. Testing M4A...\n");
+    ok &= test_extractor_single(".m4a", "摇滚乐_Freesound.m4a");
+    printf("   M4A done, ok=%d\n", ok);
+
+    printf("\n8. Testing ASF...\n");
+    ok &= test_extractor_single(".asf", "萨克斯机.asf");
+    printf("   ASF done, ok=%d\n", ok);
+
+    printf("\n9. Testing APE...\n");
+    ok &= test_extractor_single(".ape", "music-ape.ape");
+    printf("   APE done, ok=%d\n", ok);
+
+    printf("\n10. Testing MKV...\n");
+    ok &= test_extractor_single(".mkv", "music-mkv.mkv");
+    printf("   MKV done, ok=%d\n", ok);
+
+    printf("\n11. Testing WMA...\n");
+    ok &= test_extractor_single(".wma", "十七岁-陶喆.96.wma");
+    printf("   WMA done, ok=%d\n", ok);
+
+    printf("\n12. Testing AMR...\n");
+    ok &= test_extractor_single(".amr", "小镇姑娘-陶喆.96.amr");
+    printf("   AMR done, ok=%d\n", ok);
+
+    printf("\n=== All isolated tests done ===\n\n");
+    return ok;
+}
+
 bool test_extractor_spec()
 {
     bool ok               = true;
@@ -599,7 +718,7 @@ bool test_extractor_spec()
                 AudioSpec s  = ext->getAudioSpec();
                 ok          &= check(s.sampleRate > 0, "ExtractorSpec m4a sampleRate");
                 ok          &= check(s.numChannel > 0, "ExtractorSpec m4a numChannel");
-                // M4A: durationMs >= 0 (FFmpeg demux may or may not populate)
+                ok          &= check(s.durationMs > 0, "ExtractorSpec m4a durationMs");
             }
         } else {
             std::printf("[SKIP] ExtractorSpec m4a (file not found)\n");
@@ -618,6 +737,7 @@ bool test_extractor_spec()
                 AudioSpec s  = ext->getAudioSpec();
                 ok          &= check(s.sampleRate > 0, "ExtractorSpec asf sampleRate");
                 ok          &= check(s.numChannel > 0, "ExtractorSpec asf numChannel");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec asf durationMs");
             }
         } else {
             std::printf("[SKIP] ExtractorSpec asf (file not found)\n");
@@ -638,6 +758,7 @@ bool test_extractor_spec()
                 ok          &= check(s.numChannel > 0, "ExtractorSpec ape numChannel");
                 ok          &= check(s.bitsPerSample > 0, "ExtractorSpec ape bitsPerSample");
                 ok          &= check(s.format != AudioFormatUnknown, "ExtractorSpec ape format");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec ape durationMs");
             }
         } else {
             std::printf("[SKIP] ExtractorSpec ape (file not found)\n");
@@ -656,9 +777,50 @@ bool test_extractor_spec()
                 AudioSpec s  = ext->getAudioSpec();
                 ok          &= check(s.sampleRate > 0, "ExtractorSpec mkv sampleRate");
                 ok          &= check(s.numChannel > 0, "ExtractorSpec mkv numChannel");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec mkv durationMs");
             }
         } else {
             std::printf("[SKIP] ExtractorSpec mkv (file not found)\n");
+        }
+    }
+
+    // WMA (uses ASFExtractor)
+    {
+        std::string path
+            = media_dir + "/\xe5\x8d\x81\xe4\xb8\x83\xe5\xb2\xb3-\xe9\x99\xb6\xe5\x96\x86.96.wma";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".wma", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec wma initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec wma sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec wma numChannel");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec wma durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec wma (file not found)\n");
+        }
+    }
+
+    // AMR (uses ASFExtractor)
+    {
+        std::string path = media_dir
+            + "/\xe5\xb0\x8f\xe9\x95\x87\xe5\xa7\x91\xe5\xa8\x98-\xe9\x99\xb6\xe5\x96\x86.96.amr";
+        std::shared_ptr<FileSource> src(new FileSource(path.c_str()));
+        if (src && src->initCheck() == sdk_utils::OK) {
+            std::unique_ptr<ExtractorHelper> ext(
+                ExtractorFactory::createExtractor(src.get(), ".amr", true));
+            ok &= check(ext && ext->initCheck() == sdk_utils::OK, "ExtractorSpec amr initCheck");
+            if (ext && ext->initCheck() == sdk_utils::OK) {
+                AudioSpec s  = ext->getAudioSpec();
+                ok          &= check(s.sampleRate > 0, "ExtractorSpec amr sampleRate");
+                ok          &= check(s.numChannel > 0, "ExtractorSpec amr numChannel");
+                ok          &= check(s.durationMs > 0, "ExtractorSpec amr durationMs");
+            }
+        } else {
+            std::printf("[SKIP] ExtractorSpec amr (file not found)\n");
         }
     }
 
@@ -692,6 +854,11 @@ bool run_group(const std::string &group)
 
     if (group == "extractor") {
         ok &= test_extractor_spec();
+        return ok;
+    }
+
+    if (group == "extractor_iso") {
+        ok &= test_extractor_isolated();
         return ok;
     }
 

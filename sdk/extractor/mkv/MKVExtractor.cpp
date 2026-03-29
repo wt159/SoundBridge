@@ -211,6 +211,10 @@ status_t MKVExtractor::initWithFFmpegDemux()
     }
     av_packet_free(&pkt);
 
+    if (fmt->duration > 0) {
+        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
+    }
+
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
