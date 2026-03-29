@@ -21,7 +21,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_extractor(nullptr)
     , m_codecID(AUDIO_CODEC_ID_NONE)
     , m_durationMs(0)
-    , m_resample(nullptr)
+    , m_lazyResample()
     , m_interleaveBuf()
     , m_resampleBuf()
     , m_state(StreamDecoderState::IDLE)
@@ -58,15 +58,30 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
         * static_cast<uint64_t>(m_srcSpec.numChannel)
         * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
 
-    m_resample.reset();
+    m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
     if (!(m_srcSpec == m_devSpec)) {
-        AudioSpec inSpec  = m_srcSpec;
-        AudioSpec outSpec = m_devSpec;
-        inSpec.samples    = 1024;
-        m_resample        = std::make_shared<AudioResample>(inSpec, outSpec);
-        if (m_resample == nullptr || m_resample->initCheck() != sdk_utils::OK) {
-            m_state.store(StreamDecoderState::ERROR);
-            return sdk_utils::INVALID_OPERATION;
+        auto factory = [this]() -> std::shared_ptr<AudioResample> {
+            AudioSpec inSpec  = m_srcSpec;
+            AudioSpec outSpec = m_devSpec;
+            inSpec.samples    = 1024;
+            auto r            = std::make_shared<AudioResample>(inSpec, outSpec);
+            if (!r || r->initCheck() != sdk_utils::OK) {
+                LOGE("lazy resample init failed");
+                return nullptr;
+            }
+            LOGI("lazy resample init ok, format=%d", m_srcSpec.format);
+            return r;
+        };
+        m_lazyResample.emplace(factory);
+        if (m_srcSpec.format != AudioFormatUnknown) {
+            // format 已知时立即初始化，否则等首帧回调
+            auto r = m_lazyResample->Value();
+            if (r == nullptr) {
+                m_state.store(StreamDecoderState::ERROR);
+                return sdk_utils::INVALID_OPERATION;
+            }
+        } else {
+            LOGI("srcSpec format unknown, defer resample init to first decode callback");
         }
     }
 
@@ -314,6 +329,15 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
         return;
     }
 
+    // 懒初始化：format 未知时在首帧回调处触发 Lazy 工厂
+    if (m_lazyResample.isInit() && !m_lazyResample->IsValueCreated()
+        && out.spec.format != AudioFormatUnknown) {
+        m_srcSpec.format         = out.spec.format;
+        m_srcSpec.bytesPerSample = out.spec.bytesPerSample;
+        m_srcSpec.bitsPerSample  = out.spec.bitsPerSample;
+        m_lazyResample->Value(); // 触发工厂函数，此时 m_srcSpec.format 已更新
+    }
+
     size_t frameBytes = static_cast<size_t>(out.spec.samples)
         * static_cast<size_t>(out.spec.numChannel) * static_cast<size_t>(out.spec.bytesPerSample);
     if (frameBytes == 0 || out.lineData == nullptr) {
@@ -356,7 +380,10 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
 
     const char *outData = writePtr;
     size_t outLen       = writeLen;
-    if (m_resample != nullptr && writeLen > 0) {
+    std::shared_ptr<AudioResample> resamplePtr
+        = m_lazyResample.isInit() && m_lazyResample->IsValueCreated() ? m_lazyResample->Value()
+                                                                      : nullptr;
+    if (resamplePtr != nullptr && writeLen > 0) {
         uint64_t numerator = static_cast<uint64_t>(writeLen)
             * static_cast<uint64_t>(m_devSpec.sampleRate)
             * static_cast<uint64_t>(m_devSpec.numChannel)
@@ -372,7 +399,7 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
         m_resampleBuf.resize(estimate);
         size_t resampleLen = estimate;
         int ret
-            = m_resample->resample((void *)writePtr, writeLen, m_resampleBuf.data(), &resampleLen);
+            = resamplePtr->resample((void *)writePtr, writeLen, m_resampleBuf.data(), &resampleLen);
         if (ret < 0) {
             return false;
         }

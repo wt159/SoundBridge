@@ -17,46 +17,38 @@ cmake --build .
 
 # 3) SDK 核心回归
 ctest -R sdk_core_tests --output-on-failure
-
-# 4) 媒体冒烟（可选）
-ctest -R sdk_media_smoke --output-on-failure
 ```
 
 ## 仓库结构
-- `app/` Qt UI 应用（入口：`app/main.cpp`）
-- `sdk/` 核心 SDK（播放器、解码、重采样、设备、提取器、日志）
-- `sdk/audio/` 音频模块（decode/resample/device/common）
-- `sdk/extractor/` 媒体元数据提取
-- `sdk/utils/` 共享工具
-- `sdk/test/` SDK 测试（`TestSdkSuite`）
-- `sdk/3rdparty/` 第三方依赖构建与预构建 `dist/`
-- `cmake/` 工具链与构建辅助
-- `music/` 示例媒体文件（测试用）
+```
+app/              Qt UI 应用（入口：app/main.cpp）
+sdk/
+  audio/          decode / resample / device / common
+  extractor/      媒体元数据提取
+  utils/          共享工具（ErrorUtils、FileSearch 等）
+  log/            LogWrapper（Boost.Log 封装）
+  test/           TestSdkSuite（自定义测试框架，单文件 TestSdkSuite.cpp）
+  cosmos/         通用 C++ 工具组件（见下方说明）
+  3rdparty/       第三方依赖源码 + dist/<platform>
+cmake/            工具链与构建辅助
+music/            示例媒体文件（测试用）
+```
 
 ## 技术栈
 - 语言：C++11，UI：Qt5 Widgets，构建：CMake 3.2+
-- 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：SDL2
+- 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：PulseAudio（Linux）/ SDL2
 - 日志：Boost.Log，文件系统：Boost.Filesystem
-- 格式化：clang-format（`.clang-format`，WebKit 风格，4 空格缩进，100 列宽）
-- 静态分析：无 `.clang-tidy`，仅使用 `clang-format`
+- 格式化：clang-format（WebKit 风格，4 空格缩进，100 列宽）
 
 ## 架构与模块依赖
-从底层到高层：
 ```
 utils → LogWrapper → AudioResample/AudioDecode/AudioDevice → Extractor → sdk → SoundBridge
 ```
-
-**构建目标**：`SoundBridge`（Qt App）、`sdk`、`AudioDecode`/`AudioResample`/`AudioDevice`、`Extractor`、`LogWrapper`、`utils`、`TestSdkSuite`、`package_portable`（Windows/Linux）
-
 **约束**：禁止层间循环依赖；优先在最低合适层添加功能并向上暴露。
 
-## 构建命令
-### 前置条件
-1. 构建第三方依赖（输出到 `sdk/3rdparty/dist/<platform>`）
-2. 使用 `cmake/toolchain/` 中正确工具链
-3. 确保 CMake 可发现 Qt5 和 SDL2
+**构建目标**：`SoundBridge`、`sdk`、`AudioDecode`、`AudioResample`、`AudioDevice`、`Extractor`、`LogWrapper`、`utils`、`TestSdkSuite`、`package_portable`
 
-### 构建（选择对应平台）
+## 构建命令
 ```bash
 mkdir build && cd build
 cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
@@ -64,116 +56,158 @@ cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
   -G "<生成器>"
 cmake --build .
 ```
-- **Linux x86_64**：`toolchain.linux_x86_64_gcc.cmake`，生成器 `"Unix Makefiles"`
-- **Windows MinGW**：`toolchain.windows_x86_64_mingw.cmake`，生成器 `"MinGW Makefiles"`
-- **嵌入式 Linux ARM**：`toolchain.linux_arm_gnueabihf_gcc.cmake`，生成器 `"Unix Makefiles"`
+| 平台 | 工具链文件 | 生成器 |
+|------|-----------|--------|
+| Linux x86_64 | `toolchain.linux_x86_64_gcc.cmake` | `Unix Makefiles` |
+| Windows MinGW | `toolchain.windows_x86_64_mingw.cmake` | `MinGW Makefiles` |
+| 嵌入式 Linux ARM | `toolchain.linux_arm_gnueabihf_gcc.cmake` | `Unix Makefiles` |
 
 ### 打包
 ```bash
 cmake --build . --target package_portable
 ```
-- **Windows**：输出 `package/SoundBridge_portable_v3`，使用 `windeployqt` 部署 Qt 依赖
-- **Linux**：输出 `package/SoundBridge_portable/`，使用 `ldd` 自动收集 `.so` 库，生成 `run.sh` 启动脚本
+- **Windows**：`package/SoundBridge_portable_v3/`，使用 `windeployqt`
+- **Linux**：`package/SoundBridge_portable/`，使用 `ldd` 收集 `.so`，生成 `run.sh`
 
 ## 测试
 ### 测试框架
-- **自定义框架**（非 Google Test）
+- **自定义框架**（非 Google Test），单文件：`sdk/test/TestSdkSuite.cpp`
 - 断言：`check(condition, message)` 输出 `[PASS]` 或 `[FAIL]`
 - 测试类命名：`*Test`（如 `AudioDecodeTest`）
 
-### 单元测试
-> Windows 注意：当前 `sdk/test/CMakeLists.txt` 通过顶层缓存变量
-> `SOUNDBRIDGE_QT_TEST_BIN_DIR` 注入 Qt 测试运行目录。若 Qt 安装路径与默认配置不同，
-> 需在首次 `cmake ..` 时覆盖该变量，或改用 `scripts/run_sdk_tests.ps1`。
-
+### 运行测试
 ```bash
-# 构建测试
+# 构建测试二进制
 cmake --build . --target TestSdkSuite
 
-# 运行全部
-ctest -R sdk_ --output-on-failure
+# CTest 运行（推荐，在 build/ 目录下）
+ctest -R sdk_core_tests      --output-on-failure   # utils / LogWrapper
+ctest -R sdk_resample_tests  --output-on-failure   # AudioResample
+ctest -R sdk_decode_tests    --output-on-failure   # AudioDecode
+ctest -R sdk_player_tests    --output-on-failure   # MusicPlayer
+ctest -R sdk_extractor_spec_tests --output-on-failure  # Extractor
+ctest -R sdk_all_tests       --output-on-failure   # 全部单元测试
+ctest -R sdk_media_smoke     --output-on-failure   # 媒体冒烟
+ctest -R sdk_                --output-on-failure   # 所有 sdk 测试
 
-# 运行单个组
-ctest -R sdk_core_tests --output-on-failure
-ctest -R sdk_resample_tests --output-on-failure
-ctest -R sdk_decode_tests --output-on-failure
-ctest -R sdk_all_tests --output-on-failure
-
-# 或直接运行（在 build/sdk/test 目录下）
+# 直接运行单个分组（在 build/sdk/test/ 目录下）
 ./TestSdkSuite core
 ./TestSdkSuite resample
 ./TestSdkSuite decode
+./TestSdkSuite player
+./TestSdkSuite extractor
 ./TestSdkSuite all
-```
-
-### 媒体冒烟测试
-```bash
 ./TestSdkSuite media [扩展名] [数量限制]
 # 示例：./TestSdkSuite media .m4a 5
-
-# 等效 CTest 用例名（固定）
-ctest -R sdk_media_smoke --output-on-failure
 ```
 
-### 环境变量
-- `SB_MEDIA_DIR` - 媒体目录（默认：`../../music`）
-- `SB_MEDIA_FILTER` - 扩展名过滤（如 `.m4a`）
-- `SB_MEDIA_LIMIT` - 文件数量限制
+> **没有「单个测试用例」粒度的运行方式**。最小粒度是分组（group），如 `core`、`decode` 等。
+> 需要隔离单个用例时，在 `TestSdkSuite.cpp` 中临时注释掉其他用例后重新构建。
 
 ### 按改动类型最小回归
-- **utils / LogWrapper**：`ctest -R sdk_core_tests --output-on-failure`
-- **audio/resample**：`ctest -R sdk_resample_tests --output-on-failure`
-- **audio/decode**：`ctest -R sdk_decode_tests --output-on-failure`
-- **extractor / 媒体格式兼容**：`ctest -R sdk_decode_tests --output-on-failure` + `ctest -R sdk_media_smoke --output-on-failure`
-- **跨模块或发布前**：`ctest -R sdk_ --output-on-failure`
+| 改动范围 | 最小回归命令 |
+|---------|-------------|
+| utils / LogWrapper | `sdk_core_tests` |
+| audio/resample | `sdk_resample_tests` |
+| audio/decode | `sdk_decode_tests` |
+| MusicPlayer / sdk | `sdk_player_tests` |
+| extractor / 媒体格式 | `sdk_extractor_spec_tests` + `sdk_media_smoke` |
+| 跨模块或发布前 | `ctest -R sdk_` |
+
+### 测试环境变量
+- `SB_MEDIA_DIR` — 媒体目录（默认：`../../music`）
+- `SB_MEDIA_FILTER` — 扩展名过滤（如 `.m4a`）
+- `SB_MEDIA_LIMIT` — 文件数量限制
+
+> **Windows 注意**：若 Qt 安装路径非默认，需在 cmake 时设置
+> `-DSOUNDBRIDGE_QT_TEST_BIN_DIR=<Qt bin 路径>`，或使用 `scripts/run_sdk_tests.ps1`。
+
+## sdk/cosmos 工具组件
+头文件位于 `sdk/cosmos/`，已通过 CMake include path 暴露，直接 `#include` 即可。
+
+| 组件 | 说明 |
+|------|------|
+| `Optional<T>` | 类似 std::optional（C++11 兼容），用 `isInit()` 判断是否有值 |
+| `Lazy<T>` | 懒加载包装，首次调用 `Value()` 时执行工厂函数；`IsValueCreated()` 查询状态 |
+| `NonCopyable` | 禁止拷贝的基类，SDK 内部类广泛继承 |
+| `ScopeGuard` | RAII 作用域退出回调 |
+| `SyncQueue<T>` | 线程安全队列 |
+| `WorkQueue` | 单线程任务队列 |
+| `ThreadPool` | 简单线程池 |
+| `Timer` | 定时器工具 |
+| `Variant<...>` | 类型安全联合体（类似 std::variant） |
+| `Range<T>` | 范围迭代辅助 |
+| `SharedptrUtil` | shared_ptr 辅助函数 |
+
+### Lazy<T> 使用示例
+```cpp
+#include "Lazy.hpp"
+#include "Optional.hpp"
+
+// 声明
+Optional<Lazy<std::shared_ptr<AudioResample>>> m_lazyResample;
+
+// 注册工厂（捕获 this 可在触发时读取最新状态）
+auto factory = [this]() -> std::shared_ptr<AudioResample> {
+    AudioSpec in = m_srcSpec;   // 触发时读取，非构造时
+    in.samples   = 1024;
+    auto r = std::make_shared<AudioResample>(in, m_devSpec);
+    return (r && r->initCheck() == sdk_utils::OK) ? r : nullptr;
+};
+m_lazyResample.emplace(factory);
+
+// 触发初始化
+auto r = m_lazyResample->Value();
+
+// 重置（切换曲目时）
+m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
+```
 
 ## 代码风格
-### 格式化
-- `clang-format`（WebKit 风格，4 空格缩进，100 列宽）
-- 命令：`clang-format -i <file>`
+### 格式化（.clang-format — WebKit）
+- 命令：`clang-format -i <file>`（修改代码后必须运行）
+- 缩进：4 空格，列宽 100，禁用 Tab
+- 指针/引用右对齐：`int *ptr`、`std::string &str`（`PointerAlignment: Right`）
+- 连续赋值对齐：`AlignConsecutiveAssignments: true`
+- 连续宏定义对齐：`AlignConsecutiveMacros: true`
+- 函数定义大括号换行，类/控制语句大括号不换行
+- `short if` 不允许单行：`AllowShortIfStatementsOnASingleLine: Never`
 
 ### 命名约定
 | 类型 | 风格 | 示例 |
 |------|------|------|
 | 类/结构体/枚举 | PascalCase | `MusicPlayer`、`ErrorCode` |
 | 函数 | camelCase | `getAudioFormat`、`initCheck` |
-| 成员变量 | m_ + camelCase | `m_impl`、`m_player` |
-| 常量 | k + PascalCase | `kTag`、`kOkInfo` |
+| 成员变量 | `m_` + camelCase | `m_impl`、`m_player` |
+| 常量 | `k` + PascalCase | `kTag`、`kOkInfo` |
 | 宏 | UPPER_SNAKE_CASE | `LOG_INFO`、`CHECK` |
 | 命名空间 | lowercase | `sdk`、`sdk_utils` |
 
-### 头文件与指针引用
-- 使用 `#pragma once`（非 `#ifndef`）
-- 系统头文件：`#include <vector>`，项目头文件：`#include "AudioDecode.h"`
-- 指针右对齐：`int *ptr`，引用右对齐：`std::string &str`
-
-### 导入顺序
-1. 项目头文件（如 `#include "AudioDecode.h"`）
-2. 系统头文件（如 `#include <vector>`）
-3. 第三方库（如 `#include <libavformat/avformat.h>`）
-
-### 大括号风格（WebKit）
-```cpp
-void foo()          class Foo {         if (condition) {
-{                   // body              // body
-    // body         };                  }
-}
-```
-函数定义换行；类/结构体/控制语句不换行。
+### 头文件规范
+- 使用 `#pragma once`（禁用 `#ifndef` 守卫）
+- **导入顺序**：① 项目头文件 → ② 系统头文件 → ③ 第三方库
+  ```cpp
+  #include "AudioDecode.h"          // 1. 项目
+  #include <string>                  // 2. 系统
+  #include <libavformat/avformat.h>  // 3. 第三方
+  ```
 
 ### 类型使用
-- 使用 `size_t` 而非 `off64_t`（跨平台兼容）
-- 优先使用 `std::string` 而非 C 风格字符串
-- 使用 `std::unique_ptr` 管理所有权，`std::shared_ptr` 共享所有权
-- 避免原始指针，除非与 C API 交互
+- 用 `size_t` 而非 `off64_t`（Windows 无 `sys/types.h`）
+- 优先 `std::string` 而非 C 字符串
+- 用 `std::unique_ptr` 管理所有权，`std::shared_ptr` 共享所有权
+- 避免裸指针，除非与 C API 交互
+- `AudioFormat` 枚举默认值为 `AudioFormatUnknown(-1)`；压缩格式（WMA 等）解码前 format 未知，需懒初始化处理
 
 ## 错误处理
-- 状态码：`sdk_utils::status_t`（0=OK，负数=错误），定义在 `sdk/utils/ErrorUtils.h`
-- 公共 API：`ErrorCode` 枚举类（`sdk/ErrorCode.hpp`），使用 `FormatError()` 格式化
+- 状态码类型：`sdk_utils::status_t`（`int32_t`，0=OK，负数=错误）
+- 定义于 `sdk/utils/ErrorUtils.h`
+- 常用常量：`OK`、`NO_MEMORY`、`INVALID_OPERATION`、`BAD_VALUE`、`NAME_NOT_FOUND`、
+  `PERMISSION_DENIED`、`NO_INIT`、`ALREADY_EXISTS`、`DEAD_OBJECT`、`TIMED_OUT`
+- 公共 API 枚举：`sdk::ErrorCode`（`sdk/ErrorCode.hpp`），使用 `FormatError()` 格式化
 - 日志宏：`LOG_INFO`/`LOG_ERROR`/`LOG_WARNING`/`LOG_DEBUG`
-- 短宏：`LOGI`/`LOGE`/`LOGW`/`LOGD`（需定义 `LOG_TAG`）
+- 短宏：`LOGI`/`LOGE`/`LOGW`/`LOGD`（需在文件顶部定义 `LOG_TAG`）
 
-### 错误处理示例
 ```cpp
 #define LOG_TAG "MyModule"
 
@@ -184,35 +218,9 @@ if (result != sdk_utils::OK) {
 }
 ```
 
-## 已知编译问题
-- `off64_t` 未声明：使用 `size_t` 替代（跨平台兼容，Windows 无 `sys/types.h`）
-- GCC 13+ 缺少 `<string>` 头文件：`std::unordered_map<std::string, ...>` 场景需显式包含
-- 指针比较 `ptr <= 0`：应改为 `ptr == nullptr` 或 `*ptr == 0`
-
-## 提交规范
-- 使用 `fix:`、`feat:`、`chore:`、`docs:` 等前缀
-- 示例：`fix: resolve cross-platform compilation issues`
-- 示例：`feat: add Linux portable packaging support`
-- 示例：`chore: add .cache to .gitignore`
-
-## .gitignore
-- `build/` - 构建输出
-- `package/` - 打包输出
-- `.cache/` - clangd 索引缓存
-- `sdk/3rdparty/dist/` - 第三方依赖预构建
-- `sdk/3rdparty/ffmpeg-4.4.4/` - FFmpeg 源码
-
-## Agent 指南
-### Do
-- 保持 SDK 模块边界；优先在最低合适层添加功能并向上暴露
-- 修改代码后运行 `clang-format -i <file>`
-- 按改动类型执行最小回归，至少运行对应 `sdk_*` 测试
-- 遵循命名约定、错误处理模式与 `#pragma once` 规则
-- 跨平台相关修改在 Windows 与 Linux 都验证编译
-- 若 `AGENTS.md` 与 `README.md` 冲突，以 `AGENTS.md` 为执行准，并在合适时同步 README
-
-### Don't
-- 不要引入层间循环依赖
-- 不要编辑 `sdk/3rdparty/`（除非明确是依赖源码升级）
-- 不要引入不必要头文件，保持依赖最小化
-- 不要破坏现有 PIMPL 封装边界（如 `MusicPlayer`）
+## 已知陷阱
+- `off64_t` 在 Windows 未声明 → 用 `size_t` 替代
+- Windows 平台避免使用 POSIX 专属类型和头文件
+- `Lazy<T>::Value()` 内部调用 `Optional::isInit()`（小写 i），不是 `IsInit()`
+- `Optional::destroy()` 是私有方法，重置请用赋值空对象：`m_lazyX = Optional<Lazy<T>>()`
+- `AudioResample` 继承 `NonCopyable`，不可直接放入 `Lazy<AudioResample>`，须用 `Lazy<std::shared_ptr<AudioResample>>`

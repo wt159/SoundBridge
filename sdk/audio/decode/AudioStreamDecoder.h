@@ -6,7 +6,9 @@
 #include "AudioRingBuffer.h"
 #include "ErrorUtils.h"
 #include "ExtractorHelper.hpp"
+#include "Lazy.hpp"
 #include "NonCopyable.hpp"
+#include "Optional.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -45,7 +47,7 @@ private:
     AudioCodecID m_codecID;
     uint64_t m_durationMs;
 
-    std::shared_ptr<AudioResample> m_resample;
+    Optional<Lazy<std::shared_ptr<AudioResample>>> m_lazyResample;
     std::vector<char> m_interleaveBuf;
     std::vector<char> m_resampleBuf;
 
