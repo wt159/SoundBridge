@@ -585,7 +585,7 @@ void MainWindow::scanSongs()
     QDir dir(QCoreApplication::applicationDirPath() + "/../../music");
     QDir dirbsolutePath(dir.absolutePath());
     if (dirbsolutePath.exists()) {
-        mController->addMusicDirectory(dirbsolutePath.absolutePath().toStdString());
+        mController->addMusicDirectory(dirbsolutePath.absolutePath().toUtf8().constData());
     } else {
         LogMessage(LogLevel::Warning, kTag, "dir not exist");
         LogPrintf(LogLevel::Warning, kTag, "dir is %s",
@@ -715,7 +715,9 @@ void MainWindow::handlePlayerError(int codeValue, const QString &detail, int tra
     const ErrorInfo &info = GetErrorInfo(code);
     QString title         = "Playback Error";
     QString message;
-    message += "Message: " + QString::fromStdString(FormatError(code, detail.toStdString())) + "\n";
+    message += "Message: "
+        + QString::fromUtf8(FormatError(code, std::string(detail.toUtf8().constData())).c_str())
+        + "\n";
     message += "Module: " + QString::fromUtf8(ToString(info.module)) + "\n";
     message += "Severity: " + QString::fromUtf8(ToString(info.severity)) + "\n";
     message += "Action: " + QString::fromUtf8(ToString(info.action)) + "\n";

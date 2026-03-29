@@ -21,5 +21,6 @@
         <file>images/handle.png</file>
         <file>images/sub-page.png</file>
         <file>images/mask.png</file>
+        <file>fonts/NotoSansCJK-Regular.ttc</file>
     </qresource>
 </RCC>

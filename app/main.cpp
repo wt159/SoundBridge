@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QMessageLogContext>
 #include <cstdlib>
 
@@ -61,6 +62,41 @@ void initSdkLogSystem()
     soundbridge::LogMessage(soundbridge::LogLevel::Info, kTag, "sdk log system initialized");
 }
 
+void initCJKFont()
+{
+    // 方案 B：运行时检测系统 CJK 字体
+    const QStringList cjkKeywords = { "CJK",      "WenQuanYi",    "Microsoft YaHei", "SimHei",
+                                      "PingFang", "Noto Sans SC", "Source Han Sans" };
+    for (const QString &family : QFontDatabase().families()) {
+        for (const QString &kw : cjkKeywords) {
+            if (family.contains(kw, Qt::CaseInsensitive)) {
+                QFont font = QApplication::font();
+                font.setFamily(family);
+                QApplication::setFont(font);
+                soundbridge::LogPrintf(soundbridge::LogLevel::Info, kTag, "CJK font detected: %s",
+                                       family.toUtf8().constData());
+                return;
+            }
+        }
+    }
+
+    // 方案 C：无系统 CJK 字体，加载捆绑字体
+    const int fontId = QFontDatabase::addApplicationFont(":/fonts/NotoSansCJK-Regular.ttc");
+    if (fontId >= 0) {
+        const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+        if (!families.isEmpty()) {
+            QFont font = QApplication::font();
+            font.setFamily(families.first());
+            QApplication::setFont(font);
+            soundbridge::LogPrintf(soundbridge::LogLevel::Info, kTag, "Bundled CJK font loaded: %s",
+                                   families.first().toUtf8().constData());
+            return;
+        }
+    }
+    soundbridge::LogMessage(soundbridge::LogLevel::Warning, kTag,
+                            "No CJK font found, Chinese characters may display incorrectly");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -72,6 +108,7 @@ int main(int argc, char *argv[])
 
     QApplication a(argc, argv);
     initSdkLogSystem();
+    initCJKFont();
 
     QFile file(":/style.qss");
     if (file.exists()) {

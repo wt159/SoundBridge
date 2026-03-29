@@ -170,8 +170,8 @@ void PlayerController::onError(soundbridge::ErrorCode code, const std::string &d
 {
     m_viewState.subtitle = m_autoSkipOnError ? "SKIPPING ERROR" : "PLAYBACK ERROR";
     publishViewState();
-    emit errorOccurred(static_cast<int>(code), QString::fromStdString(detail), trackIndex,
-                       QString::fromStdString(path), QString::fromStdString(traceId),
+    emit errorOccurred(static_cast<int>(code), QString::fromUtf8(detail.c_str()), trackIndex,
+                       QString::fromUtf8(path.c_str()), QString::fromUtf8(traceId.c_str()),
                        m_autoSkipOnError);
 }
 
