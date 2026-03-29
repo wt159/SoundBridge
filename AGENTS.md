@@ -36,7 +36,7 @@ music/            示例媒体文件（测试用）
 
 ## 技术栈
 - 语言：C++11，UI：Qt5 Widgets，构建：CMake 3.2+
-- 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：PulseAudio（Linux）/ SDL2
+- 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：SDL2（Linux 后端为 PulseAudio）
 - 日志：Boost.Log，文件系统：Boost.Filesystem
 - 格式化：clang-format（WebKit 风格，4 空格缩进，100 列宽）
 

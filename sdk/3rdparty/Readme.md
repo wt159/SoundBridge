@@ -9,7 +9,17 @@ cd SoundBridge/sdk/3rdparty
 # 新建build目录
 mkdir build && cd build
 # 修改 toolchain.windows_x86_64_mingw.cmake编译工具链
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake -G "MinGW Makefiles"
+cmake .. --no-warn-unused-cli \
+    -DCMAKE_BUILD_TYPE:STRING=Debug \
+    -DCMAKE_TOOLCHAIN_FILE=%cd%\..\..\..\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake \
+    -G "MinGW Makefiles" \
+    -DBUILD_OPTION_BOOST=ON \
+    -DBUILD_OPTION_FFMPEG=ON \
+    -DBUILD_OPTION_FLAC=ON \
+    -DBUILD_OPTION_OGG=ON \
+    -DBUILD_OPTION_VORBIS=ON \
+    -DBUILD_OPTION_SDL2=ON \
+    -DBUILD_OPTION_ZLIB=ON
 # 编译
 cmake --build .
 cmake --install .
@@ -25,13 +35,13 @@ mkdir build && cd build
 cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug \
     -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
     -G "Unix Makefiles" \
-    -DBUILD_OPTION_BOOST=OFF \
-    -DBUILD_OPTION_FFMPEG=OFF \
-    -DBUILD_OPTION_FLAC=OFF \
-    -DBUILD_OPTION_OGG=OFF \
-    -DBUILD_OPTION_VORBIS=OFF \
+    -DBUILD_OPTION_BOOST=ON \
+    -DBUILD_OPTION_FFMPEG=ON \
+    -DBUILD_OPTION_FLAC=ON \
+    -DBUILD_OPTION_OGG=ON \
+    -DBUILD_OPTION_VORBIS=ON \
     -DBUILD_OPTION_SDL2=ON \
-    -DBUILD_OPTION_ZLIB=OFF
+    -DBUILD_OPTION_ZLIB=ON
 cmake --build .
 cmake --install .
 ```
@@ -65,7 +75,19 @@ Ubuntu下编译需要安装一些依赖：
 ```shell
 cd SoundBridge/sdk/3rdparty
 mkdir arm_build && cd arm_build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE:STRING=Debug -DBUILD_OPTION_G3LOG=OFF -DBUILD_OPTION_G3SINKS=OFF -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake -G "Unix Makefiles"
+cmake .. --no-warn-unused-cli \
+    -DCMAKE_BUILD_TYPE:STRING=Debug \
+    -DCMAKE_TOOLCHAIN_FILE=../../../cmake/toolchain/toolchain.linux_arm_gnueabihf_gcc.cmake \
+    -G "Unix Makefiles" \
+    -DBUILD_OPTION_BOOST=ON \
+    -DBUILD_OPTION_FFMPEG=ON \
+    -DBUILD_OPTION_FLAC=ON \
+    -DBUILD_OPTION_OGG=ON \
+    -DBUILD_OPTION_VORBIS=ON \
+    -DBUILD_OPTION_SDL2=ON \
+    -DBUILD_OPTION_ZLIB=ON \
+    -DBUILD_OPTION_G3LOG=OFF \
+    -DBUILD_OPTION_G3SINKS=OFF 
 cmake --build .
 cmake --install .
 ```
