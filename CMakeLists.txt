@@ -5,6 +5,18 @@ project(SoundBridge_PROJECT)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 include(CTest)
 
+option(ENABLE_COVERAGE "Enable code coverage reporting (Linux/macOS only)" OFF)
+
+if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(UNIX OR APPLE)
+        message(STATUS "Coverage enabled (${CMAKE_SYSTEM_NAME})")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-arcs -ftest-coverage")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} --coverage")
+        set(COVERAGE_ENABLED TRUE)
+    endif()
+endif()
+
 set(ROOT_DIR ${CMAKE_CURRENT_LIST_DIR})
 message(STATUS "CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 set(SDK_DIR ${CMAKE_CURRENT_LIST_DIR}/sdk)
