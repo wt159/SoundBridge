@@ -1,5 +1,6 @@
 #include "FileSearch.h"
 #include "LogWrapper.h"
+#include "Utf8Path.h"
 #include <boost/filesystem.hpp>
 #include <iostream>
 
@@ -25,8 +26,9 @@ recursiveFileSearch(const std::string &rootDir,
     while (iter != end) {
         std::string extensionName = iter->path().extension().string();
         if (fs::is_regular_file(*iter) && extractorMap.find(extensionName) != extractorMap.end()) {
-            fileVec.push_back(iter->path().generic_string());
-            LOG_DEBUG(LOG_TAG, "file name:%s", iter->path().filename().string().c_str());
+            fileVec.push_back(sdk_utils::toUtf8String(iter->path()));
+            LOG_DEBUG(LOG_TAG, "file name:%s",
+                      sdk_utils::toUtf8String(iter->path().filename()).c_str());
         }
 
         boost::system::error_code ec;

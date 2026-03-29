@@ -1,5 +1,6 @@
 #include "FileSource.h"
 #include "LogWrapper.h"
+#include "Utf8Path.h"
 #include <fstream>
 #include <memory>
 
@@ -8,7 +9,7 @@
 using namespace sdk_utils;
 
 FileSource::FileSource(const char *filename)
-    : m_file(filename, std::ios::binary)
+    : m_file(sdk_utils::toNativeString(filename), std::ios::binary)
     , m_offset(0)
     , m_length(-1)
     , m_name("<null>")
@@ -19,14 +20,14 @@ FileSource::FileSource(const char *filename)
         m_extensionName = getExtensionName(filename);
     }
 
-    LOG_DEBUG(LOG_TAG, "%s", filename);
+    LOG_DEBUG(LOG_TAG, "%s", filename ? filename : "(null)");
     if (m_file.is_open()) {
         m_file.seekg(0, std::ios::end);
         m_length = m_file.tellg();
         m_file.seekg(0, std::ios::beg);
         LOGI("file size: %lld", (long long)m_length);
     } else {
-        LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename);
+        LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename ? filename : "(null)");
     }
 }
 

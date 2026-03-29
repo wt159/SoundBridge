@@ -224,3 +224,53 @@ if (result != sdk_utils::OK) {
 - `Lazy<T>::Value()` 内部调用 `Optional::isInit()`（小写 i），不是 `IsInit()`
 - `Optional::destroy()` 是私有方法，重置请用赋值空对象：`m_lazyX = Optional<Lazy<T>>()`
 - `AudioResample` 继承 `NonCopyable`，不可直接放入 `Lazy<AudioResample>`，须用 `Lazy<std::shared_ptr<AudioResample>>`
+- `boost::filesystem::path::generic_string()` 在 Windows 上返回 ANSI 本地编码（非 UTF-8），传给 `QString::fromUtf8()` 会乱码
+
+## 跨平台编码原则：转换接口代替平台分支
+
+**优先在边界做编码转换，不要散播 `#ifdef _WIN32` 到业务代码中。**
+
+错误做法：用平台分支改写业务逻辑（`std::ifstream` → `FILE*`，`seekg` → `fseek`……）：
+```cpp
+// ❌ 不要这样做
+#ifdef _WIN32
+    FILE *m_file = _wfopen(wpath, L"rb");
+    fread(data, 1, size, m_file);
+#else
+    std::ifstream m_file(path, std::ios::binary);
+    m_file.read(data, size);
+#endif
+```
+
+正确做法：保持标准接口不变，只在调用前做一次编码转换：
+```cpp
+// ✅ 转换接口代替平台分支
+// sdk/utils/Utf8Path.h
+inline std::string toNativeString(const char *utf8) {
+#ifdef _WIN32
+    // UTF-8 → wstring → ANSI（Windows fopen 期望 ANSI 编码）
+    int wsize = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+    std::wstring ws(wsize - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, &ws[0], wsize);
+    int asize = WideCharToMultiByte(CP_ACP, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string ansi(asize - 1, '\0');
+    WideCharToMultiByte(CP_ACP, 0, ws.c_str(), -1, &ansi[0], asize, nullptr, nullptr);
+    return ansi;
+#else
+    return utf8 ? std::string(utf8) : std::string();
+#endif
+}
+
+// FileSource.cpp — 业务代码无平台分支
+FileSource::FileSource(const char *filename)
+    : m_file(sdk_utils::toNativeString(filename), std::ios::binary)  // 唯一的变化
+    , m_offset(0)
+    , m_length(-1)
+{ }
+```
+
+**原则总结**：
+1. **接口不变**：`std::ifstream`、`std::string` 等标准接口保持原样
+2. **边界转换**：在 I/O 边界（文件打开、Qt 显示）做编码转换，业务逻辑无感知
+3. **工具集中**：转换函数集中在 `sdk/utils/Utf8Path.h`，不散播到业务文件
+4. **全链路 UTF-8**：存储层统一 UTF-8，仅在平台边界按需转码
