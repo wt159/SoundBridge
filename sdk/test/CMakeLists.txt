@@ -52,14 +52,10 @@ endif()
 link_directories(${3RDPARTY_DIST_DIR}/lib)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
 
-set(SDK_TEST_SOURCES
-    TestSdkSuite.cpp
-)
-
-add_executable(TestSdkSuite ${SDK_TEST_SOURCES})
-
-target_link_libraries(TestSdkSuite
-    PRIVATE
+# ============================================================
+# Shared Test Library Configuration
+# ============================================================
+set(SDK_TEST_COMMON_LIBS
     sdk
     LogWrapper
     Extractor
@@ -68,8 +64,7 @@ target_link_libraries(TestSdkSuite
     utils
 )
 
-target_include_directories(TestSdkSuite
-    PRIVATE
+set(SDK_TEST_COMMON_INCLUDES
     ${SDK_ROOT_DIR}
     ${SDK_ROOT_DIR}/extractor
     ${SDK_ROOT_DIR}/utils
@@ -77,6 +72,26 @@ target_include_directories(TestSdkSuite
     ${SDK_ROOT_DIR}/audio/resample
     ${SDK_ROOT_DIR}/audio/decode
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+    ${CMAKE_CURRENT_SOURCE_DIR}/mocks
+)
+
+# ============================================================
+# Legacy TestSdkSuite (deprecated - for backward compatibility)
+# ============================================================
+set(SDK_TEST_SOURCES
+    TestSdkSuite.cpp
+)
+
+add_executable(TestSdkSuite ${SDK_TEST_SOURCES})
+
+target_link_libraries(TestSdkSuite
+    PRIVATE
+    ${SDK_TEST_COMMON_LIBS}
+)
+
+target_include_directories(TestSdkSuite
+    PRIVATE
+    ${SDK_TEST_COMMON_INCLUDES}
 )
 
 set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;$ENV{PATH}")
@@ -155,36 +170,28 @@ set(UNIT_TEST_SOURCES
     unit/test_utils.cpp
     unit/test_audio.cpp
     unit/test_audio_device.cpp
+    unit/test_audio_common.cpp
     unit/test_extractor.cpp
+    unit/test_extractor_isolated.cpp
     unit/test_decode.cpp
     unit/test_playlist.cpp
+    unit/test_player.cpp
+    unit/test_media_smoke.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})
 
 target_link_libraries(UnitTests
     PRIVATE
-    sdk
-    LogWrapper
-    Extractor
-    AudioResample
-    AudioDecode
+    ${SDK_TEST_COMMON_LIBS}
     AudioDevice
-    utils
 )
 
 target_include_directories(UnitTests
     PRIVATE
-    ${SDK_ROOT_DIR}
-    ${SDK_ROOT_DIR}/extractor
-    ${SDK_ROOT_DIR}/utils
-    ${SDK_ROOT_DIR}/audio/common
-    ${SDK_ROOT_DIR}/audio/resample
-    ${SDK_ROOT_DIR}/audio/decode
+    ${SDK_TEST_COMMON_INCLUDES}
     ${SDK_ROOT_DIR}/audio/device
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
-    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
-    ${CMAKE_CURRENT_SOURCE_DIR}/mocks
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
 )
 

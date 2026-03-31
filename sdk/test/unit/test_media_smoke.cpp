@@ -1,0 +1,150 @@
+#include "../fixtures/RealMediaFixture.hpp"
+#include <AudioBuffer.h>
+#include <AudioCommon.hpp>
+#include <AudioDecodeProcess.h>
+#include <ExtractorFactory.h>
+#include <FileSource.h>
+#include <doctest/doctest.h>
+
+TEST_SUITE("MediaSmoke")
+{
+    TEST_CASE("WAV media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("music.wav", ".wav", "MediaSmoke wav", source, extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("FLAC media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("小镇姑娘-陶喆.flac")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("小镇姑娘-陶喆.flac", ".flac", "MediaSmoke flac", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("MP3 media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("小镇姑娘-陶喆.128.mp3")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("小镇姑娘-陶喆.128.mp3", ".mp3", "MediaSmoke mp3", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("AAC media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("48000_fltp_1.aac")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("48000_fltp_1.aac", ".aac", "MediaSmoke aac", source, extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("OGG media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("Ringtones-耳聆网.ogg")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("Ringtones-耳聆网.ogg", ".ogg", "MediaSmoke ogg", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+    }
+
+    TEST_CASE("M4A media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("摇滚乐_Freesound.m4a")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("摇滚乐_Freesound.m4a", ".m4a", "MediaSmoke m4a", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+    }
+}

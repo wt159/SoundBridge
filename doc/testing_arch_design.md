@@ -6,14 +6,15 @@
 
 | 框架 | 用途 | 状态 |
 |------|------|------|
-| **Doctest** | 单元测试主力 | ✅ 主力框架 |
-| **TestSdkSuite** | 遗留自定义测试 | ✅ 兼容层 |
+| **Doctest** | 单元测试主力 | ✅ 统一框架 |
+| **TestSdkSuite** | 遗留自定义测试 | ⚠️ 已废弃 (保留向后兼容) |
 
 ### 1.2 测试目标
 
-1. **提升测试覆盖率**：当前 66.18%，目标 80%+
-2. **支持代码覆盖率**：集成 gcov/lcov
-3. **渐进式迁移**：保留现有测试，逐步扩展
+1. **统一测试框架**：所有测试使用 doctest
+2. **提升测试覆盖率**：当前 66.18%，目标 80%+
+3. **支持代码覆盖率**：集成 gcov/lcov
+4. **简化维护**：单一断言风格，单一入口
 
 ---
 
@@ -33,41 +34,46 @@
              │ (cmake)   │──────▶│ (ctest)   │──────▶│ gcov/lcov │
              └───────────┘       └───────────┘       └───────────┘
                                           │
-                       ┌────────────────────┴────────────────────┐
-                       ▼                                     ▼
-               ┌───────────────┐                     ┌────────────────┐
-               │ UnitTests     │                     │ TestSdkSuite   │
-               │ doctest       │                     │ legacy custom  │
-               │ 单元测试      │                     │ 媒体冒烟测试   │
-               └───────────────┘                     └────────────────┘
-                       │                                     │
-           ┌───────────┼───────────┐               ┌───────┴────────┐
-           ▼           ▼           ▼               ▼                ▼
-        Cosmos      Utils      Audio           Extractor         Player
+                          ┌────────────────┴────────────────┐
+                          ▼                                 ▼
+                   ┌───────────────┐               ┌─────────────────┐
+                   │ UnitTests     │               │ TestSdkSuite    │
+                   │ doctest       │               │ deprecated      │
+                   │ 统一测试入口   │               │ 向后兼容        │
+                   └───────────────┘               └─────────────────┘
+                          │
+              ┌───────────┼───────────┬─────────────┐
+              ▼           ▼           ▼             ▼
+          Cosmos      Utils      Audio          Player
 ```
 
 ### 2.2 目录结构
 
 ```
 sdk/test/
-├── CMakeLists.txt                 # 测试入口配置
-├── TestSdkSuite.cpp              # 遗留自定义测试入口
+├── CMakeLists.txt                 # 测试入口配置 (统一)
+├── TestSdkSuite.cpp              # 遗留入口 (已废弃,保留兼容)
 ├── UnitTestsMain.cpp             # doctest main + LogWrapper 初始化
 ├── unit/
-│   ├── test_cosmos.cpp         # Cosmos 组件测试
-│   ├── test_utils.cpp           # Utils 组件测试
-│   ├── test_audio.cpp          # AudioResample 模块测试
-│   ├── test_audio_device.cpp    # AudioDevice 模块测试
-│   ├── test_extractor.cpp       # Extractor 模块测试
-│   ├── test_decode.cpp          # AudioDecode 模块测试
-│   └── test_playlist.cpp        # MusicPlayList 测试
+│   ├── test_cosmos.cpp              # Cosmos 组件测试
+│   ├── test_utils.cpp                # Utils 组件测试
+│   ├── test_audio.cpp                # AudioResample 模块测试
+│   ├── test_audio_device.cpp         # AudioDevice 模块测试
+│   ├── test_audio_common.cpp         # AudioCommon 迁移测试
+│   ├── test_extractor.cpp            # Extractor 模块测试
+│   ├── test_extractor_isolated.cpp   # Extractor 隔离测试
+│   ├── test_decode.cpp               # AudioDecode 模块测试
+│   ├── test_playlist.cpp             # MusicPlayList 测试
+│   ├── test_player.cpp               # Player API 测试
+│   └── test_media_smoke.cpp          # 媒体冒烟测试
 ├── fixtures/
-│   ├── RealMediaFixture.hpp     # 真实媒体测试固件
-│   └── TempDirFixture.hpp       # 临时目录固件
+│   ├── RealMediaFixture.hpp          # 真实媒体测试固件
+│   └── TempDirFixture.hpp            # 临时目录固件
 ├── mocks/
-│   └── AudioMocks.hpp           # 音频回调 Mock
+│   ├── AudioMocks.hpp                # 音频回调 Mock
+│   └── PlayerMocks.hpp               # Player API Mock (新增)
 └── thirdparty/
-    └── doctest/doctest.h        # Doctest header
+    └── doctest/doctest.h             # Doctest header
 ```
 
 ---
@@ -77,43 +83,43 @@ sdk/test/
 ### 3.1 构建测试
 
 ```bash
-mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
-  -G "Unix Makefiles"
-cmake --build . --target UnitTests
+# 配置
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake
+
+# 构建 UnitTests
+cmake --build build --target UnitTests
 ```
 
 ### 3.2 运行测试
 
 ```bash
 # 运行所有 SDK 测试
-ctest -R sdk_ --output-on-failure
+ctest --test-dir build -R sdk_ --output-on-failure
 
-# 运行单元测试
-ctest -R sdk_unit_tests --output-on-failure
+# 运行单元测试 (主入口)
+ctest --test-dir build -R sdk_unit_tests --output-on-failure
 
 # 运行覆盖率报告
-ctest -T Coverage --output-on-failure
+cmake --build build --target coverage
 ```
 
 ---
 
 ## 4. 模块覆盖率
 
-### 4.1 当前覆盖率 (2026-03-31)
+### 4.1 覆盖率目标
 
-| 模块 | 覆盖率 | 说明 |
-|------|--------|------|
-| audio/common | 68.00% | AudioCommon.hpp |
-| audio/decode | 64.42% | AudioDecode, AudioStreamDecoder, FLACDecode, VorbisDecode |
-| audio/device | 69.71% | AudioDevice (gcov 多线程限制) |
-| audio/resample | 69.41% | AudioResample |
-| **cosmos** | **91.89%** | ✅ 已达标 |
-| extractor | ~50% | 各格式提取器 |
-| **log** | **98.85%** | ✅ 已达标 |
-| utils | 83.82% | AudioBuffer, AudioRingBuffer, ByteUtils |
-| **整体 SDK** | **66.18%** | 目标 80% |
+| 模块 | 目标覆盖率 | 状态 |
+|------|-----------|------|
+| cosmos | 95% | ✅ 已有 91.89% |
+| log | 99% | ✅ 已有 98.85% |
+| utils | 90% | 已有 83.82% |
+| audio/resample | 80% | 已有 69.41% |
+| audio/decode | 75% | 已有 64.42% |
+| audio/device | 75% | 已有 69.71% |
+| extractor | 70% | 约 50% |
+| **整体 SDK** | **80%** | 已有 66.18% |
 
 ### 4.2 已知限制
 
@@ -134,18 +140,14 @@ ctest -T Coverage --output-on-failure
 | AudioRingBuffer | 9 | 读写、环绕、reset、容量 |
 | ByteUtils | 8 | 字节序、U16/U32/U64、FourCC |
 | AudioResample | 6 | 构造、init、resample |
-| AudioFormat utilities | 2 | 格式转换辅助函数 |
-| AudioSpec | 2 | 默认构造、相等比较 |
-| AudioBuffer | 4 | 构造、setData、getData |
-| AudioCodecConfig | 2 | 默认构造、属性设置 |
-| AudioDecode | 5 | 构造、解码、null 处理 |
-| AudioDecodeProcess | 2 | 默认值 |
-| FLACDecode | 4 | 构造、解码、buffer 设置、abort |
-| VorbisDecode | 3 | 构造、解码、abort |
+| AudioCommon | 4 | 格式映射、字节计算 |
 | AudioDevice | 22 | open/close、start/stop、callback |
-| DataSource/Extractor | ~30 | 接口测试、工厂模式、真实媒体 |
-| MusicPlayList | ~20 | 播放列表操作 |
-| **总计** | **~150** | |
+| DataSource/Extractor | ~50 | 接口测试、工厂模式、真实媒体 |
+| AudioDecode | ~30 | 管线、解码、FLAC、Vorbis |
+| MusicPlayList | ~27 | 播放列表操作 |
+| Player API | ~15 | MusicPlayer、Public Player |
+| MediaSmoke | ~12 | 媒体格式冒烟测试 |
+| **总计** | **~250** | 统一框架 |
 
 ---
 
@@ -171,25 +173,42 @@ REQUIRE_NE(a, b);
 REQUIRE_GT(a, b);
 ```
 
-### 6.2 参考资料
+### 6.2 Mock 库使用
+
+```cpp
+#include "mocks/PlayerMocks.hpp"
+#include "mocks/AudioMocks.hpp"
+
+// 使用 MockPlayerCallbacks
+MockPlayerCallbacks playerCallback;
+soundbridge::Player player(&playerCallback, config);
+
+// 使用 MockAudioDecodeCallback
+MockAudioDecodeCallback decodeCallback;
+AudioDecode decode(AUDIO_CODEC_ID_AAC, &decodeCallback);
+```
+
+### 6.3 参考资料
 
 - [Doctest 文档](https://github.com/onqtam/doctest)
 - [lcov 覆盖率工具](https://github.com/linux-test-project/lcov)
 
 ---
 
-## 7. 下一步计划
+## 7. 迁移进度
 
-### 7.1 覆盖率提升
+### 7.1 已完成
 
-| 模块 | 当前 | 目标 | 差距 |
-|------|------|------|------|
-| extractor | ~50% | 70% | ~20% |
-| audio/decode | 64.42% | 75% | ~10% |
-| 整体 | 66.18% | 80% | ~14% |
+- [x] Phase 1: CMake 配置统一
+- [x] Phase 2: Legacy 测试迁移到 doctest
+- [x] PlayerMocks.hpp 创建
+- [x] test_player.cpp (Player API 测试)
+- [x] test_media_smoke.cpp (媒体冒烟测试)
+- [x] test_audio_common.cpp (AudioCommon 测试)
+- [x] test_extractor_isolated.cpp (Extractor 隔离测试)
 
-### 7.2 建议工作
+### 7.2 下一步
 
-1. **Extractor 扩展**：更多真实媒体格式测试
-2. **AudioDecode 深度**：完整解码流程、seek 功能
-3. **MusicPlayer 集成**：播放控制、状态机
+1. **覆盖率提升**：通过 Phase 4 持续改进
+2. **边界测试**：完善 Extractor 边界情况
+3. **TestSdkSuite 移除**：确认无依赖后删除 legacy 入口
