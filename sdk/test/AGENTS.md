@@ -8,11 +8,14 @@
 sdk/test/
 ├── CMakeLists.txt            # 所有 CTest 名称都在这里注册
 ├── TestSdkSuite.cpp          # 自定义 check(...) 框架
-├── unit/*.cpp                # doctest 主力测试
+├── unit/*.cpp                # doctest 主力测试；看 unit/AGENTS.md
 ├── fixtures/                 # 真实媒体 / 临时目录夹具
 ├── mocks/                    # 音频 mock
 └── thirdparty/doctest/       # 本地 doctest 头文件；不要手改
 ```
+
+## AGENTS HIERARCHY
+- `unit/AGENTS.md`：doctest 入口、模块套件分布、异步/时序测试习惯。
 
 ## WHERE TO LOOK
 | 任务 | 位置 | 备注 |
