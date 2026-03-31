@@ -1,3 +1,4 @@
+#include <AudioBuffer.h>
 #include <AudioRingBuffer.h>
 #include <ByteUtils.h>
 #include <cstring>
@@ -234,5 +235,51 @@ TEST_SUITE("ByteUtils")
         char s[5]       = { 0 };
         sdk_utils::MakeFourCCString(fourcc, s);
         REQUIRE(s[4] == '\0');
+    }
+}
+
+TEST_SUITE("AudioBuffer")
+{
+    TEST_CASE("Construction with size")
+    {
+        AudioBuffer buffer(1024);
+        REQUIRE(buffer.size() == 1024);
+        REQUIRE(buffer.data() != nullptr);
+    }
+
+    TEST_CASE("Construction with buffer")
+    {
+        char *data = new char[256]();
+        AudioBuffer buffer(data, 256);
+        REQUIRE(buffer.size() == 256);
+        REQUIRE(buffer.data() == data);
+    }
+
+    TEST_CASE("setData and getData")
+    {
+        char original[256] = { 0 };
+        for (int i = 0; i < 256; i++) {
+            original[i] = static_cast<char>(i);
+        }
+
+        AudioBuffer buffer(256);
+        buffer.setData(0, 256, original);
+
+        char result[256] = { 0 };
+        buffer.getData(0, 256, result);
+
+        REQUIRE(std::memcmp(original, result, 256) == 0);
+    }
+
+    TEST_CASE("setData with offset")
+    {
+        char data[100] = { 1 };
+        AudioBuffer buffer(100);
+
+        buffer.setData(50, 10, data);
+
+        char result[10] = { 0 };
+        buffer.getData(50, 10, result);
+        REQUIRE(result[0] == 1);
     }
 }

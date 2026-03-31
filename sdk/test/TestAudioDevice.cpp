@@ -1,5 +1,6 @@
 ﻿#include "AudioDevice.h"
 #include "LogWrapper.h"
+#include "fixtures/RealMediaFixture.hpp"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -139,8 +140,9 @@ private:
 
 int main()
 {
-    const char *fileName = "./music.wav";
-    AudioTest test(fileName);
+    RealMediaFixture fixture;
+    const std::string fileName = fixture.mediaPath("music.wav");
+    AudioTest test(fileName.c_str());
     test.play();
     std::cin.get();
     return 0;

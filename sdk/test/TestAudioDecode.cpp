@@ -1,5 +1,6 @@
 #include "AudioDecode.h"
 #include "LogWrapper.h"
+#include "fixtures/RealMediaFixture.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -148,8 +149,9 @@ public:
 
 void TestCode()
 {
+    RealMediaFixture fixture;
     {
-        std::string file    = "./6-48000_fltp_1.aac";
+        std::string file    = fixture.mediaPath("48000_fltp_1.aac");
         std::string outFile = "./7-48000_fltp_1.pcm";
         std::shared_ptr<AudioDecodeTest> audioDecodeTest
             = std::make_shared<AudioDecodeTest>(file, outFile);
@@ -157,7 +159,7 @@ void TestCode()
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     {
-        std::string file    = "../../../music/WavinFlag.aac";
+        std::string file    = fixture.mediaPath("WavinFlag.aac");
         std::string outFile = "./WavinFlag.pcm";
         std::shared_ptr<AudioDecodeTest> audioDecodeTest
             = std::make_shared<AudioDecodeTest>(file, outFile);

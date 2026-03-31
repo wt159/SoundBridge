@@ -76,6 +76,7 @@ target_include_directories(TestSdkSuite
     ${SDK_ROOT_DIR}/audio/common
     ${SDK_ROOT_DIR}/audio/resample
     ${SDK_ROOT_DIR}/audio/decode
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
 )
 
 set(SDK_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;$ENV{PATH}")
@@ -156,6 +157,7 @@ set(UNIT_TEST_SOURCES
     unit/test_audio_device.cpp
     unit/test_extractor.cpp
     unit/test_decode.cpp
+    unit/test_playlist.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})
