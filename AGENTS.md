@@ -1,211 +1,92 @@
-# AGENTS.md
+# PROJECT KNOWLEDGE BASE
 
-## 项目概览
-SoundBridge 是使用 C++ 和 Qt 构建的跨平台音乐播放器，提供模块化 SDK 用于解码、重采样和播放。
-目标平台：Windows、Linux、嵌入式 Linux。
+**Generated:** 2026-03-31
+**Commit:** 00f89318d
+**Branch:** master
 
-## 快速开始（Agent 30 秒）
-```bash
-# 1) 配置（以 Linux x86_64 为例）
-mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
-  -G "Unix Makefiles"
+## OVERVIEW
+SoundBridge 是 C++11 + Qt5 Widgets 的跨平台音乐播放器；核心工作集中在 `sdk/` 的解码、重采样、设备输出、元数据提取，以及 `app/` 的桌面 UI。
 
-# 2) 构建
-cmake --build .
-
-# 3) SDK 核心回归
-ctest -R sdk_core_tests --output-on-failure
+## STRUCTURE
+```text
+./
+├── app/                  # Qt Widgets 前端；看 app/AGENTS.md
+├── sdk/                  # 核心库：audio / extractor / log / utils / test
+│   ├── audio/            # decode / device / resample；看 sdk/audio/AGENTS.md
+│   ├── extractor/        # 按格式拆分的提取器族；看 sdk/extractor/AGENTS.md
+│   ├── test/             # TestSdkSuite + doctest；看 sdk/test/AGENTS.md
+│   ├── cosmos/           # header-only 通用组件
+│   └── 3rdparty/         # 供应商代码；默认不改
+├── cmake/                # toolchain / portable packaging
+├── doc/                  # 设计说明；不是运行真相源
+└── music/                # 回归样本媒体
 ```
 
-## 仓库结构
-```
-app/              Qt UI 应用（入口：app/main.cpp）
-sdk/
-  audio/          decode / resample / device / common
-  extractor/      媒体元数据提取
-  utils/          共享工具（ErrorUtils、FileSearch 等）
-  log/            LogWrapper（Boost.Log 封装）
-  test/           TestSdkSuite（自定义测试框架，单文件 TestSdkSuite.cpp）
-  cosmos/         通用 C++ 工具组件（见下方说明）
-  3rdparty/       第三方依赖源码 + dist/<platform>
-cmake/            工具链与构建辅助
-music/            示例媒体文件（测试用）
-```
+## AGENTS HIERARCHY
+- `sdk/audio/AGENTS.md`：音频链路、SDL/FFmpeg/swr 约束、模块级回归入口。
+- `app/AGENTS.md`：UI 入口、状态流、Qt 约束。
+- `sdk/test/AGENTS.md`：测试入口、分组、fixture/冒烟规则。
+- `sdk/extractor/AGENTS.md`：提取器工厂、格式子目录、FFmpeg/数据源陷阱。
 
-## 技术栈
-- 语言：C++11，UI：Qt5 Widgets，构建：CMake 3.2+
-- 音频：FFmpeg（avcodec/avformat/avutil）+ FLAC + Ogg/Vorbis，输出：SDL2（Linux 后端为 PulseAudio）
-- 日志：Boost.Log，文件系统：Boost.Filesystem
-- 格式化：clang-format（WebKit 风格，4 空格缩进，100 列宽）
-
-## 架构与模块依赖
-```
-utils → LogWrapper → AudioResample/AudioDecode/AudioDevice → Extractor → sdk → SoundBridge
-```
-**约束**：禁止层间循环依赖；优先在最低合适层添加功能并向上暴露。
-
-**构建目标**：`SoundBridge`、`sdk`、`AudioDecode`、`AudioResample`、`AudioDevice`、`Extractor`、`LogWrapper`、`utils`、`TestSdkSuite`、`package_portable`
-
-## 构建命令
-```bash
-mkdir build && cd build
-cmake .. --no-warn-unused-cli -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/toolchain.<平台>.cmake \
-  -G "<生成器>"
-cmake --build .
-```
-| 平台 | 工具链文件 | 生成器 |
-|------|-----------|--------|
-| Linux x86_64 | `toolchain.linux_x86_64_gcc.cmake` | `Unix Makefiles` |
-| Windows MinGW | `toolchain.windows_x86_64_mingw.cmake` | `MinGW Makefiles` |
-| 嵌入式 Linux ARM | `toolchain.linux_arm_gnueabihf_gcc.cmake` | `Unix Makefiles` |
-
-### 打包
-```bash
-cmake --build . --target package_portable
-```
-- **Windows**：`package/SoundBridge_portable_v3/`，使用 `windeployqt`
-- **Linux**：`package/SoundBridge_portable/`，使用 `ldd` 收集 `.so`，生成 `run.sh`
-
-## 测试
-### 测试框架
-1. **自定义框架**（非 Google Test），单文件：`sdk/test/TestSdkSuite.cpp`
-   - 断言：`check(condition, message)` 输出 `[PASS]` 或 `[FAIL]`
-   - 测试类命名：`*Test`（如 `AudioDecodeTest`）
-2. **Doctest 单元测试框架**（`UnitTests` 目标），覆盖 audio/device、audio/common、cosmos 等模块
-   - 断言：`CHECK`、`REQUIRE` 等（doctest 标准宏）
-   - 测试命名：`TEST_CASE("...")`
-
-### 运行测试
-```bash
-# CTest（推荐，在 build/ 目录）
-ctest -R sdk_core_tests --output-on-failure   # utils / LogWrapper
-ctest -R sdk_resample_tests --output-on-failure # AudioResample
-ctest -R sdk_decode_tests --output-on-failure   # AudioDecode
-ctest -R sdk_player_tests --output-on-failure   # MusicPlayer
-ctest -R sdk_extractor_spec_tests --output-on-failure  # Extractor
-ctest -R sdk_unit_tests --output-on-failure   # 所有单元测试（doctest）
-ctest -R sdk_ --output-on-failure               # 所有 sdk 测试
-
-# 直接运行：./TestSdkSuite [core|resample|decode|player|extractor|all|media [扩展名] [数量]]
-```
-
-### 按改动类型最小回归
-| 改动范围 | 最小回归命令 |
-|---------|-------------|
-| utils / LogWrapper | `sdk_core_tests` |
-| audio/resample | `sdk_resample_tests` |
-| audio/decode | `sdk_decode_tests` |
-| MusicPlayer / sdk | `sdk_player_tests` |
-| extractor / 媒体格式 | `sdk_extractor_spec_tests` + `sdk_media_smoke` |
-| audio/device | `sdk_unit_tests` |
-| 跨模块或发布前 | `ctest -R sdk_` |
-
-### 测试环境变量
-- `SB_MEDIA_DIR` — 媒体目录（默认：`../../music`）
-- `SB_MEDIA_FILTER` — 扩展名过滤（如 `.m4a`）
-- `SB_MEDIA_LIMIT` — 文件数量限制
-
-> **Windows 注意**：若 Qt 安装路径非默认，需在 cmake 时设置
-> `-DSOUNDBRIDGE_QT_TEST_BIN_DIR=<Qt bin 路径>`，或使用 `scripts/run_sdk_tests.ps1`。
-
-## sdk/cosmos 工具组件
-头文件位于 `sdk/cosmos/`，直接 `#include` 使用：`Optional<T>`、`Lazy<T>`、`NonCopyable`、`ScopeGuard`、`SyncQueue<T>`、`WorkQueue`、`ThreadPool`、`Timer`、`Variant<...>`、`Range<T>`、`SharedptrUtil`
-
-### Lazy<T> 用法
-```cpp
-Optional<Lazy<std::shared_ptr<AudioResample>>> m_lazyResample;
-m_lazyResample.emplace([this]() { return std::make_shared<AudioResample>(...); });
-auto r = m_lazyResample->Value();           // 触发初始化
-m_lazyResample = Optional<Lazy<...>>();     // 重置
-```
-
-## 代码风格
-- 运行 `clang-format -i <file>` 自动格式化（WebKit 风格，4 空格，100 列）
-- 指针/引用右对齐：`int *ptr`、`std::string &str`
-
-### 命名约定
-| 类型 | 风格 | 示例 |
+## WHERE TO LOOK
+| 任务 | 位置 | 备注 |
 |------|------|------|
-| 类/结构体/枚举 | PascalCase | `MusicPlayer`、`ErrorCode` |
-| 函数 | camelCase | `getAudioFormat`、`initCheck` |
-| 成员变量 | `m_` + camelCase | `m_impl`、`m_player` |
-| 常量 | `k` + PascalCase | `kTag`、`kOkInfo` |
-| 宏 | UPPER_SNAKE_CASE | `LOG_INFO`、`CHECK` |
-| 命名空间 | lowercase | `sdk`、`sdk_utils` |
+| 应用入口 | `app/main.cpp` | QApplication、字体与主窗体启动 |
+| 主界面交互 | `app/mainwindow.cpp` | 按钮/列表/错误提示都在这里 |
+| UI 与 SDK 桥接 | `app/playercontroller.cpp` | `PlayerCallbacks` → `PlayerViewState` |
+| SDK 聚合入口 | `sdk/MusicPlayer.cpp`, `sdk/player_impl.cpp` | 遗留接口 + 新公开 API |
+| 音频链路 | `sdk/audio/{decode,resample,device}/` | 解码、重采样、输出分层 |
+| 提取器工厂 | `sdk/extractor/ExtractorFactory.cpp` | 扩展名注册 + magic sniff |
+| 公共错误/状态 | `sdk/utils/ErrorUtils.h`, `sdk/ErrorCode.hpp` | 内部 `status_t` vs 对外 `ErrorCode` |
+| 构建入口 | `CMakeLists.txt`, `sdk/CMakeLists.txt`, `app/CMakeLists.txt` | 根负责 toolchain / package_portable |
+| 测试总入口 | `sdk/test/CMakeLists.txt`, `sdk/test/TestSdkSuite.cpp` | CTest 分组都从这里注册 |
 
-### 头文件规范
-- 使用 `#pragma once`
-- **导入顺序**：项目 → 系统 → 第三方
+## CODE MAP
+| 符号/组件 | 位置 | 角色 |
+|-----------|------|------|
+| `MainWindow` | `app/mainwindow.*` | Qt 视图层；直接连按钮与列表控件 |
+| `PlayerController` | `app/playercontroller.*` | 适配 `soundbridge::Player` 与 Qt signal |
+| `soundbridge::Player` | `sdk/include/soundbridge/player.h`, `sdk/player_impl.cpp` | 新 API 面向 app |
+| `sdk::MusicPlayer` | `sdk/MusicPlayer.*` | 遗留接口；测试仍大量覆盖 |
+| `AudioStreamDecoder` | `sdk/audio/decode/AudioStreamDecoder.*` | 解码线程 + 惰性重采样 |
+| `AudioDevice` | `sdk/audio/device/AudioDevice.*` | SDL 输出设备 |
+| `ExtractorFactory` | `sdk/extractor/ExtractorFactory.*` | 提取器注册、sniff、实例化 |
+| `TestSdkSuite` | `sdk/test/TestSdkSuite.cpp` | 自定义回归/媒体冒烟入口 |
+| `UnitTests` | `sdk/test/unit/*.cpp` | doctest 单元测试 |
 
-### 类型使用
-- 用 `size_t` 而非 `off64_t`（Windows 无 `sys/types.h`）
-- 优先 `std::string` 而非 C 字符串
-- 用 `std::unique_ptr` 管理所有权，`std::shared_ptr` 共享所有权
-- 避免裸指针，除非与 C API 交互
+## CONVENTIONS
+- 依赖方向固定：`utils → LogWrapper → Audio* → Extractor → sdk → app`；新功能优先放在最低可用层。
+- 构建前必须先准备 `sdk/3rdparty/dist/<platform>`；根 `CMakeLists.txt` 会直接 `FATAL_ERROR`。
+- 根文档只放跨仓库规则；进入 `app/`、`sdk/test/`、`sdk/extractor/` 时优先读取该子目录 AGENTS。
+- 代码风格继续沿用现状：WebKit 风格、4 空格、指针/引用右靠、`#pragma once`、导入顺序“项目 → 系统 → 第三方”。
+- 错误处理分两层：内部返回 `sdk_utils::status_t`，对外 API 走 `soundbridge::ErrorCode`/`sdk::ErrorCode`。
 
-## 错误处理
-- 状态码类型：`sdk_utils::status_t`（`int32_t`，0=OK，负数=错误）
-- 定义于 `sdk/utils/ErrorUtils.h`
-- 常用常量：`OK`、`NO_MEMORY`、`INVALID_OPERATION`、`BAD_VALUE`、`NAME_NOT_FOUND`、
-  `PERMISSION_DENIED`、`NO_INIT`、`ALREADY_EXISTS`、`DEAD_OBJECT`、`TIMED_OUT`
-- 公共 API 枚举：`sdk::ErrorCode`（`sdk/ErrorCode.hpp`），使用 `FormatError()` 格式化
-- 日志宏：`LOG_INFO`/`LOG_ERROR`/`LOG_WARNING`/`LOG_DEBUG`
-- 短宏：`LOGI`/`LOGE`/`LOGW`/`LOGD`（需在文件顶部定义 `LOG_TAG`）
+## ANTI-PATTERNS (THIS PROJECT)
+- 不要改 `sdk/3rdparty/` 来“修业务问题”；先在自有代码层面适配。
+- 不要跨层新增依赖或把 UI 逻辑塞回 `sdk/`。
+- 不要在业务代码扩散 `#ifdef _WIN32`；编码/路径转换集中到边界工具，例如 `sdk/utils/Utf8Path.h`。
+- 不要继续使用 `off64_t` 作为新增公开接口类型；Windows 兼容性差，优先 `size_t` / `uint64_t`。
 
-```cpp
-#define LOG_TAG "MyModule"
+## COMMANDS
+```bash
+# 配置（Linux x86_64）
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -G "Unix Makefiles"
 
-sdk_utils::status_t result = someOperation();
-if (result != sdk_utils::OK) {
-    LOGE("Operation failed: %d", result);
-    return result;
-}
+# 构建
+cmake --build build
+
+# 最常用回归
+ctest --test-dir build -R sdk_core_tests --output-on-failure
+ctest --test-dir build -R sdk_decode_tests --output-on-failure
+ctest --test-dir build -R sdk_unit_tests --output-on-failure
+ctest --test-dir build -R sdk_ --output-on-failure
+
+# 打包
+cmake --build build --target package_portable
 ```
 
-## 已知陷阱
-- `off64_t` 在 Windows 未声明 → 用 `size_t` 替代
-- `Lazy<T>::Value()` 调用 `Optional::isInit()`（小写 i）
-- `Optional::destroy()` 是私有方法，重置用赋值空对象：`m_lazyX = Optional<Lazy<T>>()`
-- `AudioResample` 继承 `NonCopyable`，须用 `Lazy<std::shared_ptr<AudioResample>>`
-- `boost::filesystem::path::generic_string()` 在 Windows 返回 ANSI，传给 `QString::fromUtf8()` 会乱码
-- **gcov 多线程限制**：SDL 等第三方库未使用 coverage 标志编译，gcov 无法跟踪其线程中的代码执行。AudioDevice 的 `audioCallback` 虽然被 SDL 调用，但 gcov 不会记录覆盖。
-
-## 调试原则
-- **先验 baseline**：用原始代码运行测试，确认原始行为
-- **定位根因**：找到真正的 bug，而非急于修复
-- **单变量验证**：每次只改一个变量，逐步验证
-- **验证假设**：不要假设某个模式（如栈分配）一定是问题根源，参考同模块正常工作的代码
-
-### FFmpeg Extractor 陷阱
-`avformat_close_input()` 会释放 AVFormatContext，**必须先取值再关闭**：
-```cpp
-int64_t duration = fmt->duration;   // ✅ 先取值
-avformat_close_input(&fmt);         // ✅ 再关闭
-```
-
-## 跨平台编码原则
-**优先在边界做编码转换，不散播 `#ifdef _WIN32` 到业务代码。**
-
-- 接口不变：`std::ifstream`、`std::string` 等保持原样
-- 边界转换：在 I/O 边界做编码转换，业务逻辑无感知
-- 工具集中：转换函数集中在 `sdk/utils/Utf8Path.h`
-- 全链路 UTF-8：存储层统一 UTF-8，仅在平台边界按需转码
-
-## 代码覆盖率（2026-03）
-
-运行 `ctest -T Coverage` 生成覆盖率报告。
-
-| 模块 | 覆盖率 |
-|------|--------|
-| audio/common | 68.00% |
-| audio/decode | 64.42% |
-| audio/device | 69.71% |
-| audio/resample | 69.41% |
-| cosmos | 91.89% |
-| extractor | 49.53% |
-| log | 98.85% |
-| utils | 83.82% |
-| **总计** | **56.68%** |
+## NOTES
+- `doc/` 与 `README.md` 提供背景，但真实构建/测试入口以当前 `CMakeLists.txt` 为准。
+- `sdk/cosmos/` 是 header-only 工具区；规则不够特殊，暂不单独挂子 AGENTS。
+- `music/` 里包含真实媒体样本；涉及 extractor / decode 的改动，优先补 `sdk_media_smoke` 或 `sdk_extractor_spec_tests`。
+- 用户口头说“提交一版”时，默认含义是：`git add` + `git commit` + `git push`；除非用户显式缩小范围，否则按这三个步骤执行。
