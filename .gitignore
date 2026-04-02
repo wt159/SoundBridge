@@ -11,3 +11,4 @@ sdk/3rdparty/CMakeFiles/
 sdk/test/log/**
 .cache
 .sisyphus/
+.worktrees/
