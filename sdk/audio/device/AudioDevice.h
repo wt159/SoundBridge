@@ -5,19 +5,15 @@
 #include <string>
 #include <vector>
 
-class AudioDataCallback {
-public:
-    virtual ~AudioDataCallback()                   = default;
-    virtual void getAudioData(void *data, int len) = 0;
-};
-
 /**
  * @brief Audio device class: select, open, close, start, and stop audio devices.
  * @details Supported audio format: 44100 Hz, 16-bit, stereo.
  *
- * @version 0.1
+ * Push mode: use write() to push audio data, no callback needed.
+ *
+ * @version 0.2
  * @author wtp (wtp0727@gmail.com)
- * @date 2023-10-03
+ * @date 2026-04-02
  * @copyright Copyright (c) 2023
  */
 class AudioDevice : public NonCopyable {
@@ -25,8 +21,7 @@ public:
     using AudDevPair = std::pair<uint64_t, std::string>;
 
 public:
-    AudioDevice() = delete;
-    AudioDevice(AudioDataCallback *callback);
+    AudioDevice();
     ~AudioDevice();
     std::vector<AudDevPair> getDeviceList();
     int getDeviceSpec(AudioSpec &spec);
@@ -35,6 +30,11 @@ public:
     int close();
     int start();
     int stop();
+
+    // Push mode interfaces
+    int write(const void *data, size_t len);
+    size_t getQueuedBytes() const;
+    void clearQueue();
 
 private:
     std::vector<AudDevPair> m_deviceList;

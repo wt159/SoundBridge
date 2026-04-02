@@ -8,7 +8,7 @@
 class AudioDevice::Impl {
 private:
     using AudioDevSpec = std::pair<std::string, SDL_AudioSpec>;
-    AudioDataCallback *m_callback;
+    SDL_AudioDeviceID m_deviceID;
     SDL_version m_version;
     int m_deviceNum;
     int m_driverNum;
@@ -24,7 +24,7 @@ private:
     static constexpr int m_defaultFormat   = AUDIO_S16SYS;
 
 public:
-    Impl(AudioDataCallback *callback);
+    Impl();
     ~Impl();
     int getDeviceList(std::vector<AudDevPair> &devList);
     int selectDevice(uint64_t id);
@@ -33,16 +33,18 @@ public:
     void close();
     void start();
     void stop();
+    int write(const void *data, size_t len);
+    size_t getQueuedBytes() const;
+    void clearQueue();
 
 private:
     void printInfo();
     void printfSDLAudioSpec(SDL_AudioSpec *spec);
     void SDLAudioSpec2AudioSpec(SDL_AudioSpec *sdlSpec, AudioSpec &spec);
-    static void audioCallback(void *userdata, Uint8 *stream, int len);
 };
 
-AudioDevice::Impl::Impl(AudioDataCallback *callback)
-    : m_callback(callback)
+AudioDevice::Impl::Impl()
+    : m_deviceID(0)
     , m_deviceNum(0)
     , m_driverNum(0)
     , m_isOpen(false)
@@ -71,8 +73,8 @@ AudioDevice::Impl::Impl(AudioDataCallback *callback)
     m_sdlSpec.format   = m_defaultFormat;
     m_sdlSpec.channels = m_defaultChannels;
     m_sdlSpec.samples  = m_defaultSamples;
-    m_sdlSpec.callback = audioCallback;
-    m_sdlSpec.userdata = this;
+    m_sdlSpec.callback = NULL;
+    m_sdlSpec.userdata = nullptr;
 
     SDLAudioSpec2AudioSpec(&m_sdlSpec, m_devSpec);
 }
@@ -107,12 +109,14 @@ int AudioDevice::Impl::open()
         return -1;
     }
     LOG_DEBUG(LOG_TAG, "sdl spec format: %d", m_sdlSpec.format);
-    // SDL_AudioSpec supportSpec;
-    int ret = SDL_OpenAudio(&m_sdlSpec, nullptr);
-    if (ret != 0) {
-        LOG_ERROR(LOG_TAG, "SDL_OpenAudio failed: %s", SDL_GetError());
+    SDL_AudioSpec obtained;
+    m_deviceID = SDL_OpenAudioDevice(nullptr, 0, &m_sdlSpec, &obtained, 0);
+
+    if (m_deviceID == 0) {
+        LOG_ERROR(LOG_TAG, "SDL_OpenAudioDevice failed: %s", SDL_GetError());
         return -1;
     }
+    m_sdlSpec = obtained;
     printfSDLAudioSpec(&m_sdlSpec);
     m_isOpen = true;
     return 0;
@@ -124,7 +128,10 @@ void AudioDevice::Impl::close()
         LOG_ERROR(LOG_TAG, "Audio device is not open");
         return;
     }
-    SDL_CloseAudio();
+    if (m_deviceID != 0) {
+        SDL_CloseAudioDevice(m_deviceID);
+        m_deviceID = 0;
+    }
     m_isOpen = false;
 }
 
@@ -134,7 +141,7 @@ void AudioDevice::Impl::start()
         LOG_ERROR(LOG_TAG, "Audio device is already start or not open");
         return;
     }
-    SDL_PauseAudio(0);
+    SDL_PauseAudioDevice(m_deviceID, 0);
     m_isStart = true;
 }
 
@@ -144,8 +151,35 @@ void AudioDevice::Impl::stop()
         LOG_ERROR(LOG_TAG, "Audio device is not start or not open");
         return;
     }
-    SDL_PauseAudio(1);
+    SDL_PauseAudioDevice(m_deviceID, 1);
     m_isStart = false;
+}
+
+int AudioDevice::Impl::write(const void *data, size_t len)
+{
+    if (!m_isOpen || m_deviceID == 0) {
+        return -1;
+    }
+    int ret = SDL_QueueAudio(m_deviceID, data, len);
+    if (ret != 0) {
+        LOG_ERROR(LOG_TAG, "SDL_QueueAudio failed: %s", SDL_GetError());
+    }
+    return ret;
+}
+
+size_t AudioDevice::Impl::getQueuedBytes() const
+{
+    if (!m_isOpen || m_deviceID == 0) {
+        return 0;
+    }
+    return SDL_GetQueuedAudioSize(m_deviceID);
+}
+
+void AudioDevice::Impl::clearQueue()
+{
+    if (m_isOpen && m_deviceID != 0) {
+        SDL_ClearQueuedAudio(m_deviceID);
+    }
 }
 
 void AudioDevice::Impl::printInfo()
@@ -235,14 +269,8 @@ void AudioDevice::Impl::SDLAudioSpec2AudioSpec(SDL_AudioSpec *sdlSpec, AudioSpec
     spec.bitsPerSample  = spec.bytesPerSample * 8;
 }
 
-void AudioDevice::Impl::audioCallback(void *userdata, Uint8 *stream, int len)
-{
-    AudioDevice::Impl *impl = (AudioDevice::Impl *)userdata;
-    impl->m_callback->getAudioData(stream, len);
-}
-
-AudioDevice::AudioDevice(AudioDataCallback *callback)
-    : m_impl(new Impl(callback))
+AudioDevice::AudioDevice()
+    : m_impl(new Impl())
 {
 }
 
@@ -286,4 +314,19 @@ int AudioDevice::stop()
 {
     m_impl->stop();
     return 0;
+}
+
+int AudioDevice::write(const void *data, size_t len)
+{
+    return m_impl->write(data, len);
+}
+
+size_t AudioDevice::getQueuedBytes() const
+{
+    return m_impl->getQueuedBytes();
+}
+
+void AudioDevice::clearQueue()
+{
+    m_impl->clearQueue();
 }

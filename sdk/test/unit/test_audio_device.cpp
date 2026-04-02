@@ -7,49 +7,24 @@
 #include <thread>
 #include <vector>
 
-class MockAudioCallback : public AudioDataCallback {
-public:
-    MockAudioCallback()
-        : m_callCount(0)
-        , m_lastLen(0)
-    {
-    }
-
-    void getAudioData(void *data, int len) override
-    {
-        m_callCount++;
-        m_lastLen = len;
-    }
-
-    int getCallCount() const { return m_callCount; }
-    int getLastLen() const { return m_lastLen; }
-
-private:
-    int m_callCount;
-    int m_lastLen;
-};
-
 TEST_SUITE("AudioDevice")
 {
-    TEST_CASE("Construction with valid callback")
+    TEST_CASE("Construction")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
         REQUIRE(true);
     }
 
     TEST_CASE("Get device list")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
         auto devList = device.getDeviceList();
         CHECK(devList.size() >= 0);
     }
 
     TEST_CASE("Get device spec")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
         AudioSpec spec;
         int result = device.getDeviceSpec(spec);
         REQUIRE(result == 0);
@@ -59,8 +34,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Open and close device")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int openResult = device.open();
         if (openResult == 0) {
@@ -74,8 +48,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Open device twice")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int firstOpen = device.open();
         if (firstOpen == 0) {
@@ -87,8 +60,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Start and stop device")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int openResult = device.open();
         if (openResult == 0) {
@@ -104,8 +76,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Start without open")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         device.start();
         CHECK(true);
@@ -113,8 +84,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Stop without start")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         device.stop();
         CHECK(true);
@@ -122,8 +92,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Close without open")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         device.close();
         CHECK(true);
@@ -131,8 +100,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Select device")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         auto devList = device.getDeviceList();
         if (!devList.empty()) {
@@ -145,8 +113,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Multiple open/close cycles")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         for (int i = 0; i < 3; i++) {
             int openResult = device.open();
@@ -159,8 +126,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Get device spec multiple times")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         AudioSpec spec1, spec2;
         device.getDeviceSpec(spec1);
@@ -172,8 +138,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Get device list returns empty or valid")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         auto devList1 = device.getDeviceList();
         auto devList2 = device.getDeviceList();
@@ -182,8 +147,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Select invalid device")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int result = device.selectDevice(99999);
         CHECK(result == 0);
@@ -191,8 +155,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Default audio spec values")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         AudioSpec spec;
         device.getDeviceSpec(spec);
@@ -204,8 +167,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Device spec bits per sample")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         AudioSpec spec;
         device.getDeviceSpec(spec);
@@ -216,8 +178,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Stop after start and close")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int openResult = device.open();
         if (openResult == 0) {
@@ -231,8 +192,7 @@ TEST_SUITE("AudioDevice")
 
     TEST_CASE("Sequential start stop multiple times")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int openResult = device.open();
         if (openResult == 0) {
@@ -245,29 +205,55 @@ TEST_SUITE("AudioDevice")
         }
     }
 
-    TEST_CASE("AudioCallback is triggered after open and start")
+    TEST_CASE("Write to device")
     {
-        MockAudioCallback callback;
-        AudioDevice device(&callback);
+        AudioDevice device;
 
         int openResult = device.open();
         if (openResult == 0) {
             device.start();
-            // Wait for SDL to call the callback
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+            std::vector<uint8_t> testData(1024, 0x00);
+            int writeResult = device.write(testData.data(), testData.size());
+            CHECK(writeResult == 0);
+
+            size_t queued = device.getQueuedBytes();
+            CHECK(queued > 0);
+
+            device.clearQueue();
+            queued = device.getQueuedBytes();
+            CHECK(queued == 0);
+
             device.stop();
             device.close();
-
-            // Check if callback was called
-            CHECK(callback.getCallCount() > 0);
-            CHECK(callback.getLastLen() > 0);
-            // Print actual values for debugging
-            std::cout << "Callback was called " << callback.getCallCount()
-                      << " times, len=" << callback.getLastLen() << std::endl;
         } else {
-            // If open fails (no audio device), just verify it returns error
             CHECK(openResult == -1);
         }
+    }
+
+    TEST_CASE("Get queued bytes when not open")
+    {
+        AudioDevice device;
+
+        size_t queued = device.getQueuedBytes();
+        CHECK(queued == 0);
+    }
+
+    TEST_CASE("Write when not open")
+    {
+        AudioDevice device;
+
+        std::vector<uint8_t> data(512, 0x00);
+        int result = device.write(data.data(), data.size());
+        CHECK(result == -1);
+    }
+
+    TEST_CASE("Clear queue when not open")
+    {
+        AudioDevice device;
+
+        device.clearQueue();
+        CHECK(true);
     }
 }
 
