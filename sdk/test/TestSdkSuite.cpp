@@ -423,7 +423,10 @@ bool test_player_api()
             traceId = probe.last_trace_id;
         }
         ok &= check(!traceId.empty(), "Public Player error callback includes trace id");
-        player.addMusicDirectory("../../music");
+
+        RealMediaFixture fixture;
+        std::string mediaDir = fixture.mediaDir();
+        player.addMusicDirectory(mediaDir);
         ok &= check(wait_for_condition([&player]() { return player.trackCount() > 0; }, 3000),
                     "Public Player loads tracks through facade");
         ok &= check(
@@ -432,6 +435,7 @@ bool test_player_api()
         ok &= check(wait_for_condition([&player]() { return player.duration() > 0; }, 3000),
                     "Public Player exposes current duration from core");
         ok &= check(player.position() == 0, "Public Player initial position stays at zero");
+
         if (player.trackCount() > 1) {
             player.setCurrentTrack(1);
             ok &= check(

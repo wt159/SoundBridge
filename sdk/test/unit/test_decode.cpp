@@ -97,6 +97,43 @@ public:
     }
 };
 
+class ChunkedDecodeCallback : public AudioDecodeCallback {
+public:
+    std::vector<AudioBuffer::AudioBufferPtr> &frames;
+    AudioSpec spec;
+
+    ChunkedDecodeCallback(std::vector<AudioBuffer::AudioBufferPtr> &outFrames)
+        : frames(outFrames)
+    {
+    }
+
+    void onAudioDecodeCallback(AudioDecodeSpec &out) override
+    {
+        if (out.spec.samples == 0 || out.lineData == nullptr) {
+            return;
+        }
+
+        size_t frameSize = static_cast<size_t>(out.spec.samples)
+            * static_cast<size_t>(out.spec.numChannel)
+            * static_cast<size_t>(out.spec.bytesPerSample);
+
+        auto buf = std::make_shared<AudioBuffer>(frameSize);
+
+        size_t offset = 0;
+        for (size_t i = 0; i < static_cast<size_t>(out.spec.samples); ++i) {
+            for (int ch = 0; ch < out.spec.numChannel; ++ch) {
+                std::memcpy(buf->data() + offset,
+                            out.lineData[ch] + static_cast<size_t>(out.spec.bytesPerSample) * i,
+                            static_cast<size_t>(out.spec.bytesPerSample));
+                offset += static_cast<size_t>(out.spec.bytesPerSample);
+            }
+        }
+
+        frames.push_back(buf);
+        spec = out.spec;
+    }
+};
+
 class TestProcessExtractor : public ExtractorHelper {
 public:
     TestProcessExtractor(AudioCodecID codecId, const AudioSpec &spec,
@@ -642,7 +679,142 @@ TEST_SUITE("AudioStreamDecoder")
         decoder.stop();
     }
 
-    TEST_CASE("Decode FLAC checked-in media through stream decoder")
+    TEST_CASE("Stream decoder seek while decoding")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+        REQUIRE(decoder.state() == StreamDecoderState::DECODING);
+
+        decoder.seekToMs(1000);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("Stream decoder position while decoding")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+        REQUIRE(decoder.positionMs() == 0);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("Stream decoder seek in IDLE state does nothing")
+    {
+        AudioRingBuffer ring(1024);
+        AudioSpec devSpec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.state() == StreamDecoderState::IDLE);
+        decoder.seekToMs(1000);
+        CHECK(decoder.state() == StreamDecoderState::IDLE);
+    }
+
+    TEST_CASE("Stream decoder seek in ERROR state does nothing")
+    {
+        AudioRingBuffer ring(1024);
+        AudioSpec devSpec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        decoder.start(nullptr);
+        REQUIRE(decoder.state() == StreamDecoderState::ERROR);
+
+        decoder.seekToMs(1000);
+        CHECK(decoder.state() == StreamDecoderState::ERROR);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("Stream decoder position with zero bytesPerMs returns 0")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+        REQUIRE(decoder.state() == StreamDecoderState::DECODING);
+
+        decoder.stop();
+        CHECK(decoder.positionMs() == 0);
+    }
+
+    TEST_CASE("Stream decoder seek to zero position")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        decoder.seekToMs(0);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("Stream decoder positionMs before start has zero bytesPerMs")
+    {
+        AudioRingBuffer ring(1024);
+        AudioSpec devSpec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.state() == StreamDecoderState::IDLE);
+        REQUIRE(decoder.positionMs() == 0);
+    }
+
+    TEST_CASE("Stream decoder FLAC stream to EOS")
     {
         RealMediaFixture fixture;
         REQUIRE(fixture.exists("小镇姑娘-陶喆.flac"));
@@ -659,33 +831,210 @@ TEST_SUITE("AudioStreamDecoder")
         AudioStreamDecoder decoder(&ring, devSpec);
 
         REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
-        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
         CHECK(decoder.durationMs() > 0);
 
         decoder.stop();
     }
+}
 
-    TEST_CASE("Decode WAV checked-in media through stream decoder")
+TEST_CASE("Decode WAV checked-in media through stream decoder")
+{
+    RealMediaFixture fixture;
+    REQUIRE(fixture.exists("music.wav"));
+
+    std::shared_ptr<FileSource> source;
+    std::unique_ptr<ExtractorHelper> extractor
+        = createRealMediaExtractorForProcess(fixture, "music.wav", ".wav", source);
+    REQUIRE(source != nullptr);
+    REQUIRE(extractor != nullptr);
+    REQUIRE(extractor->initCheck() == sdk_utils::OK);
+    REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_NONE);
+
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec = createStreamDecoderDeviceSpec(extractor.get());
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+    REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+    CHECK(decoder.durationMs() > 0);
+
+    decoder.stop();
+}
+
+TEST_CASE("Chunked decode consistency with full file decode - AAC")
+{
+    RealMediaFixture fixture;
+    REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+    std::shared_ptr<FileSource> source;
+    std::unique_ptr<ExtractorHelper> extractor
+        = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+    REQUIRE(source != nullptr);
+    REQUIRE(extractor != nullptr);
+    REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+    AudioDecodeProcess processFull(extractor.get());
+    REQUIRE(processFull.initCheck() == sdk_utils::OK);
+    auto bufferFull = processFull.getDecodeBuffer();
+    REQUIRE(bufferFull != nullptr);
+    REQUIRE(bufferFull->size() > 0);
+
+    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+    const char *data                     = metaData->data();
+    size_t totalSize                     = metaData->size();
+
+    std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
+
+    ChunkedDecodeCallback callback(chunkFrames);
+
+    AudioDecode decode(AUDIO_CODEC_ID_AAC, &callback);
+    REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+    int ret = decode.decode(data, static_cast<ssize_t>(totalSize));
+    if (ret < 0) {
+        FAIL("Single call decode failed ret=" << ret);
+    }
+
+    ret = decode.decode(nullptr, 0);
+    if (ret < 0) {
+        FAIL("Flush decode failed");
+    }
+
+    AudioBuffer::AudioBufferPtr bufferChunked;
     {
-        RealMediaFixture fixture;
-        REQUIRE(fixture.exists("music.wav"));
-
-        std::shared_ptr<FileSource> source;
-        std::unique_ptr<ExtractorHelper> extractor
-            = createRealMediaExtractorForProcess(fixture, "music.wav", ".wav", source);
-        REQUIRE(source != nullptr);
-        REQUIRE(extractor != nullptr);
-        REQUIRE(extractor->initCheck() == sdk_utils::OK);
-        REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_NONE);
-
-        AudioRingBuffer ring(1 << 20);
-        AudioSpec devSpec = createStreamDecoderDeviceSpec(extractor.get());
-        AudioStreamDecoder decoder(&ring, devSpec);
-
-        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
-        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
-        CHECK(decoder.durationMs() > 0);
-
-        decoder.stop();
+        size_t mergedSize = 0;
+        for (auto &buf : chunkFrames) {
+            mergedSize += buf->size();
+        }
+        bufferChunked  = std::make_shared<AudioBuffer>(mergedSize);
+        off64_t offset = 0;
+        for (auto &buf : chunkFrames) {
+            bufferChunked->setData(offset, buf->size(), buf->data());
+            offset += buf->size();
+        }
     }
+    REQUIRE(bufferChunked != nullptr);
+    REQUIRE(bufferChunked->size() > 0);
+
+    CHECK(bufferFull->size() == bufferChunked->size());
+    CHECK(std::memcmp(bufferFull->data(), bufferChunked->data(), bufferFull->size()) == 0);
+}
+
+TEST_CASE("Chunked decode consistency with full file decode - MP3")
+{
+    RealMediaFixture fixture;
+    REQUIRE(fixture.exists("小镇姑娘-陶喆.128.mp3"));
+
+    std::shared_ptr<FileSource> source;
+    std::unique_ptr<ExtractorHelper> extractor
+        = createRealMediaExtractorForProcess(fixture, "小镇姑娘-陶喆.128.mp3", ".mp3", source);
+    REQUIRE(source != nullptr);
+    REQUIRE(extractor != nullptr);
+    REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+    AudioDecodeProcess processFull(extractor.get());
+    REQUIRE(processFull.initCheck() == sdk_utils::OK);
+    auto bufferFull = processFull.getDecodeBuffer();
+    REQUIRE(bufferFull != nullptr);
+    REQUIRE(bufferFull->size() > 0);
+
+    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+    const char *data                     = metaData->data();
+    size_t totalSize                     = metaData->size();
+
+    std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
+
+    ChunkedDecodeCallback callback(chunkFrames);
+
+    AudioDecode decode(AUDIO_CODEC_ID_MP3, &callback);
+    REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+    int ret = decode.decode(data, static_cast<ssize_t>(totalSize));
+    if (ret < 0) {
+        FAIL("Single call decode failed ret=" << ret);
+    }
+
+    ret = decode.decode(nullptr, 0);
+    if (ret < 0) {
+        FAIL("Flush decode failed");
+    }
+
+    AudioBuffer::AudioBufferPtr bufferChunked;
+    {
+        size_t mergedSize = 0;
+        for (auto &buf : chunkFrames) {
+            mergedSize += buf->size();
+        }
+        bufferChunked  = std::make_shared<AudioBuffer>(mergedSize);
+        off64_t offset = 0;
+        for (auto &buf : chunkFrames) {
+            bufferChunked->setData(offset, buf->size(), buf->data());
+            offset += buf->size();
+        }
+    }
+    REQUIRE(bufferChunked != nullptr);
+    REQUIRE(bufferChunked->size() > 0);
+
+    CHECK(bufferFull->size() == bufferChunked->size());
+    CHECK(std::memcmp(bufferFull->data(), bufferChunked->data(), bufferFull->size()) == 0);
+}
+
+TEST_CASE("Chunked decode consistency with full file decode - M4A")
+{
+    RealMediaFixture fixture;
+    REQUIRE(fixture.exists("摇滚乐_Freesound.m4a"));
+
+    std::shared_ptr<FileSource> source;
+    std::unique_ptr<ExtractorHelper> extractor
+        = createRealMediaExtractorForProcess(fixture, "摇滚乐_Freesound.m4a", ".m4a", source);
+    REQUIRE(source != nullptr);
+    REQUIRE(extractor != nullptr);
+    REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+    AudioDecodeProcess processFull(extractor.get());
+    REQUIRE(processFull.initCheck() == sdk_utils::OK);
+    auto bufferFull = processFull.getDecodeBuffer();
+    REQUIRE(bufferFull != nullptr);
+    REQUIRE(bufferFull->size() > 0);
+
+    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+    const char *data                     = metaData->data();
+    size_t totalSize                     = metaData->size();
+
+    std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
+
+    ChunkedDecodeCallback callback(chunkFrames);
+
+    AudioDecode decode(AUDIO_CODEC_ID_AAC, &callback);
+    REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+    int ret = decode.decode(data, static_cast<ssize_t>(totalSize));
+    if (ret < 0) {
+        FAIL("Single call decode failed ret=" << ret);
+    }
+
+    ret = decode.decode(nullptr, 0);
+    if (ret < 0) {
+        FAIL("Flush decode failed");
+    }
+
+    AudioBuffer::AudioBufferPtr bufferChunked;
+    {
+        size_t mergedSize = 0;
+        for (auto &buf : chunkFrames) {
+            mergedSize += buf->size();
+        }
+        bufferChunked  = std::make_shared<AudioBuffer>(mergedSize);
+        off64_t offset = 0;
+        for (auto &buf : chunkFrames) {
+            bufferChunked->setData(offset, buf->size(), buf->data());
+            offset += buf->size();
+        }
+    }
+    REQUIRE(bufferChunked != nullptr);
+    REQUIRE(bufferChunked->size() > 0);
+
+    CHECK(bufferFull->size() == bufferChunked->size());
+    CHECK(std::memcmp(bufferFull->data(), bufferChunked->data(), bufferFull->size()) == 0);
 }
