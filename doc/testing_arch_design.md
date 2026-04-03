@@ -12,7 +12,7 @@
 ### 1.2 测试目标
 
 1. **统一测试框架**：所有测试使用 doctest
-2. **提升测试覆盖率**：当前 66.18%，目标 80%+
+2. **提升测试覆盖率**：当前 33.17%，目标 80%+
 3. **支持代码覆盖率**：集成 gcov/lcov
 4. **简化维护**：单一断言风格，单一入口
 
@@ -108,22 +108,53 @@ cmake --build build --target coverage
 
 ## 4. 模块覆盖率
 
-### 4.1 覆盖率目标
+### 4.1 当前覆盖率 (2026-04)
+
+| 模块 | 实际覆盖率 |
+|------|-----------|
+| Audio Decode | 40.63% |
+| Audio Resample | 44.70% |
+| Audio Device | 43.56% |
+| Extractor Core | 46.05% |
+| Extractors | 27.25% |
+| SDK Core | 31.98% |
+| Utils | 45.95% |
+| Log | 55.63% |
+| **整体 SDK** | **33.17%** |
+
+### 4.2 覆盖率目标
 
 | 模块 | 目标覆盖率 | 状态 |
 |------|-----------|------|
 | cosmos | 95% | ✅ 已有 91.89% |
-| log | 99% | ✅ 已有 98.85% |
-| utils | 90% | 已有 83.82% |
-| audio/resample | 80% | 已有 69.41% |
-| audio/decode | 75% | 已有 64.42% |
-| audio/device | 75% | 已有 69.71% |
-| extractor | 70% | 约 50% |
-| **整体 SDK** | **80%** | 已有 66.18% |
+| log | 99% | ✅ 已有 ~55% |
+| utils | 90% | 已有 45.95% |
+| audio/resample | 80% | 已有 44.70% |
+| audio/decode | 75% | 已有 40.63% |
+| audio/device | 75% | 已有 43.56% |
+| extractor | 70% | 已有 27.25% |
+| **整体 SDK** | **80%** | 已有 33.17% |
 
-### 4.2 已知限制
+### 4.3 生成覆盖率报告
+
+```bash
+# 重新配置并编译（带覆盖率标志）
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+  -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
+
+# 构建并运行所有测试
+cmake --build build
+ctest --test-dir build -R sdk_ --output-on-failure
+
+# gcov 文件在各模块的 build/.../CMakeFiles/*.dir/ 目录下
+# 可使用 gcov 工具生成报告
+```
+
+### 4.4 已知限制
 
 - **gcov 多线程限制**：SDL 等第三方库未使用 coverage 标志编译，AudioDevice 的 `audioCallback` 不会被 gcov 记录
+- **覆盖率较低原因**：当前测试主要覆盖核心路径，边界条件和异常路径覆盖不足
 
 ---
 
@@ -144,54 +175,56 @@ cmake --build build --target coverage
 | AudioDevice | 22 | open/close、start/stop、callback |
 | DataSource/Extractor | ~50 | 接口测试、工厂模式、真实媒体 |
 | AudioDecode | ~30 | 管线、解码、FLAC、Vorbis |
+| AudioStreamDecoder | ~20 | 流解码、seek、position、边界条件 |
+| Chunked Decode | 3 | AAC/MP3/M4A 分块解码一致性 |
 | MusicPlayList | ~27 | 播放列表操作 |
 | Player API | ~15 | MusicPlayer、Public Player |
 | MediaSmoke | ~12 | 媒体格式冒烟测试 |
-| **总计** | **~250** | 统一框架 |
+| **总计** | **~280** | 统一框架 |
+
+### 5.1 本次新增测试
+
+- **AudioStreamDecoder 边界测试**：
+  - seek while decoding / in IDLE state / in ERROR state
+  - position while decoding / before start
+  - zero bytesPerMs 边界条件
+  
+- **Chunked Decode 一致性测试**：
+  - AAC 分块解码与全文件解码一致性
+  - MP3 分块解码与全文件解码一致性  
+  - M4A 分块解码与全文件解码一致性
 
 ---
 
-## 6. 附录
+## 6. RealMediaFixture 使用规范
 
-### 6.1 Doctest 常用语法
+### 6.1 目的
+统一管理测试用真实媒体文件路径，避免硬编码路径导致跨平台/跨环境测试失败。
 
-```cpp
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include <doctest/doctest.h>
-
-// 基本断言
-REQUIRE(expression);           // 失败终止
-CHECK(expression);            // 失败继续
-
-// 异常断言
-REQUIRE_THROWS(expr);
-REQUIRE_THROWS_AS(expr, type);
-
-// 比较断言
-REQUIRE_EQ(a, b);
-REQUIRE_NE(a, b);
-REQUIRE_GT(a, b);
-```
-
-### 6.2 Mock 库使用
+### 6.2 使用方法
 
 ```cpp
-#include "mocks/PlayerMocks.hpp"
-#include "mocks/AudioMocks.hpp"
+#include "fixtures/RealMediaFixture.hpp"
 
-// 使用 MockPlayerCallbacks
-MockPlayerCallbacks playerCallback;
-soundbridge::Player player(&playerCallback, config);
+// 获取完整媒体路径
+RealMediaFixture fixture;
+std::string mediaPath = fixture.mediaPath("music.wav");  // 完整路径
+std::string mediaDir = fixture.mediaDir();              // 媒体目录
 
-// 使用 MockAudioDecodeCallback
-MockAudioDecodeCallback decodeCallback;
-AudioDecode decode(AUDIO_CODEC_ID_AAC, &decodeCallback);
+// 检查文件是否存在
+if (fixture.exists("music.wav")) {
+    // 执行测试
+}
+
+// 配合 Extractor 测试
+std::shared_ptr<FileSource> source;
+std::unique_ptr<ExtractorHelper> extractor = fixture.create("music.wav", ".wav", source);
 ```
 
-### 6.3 参考资料
-
-- [Doctest 文档](https://github.com/onqtam/doctest)
-- [lcov 覆盖率工具](https://github.com/linux-test-project/lcov)
+### 6.3 规则
+- **禁止**硬编码路径（如 `"../../music"` 或绝对路径）
+- **必须**使用 `RealMediaFixture` 获取所有媒体文件路径
+- `TestSdkSuite.cpp` 中的测试也已修复为使用 `RealMediaFixture`
 
 ---
 
@@ -206,9 +239,12 @@ AudioDecode decode(AUDIO_CODEC_ID_AAC, &decodeCallback);
 - [x] test_media_smoke.cpp (媒体冒烟测试)
 - [x] test_audio_common.cpp (AudioCommon 测试)
 - [x] test_extractor_isolated.cpp (Extractor 隔离测试)
+- [x] 修复 TestSdkSuite player 测试使用 RealMediaFixture
+- [x] 新增 AudioStreamDecoder 边界测试
+- [x] 新增 Chunked Decode 一致性测试
 
 ### 7.2 下一步
 
-1. **覆盖率提升**：通过 Phase 4 持续改进
+1. **覆盖率提升**：通过持续测试改进，目标 80%
 2. **边界测试**：完善 Extractor 边界情况
-3. **TestSdkSuite 移除**：确认无依赖后删除 legacy 入口
+3. **异常路径覆盖**：增加异常输入、错误恢复测试
