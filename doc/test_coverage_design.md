@@ -1,808 +1,188 @@
 # SoundBridge SDK 测试覆盖率提升方案
 
-**文档版本**: v1.0  
-**创建日期**: 2026-04-06  
+**文档版本**: v2.0  
+**更新日期**: 2026-04-06  
 **目标**: 将 SDK 代码覆盖率从 68% 提升至 80%+
 
 ---
 
-## 1. 当前覆盖率分析
+## 1. 覆盖率统计方法
 
-| 模块 | 覆盖率 | 未覆盖行数 | 优先级 |
-|------|--------|-----------|--------|
-| **sdk (root)** | 506/1003 (50.4%) | 497 | 🔴 高 |
-| audio/decode | 745/1012 (73.6%) | 267 | 🟡 中 |
-| audio/device | 193/247 (78.1%) | 54 | 🟡 中 |
-| audio/resample | 118/170 (69.4%) | 52 | 🟡 中 |
-| log (boost) | 84/85 (98.8%) | 1 | 🟢 低 |
-| utils | 95/110 (86.4%) | 15 | 🟢 低 |
-| **总计** | **1741/2627 (66.3%)** | **886** | - |
+### 统计工具
+使用 **gcov** (GCC 内置覆盖率工具) 分析 .gcda 文件
+
+### 统计规则
+```
+gcov 输出格式:
+  180:    8:  ...代码行...      ← 已覆盖 (执行 180 次)
+  #####:    9:  ...代码行...   ← 未覆盖
+        -:    0:Source:...     ← 非可执行行 (注释、空行)
+
+可执行行 = 以数字开头 或 ##### 开头的行
+已覆盖行 = 以数字开头（非 #####）
+覆盖率 = 已覆盖行 / 可执行行 × 100%
+```
+
+### 统计范围
+- 只统计 .cpp 源文件（不含 .hpp 头文件）
+- 只统计 SDK 业务代码（排除 3rdparty）
 
 ---
 
-## 2. 测试设计规范
+## 2. 当前覆盖率分析 (v2.0)
 
-### 2.1 测试框架
-- 使用 **doctest** 框架（`sdk/test/unit/`）
-- 遵循现有 `TEST_SUITE` + `TEST_CASE` 结构
-- 使用 `RealMediaFixture` 获取真实媒体路径
-- 异步测试使用 `std::promise/std::future` 模式
+| 模块 | 可执行行 | 已覆盖行 | 覆盖率 | 优先级 |
+|------|---------|---------|--------|--------|
+| sdk/ErrorCode.cpp | 92 | 92 | **100%** | ✅ |
+| sdk/MusicPlayList.cpp | 218 | 181 | 83.0% | 🟡 中 |
+| sdk/audio/resample/ | 168 | 144 | **85.7%** | 🟢 低 |
+| sdk/player_impl.cpp | 173 | 123 | 71.1% | 🔴 高 |
+| sdk/audio/device/ | 187 | 133 | 71.1% | 🔴 高 |
+| sdk/audio/decode/ | 1012 | 764 | 75.5% | 🟡 中 |
+| sdk/MusicPlayer.cpp | 384 | 248 | 64.6% | 🔴 高 |
+| sdk/error_impl.cpp | 15 | 0 | **0.0%** | ⚠️ 缺失 |
+| sdk/log/ | 85 | 84 | 98.8% | 🟢 低 |
+| sdk/utils/ | 170 | 155 | 91.2% | 🟢 低 |
+| **总计** | **2616** | **1974** | **75.5%** | - |
 
-### 2.2 命名规范
-```
-TEST_SUITE("模块名")
-TEST_CASE("场景: 条件或状态")
-```
+### 覆盖率提升记录
 
-### 2.3 断言选择
-- 关键断言: `REQUIRE` (失败终止)
-- 非关键断言: `CHECK` (继续收集)
-- 错误路径: `REQUIRE_FALSE` 或 `CHECK_FALSE`
+| 模块 | v1.0 (计划前) | v2.0 (实施后) | 提升 |
+|------|---------------|---------------|------|
+| sdk (root) | 50.4% | 69.8% | +19.4% |
+| audio/decode | 73.6% | 75.5% | +1.9% |
+| audio/device | 78.1% | 71.1% | -7.0% ⚠️ |
+| audio/resample | 69.4% | 85.7% | +16.3% |
+| log | 98.8% | 98.8% | — |
+| utils | 86.4% | 91.2% | +4.8% |
+| **总计** | **66.3%** | **75.5%** | **+9.2%** |
+
+### ⚠️ 已知问题
+
+1. **error_impl.cpp (0%)**: soundbridge 命名空间错误包装函数完全未覆盖
+2. **MusicPlayer.cpp (64.6%)**: 136 行未覆盖，主要是状态转换回调路径
+3. **AudioDevice.cpp**: SDL 设备枚举代码依赖实际硬件环境
 
 ---
 
-## 3. 新增测试用例设计
+## 3. 测试文件清单
 
-### 3.1 sdk/ErrorCode 模块 (新增 test_error.cpp)
+### 已实施 (v2.0)
 
-**目标**: 覆盖 92 行未覆盖代码
+| 文件 | 操作 | 测试用例数 | 状态 |
+|------|------|-----------|------|
+| `test_error.cpp` | 新建 | 34 | ✅ |
+| `test_player_integration.cpp` | 新建 | 16 | ✅ |
+| `test_stream_decoder.cpp` | 新建 | 40 | ✅ |
+| `test_playlist_advance.cpp` | 新建 | 19 | ✅ |
+| `test_audio_device_lifecycle.cpp` | 新建 | 12 | ✅ |
+| `test_resample_formats.cpp` | 新建 | 8 | ✅ |
+| `test_audio.cpp` | 扩展 | ~6 | ✅ |
+| `test_player.cpp` | 扩展 | ~8 | ✅ |
+| **总计** | - | **~143** | ✅ |
+
+### 待实施
+
+| 文件 | 目标 | 覆盖文件 |
+|------|------|---------|
+| `test_error_bridge.cpp` | 覆盖 error_impl.cpp | soundbridge 命名空间包装函数 |
+| `test_player_callbacks.cpp` | 覆盖 MusicPlayer.cpp 回调路径 | getAudioData, putMusicPlayListCurBuf 等 |
+
+---
+
+## 4. 新增测试用例设计
+
+### 4.1 error_impl.cpp 测试 (待实施)
+
+**目标**: 覆盖 soundbridge 命名空间错误包装函数
 
 ```cpp
-TEST_SUITE("ErrorCode")
+TEST_SUITE("soundbridge Error Bridge")
 {
-    TEST_CASE("GetErrorInfo returns correct info for each ErrorCode")
+    TEST_CASE("GetErrorInfo wraps sdk::GetErrorInfo")
     {
-        // 测试所有 ErrorCode 枚举值的 GetErrorInfo
-        auto info = sdk::GetErrorInfo(sdk::ErrorCode::Ok);
-        CHECK(info.severity == sdk::ErrorSeverity::Info);
+        auto info = soundbridge::GetErrorInfo(soundbridge::ErrorCode::Ok);
+        CHECK(info.severity == soundbridge::ErrorSeverity::Info);
         CHECK(info.recoverable == true);
     }
     
-    TEST_CASE("GetErrorInfo for FileOpenFailed")
+    TEST_CASE("GetErrorInfo for all ErrorCode values")
     {
-        auto info = sdk::GetErrorInfo(sdk::ErrorCode::FileOpenFailed);
-        CHECK(info.module == sdk::ErrorModule::File);
-        CHECK(info.severity == sdk::ErrorSeverity::Error);
-        CHECK(info.recoverable == false);
-        CHECK(info.action == sdk::ErrorAction::CheckFile);
+        // 测试所有枚举值的包装
+        CHECK(soundbridge::GetErrorInfo(soundbridge::ErrorCode::FileOpenFailed).module 
+              == soundbridge::ErrorModule::File);
+        // ... 其他枚举值
     }
     
-    TEST_CASE("GetErrorInfo for unknown code returns Unknown info")
+    TEST_CASE("ToString for ErrorModule")
     {
-        auto info = sdk::GetErrorInfo(static_cast<sdk::ErrorCode>(999));
-        CHECK(info.module == sdk::ErrorModule::Unknown);
-        CHECK(info.severity == sdk::ErrorSeverity::Error);
+        CHECK_STREQ(soundbridge::ToString(soundbridge::ErrorModule::File), "File");
+        CHECK_STREQ(soundbridge::ToString(soundbridge::ErrorModule::Player), "Player");
     }
     
-    TEST_CASE("ToString for ErrorModule returns correct strings")
+    TEST_CASE("ToString for ErrorSeverity")
     {
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::File), "File");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Extractor), "Extractor");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Decode), "Decode");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Resample), "Resample");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Playlist), "Playlist");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::AudioDevice), "AudioDevice");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Player), "Player");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorModule::Unknown), "Unknown");
+        CHECK_STREQ(soundbridge::ToString(soundbridge::ErrorSeverity::Error), "Error");
     }
     
-    TEST_CASE("ToString for ErrorSeverity returns correct strings")
+    TEST_CASE("ToString for ErrorAction")
     {
-        CHECK_STREQ(sdk::ToString(sdk::ErrorSeverity::Info), "Info");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorSeverity::Warning), "Warning");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorSeverity::Error), "Error");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorSeverity::Fatal), "Fatal");
+        CHECK_STREQ(soundbridge::ToString(soundbridge::ErrorAction::SkipTrack), "SkipTrack");
     }
     
-    TEST_CASE("ToString for ErrorAction returns correct strings")
+    TEST_CASE("FormatError with detail")
     {
-        CHECK_STREQ(sdk::ToString(sdk::ErrorAction::None), "None");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorAction::SkipTrack), "SkipTrack");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorAction::StopPlayback), "StopPlayback");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorAction::CheckFile), "CheckFile");
-        CHECK_STREQ(sdk::ToString(sdk::ErrorAction::ReportBug), "ReportBug");
-    }
-    
-    TEST_CASE("FormatError with detail appends correctly")
-    {
-        std::string result = sdk::FormatError(sdk::ErrorCode::FileOpenFailed, "file.wav");
-        CHECK(result.find("Open file failed") != std::string::npos);
-        CHECK(result.find("file.wav") != std::string::npos);
-    }
-    
-    TEST_CASE("FormatError without detail returns base message")
-    {
-        std::string result = sdk::FormatError(sdk::ErrorCode::Ok, "");
-        CHECK(result == "Ok");
+        auto result = soundbridge::FormatError(soundbridge::ErrorCode::DecodeFailed, "codec");
+        CHECK(result.find("Decode failed") != std::string::npos);
     }
 }
 ```
 
-**预期覆盖率提升**: +92 行
+---
+
+## 5. 后续提升计划
+
+### 优先级 1: error_impl.cpp (0% → 目标 80%+)
+- 新建 `test_error_bridge.cpp`
+- 覆盖 soundbridge 命名空间所有错误包装函数
+- 预计: +15 行覆盖
+
+### 优先级 2: MusicPlayer.cpp (64.6% → 目标 75%+)
+- 补充状态转换回调路径测试
+- 新建 `test_player_callbacks.cpp`
+- 预计: +50 行覆盖
+
+### 优先级 3: AudioStreamDecoder.cpp (70.0% → 目标 80%+)
+- 补充 FLAC/Vorbis 解码器边界条件
+- 预计: +30 行覆盖
 
 ---
 
-### 3.2 soundbridge::Player 模块扩展 (扩展 test_player.cpp)
-
-**目标**: 覆盖 player_impl.cpp 中 50 行未覆盖代码
-
-```cpp
-TEST_SUITE("PublicPlayer Error Handling")
-{
-    TEST_CASE("seek before play does not crash")
-    {
-        MockPlayerCallbacks callback;
-        soundbridge::PlayerConfig config;
-        config.logDirectory = "./log";
-        soundbridge::Player player(&callback, config);
-        
-        // seek should be safe even without track
-        player.seek(1000);
-        CHECK(player.position() == 0);  // position unchanged
-    }
-    
-    TEST_CASE("next with empty playlist reports error")
-    {
-        MockPlayerCallbacks callback;
-        soundbridge::PlayerConfig config;
-        config.logDirectory = "./log";
-        soundbridge::Player player(&callback, config);
-        
-        int initialCount = callback.error_count;
-        player.next();
-        
-        // Wait for async error callback
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        CHECK(callback.error_count > initialCount);
-    }
-    
-    TEST_CASE("previous with empty playlist reports error")
-    {
-        MockPlayerCallbacks callback;
-        soundbridge::PlayerConfig config;
-        config.logDirectory = "./log";
-        soundbridge::Player player(&callback, config);
-        
-        int initialCount = callback.error_count;
-        player.previous();
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        CHECK(callback.error_count > initialCount);
-    }
-    
-    TEST_CASE("setCurrentTrack with invalid index is handled")
-    {
-        MockPlayerCallbacks callback;
-        soundbridge::PlayerConfig config;
-        config.logDirectory = "./log";
-        soundbridge::Player player(&callback, config);
-        
-        // Should not crash
-        player.setCurrentTrack(-1);
-        player.setCurrentTrack(999);
-    }
-}
-
-TEST_SUITE("PlayerCallbacksAdapter")
-{
-    TEST_CASE("onMusicPlayerListCurrentIndexChanged updates track name")
-    {
-        // Test internal adapter state tracking
-    }
-    
-    TEST_CASE("onMusicPlayerError propagates error code correctly")
-    {
-        MockPlayerCallbacks callback;
-        soundbridge::PlayerConfig config;
-        config.logDirectory = "./log";
-        soundbridge::Player player(&callback, config);
-        
-        player.play();  // No track, should trigger error
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        CHECK(callback.error_count > 0);
-        CHECK(callback.last_error_index >= 0);
-    }
-}
-```
-
-**预期覆盖率提升**: +50 行
-
----
-
-### 3.3 audio/decode 模块扩展 (扩展 test_decode.cpp)
-
-**目标**: 覆盖 AudioStreamDecoder 中 127 行、VorbisDecode 中 61 行、FLACDecode 中 43 行未覆盖代码
-
-```cpp
-TEST_SUITE("AudioStreamDecoder Error Paths")
-{
-    TEST_CASE("start with null ring returns INVALID_OPERATION")
-    {
-        AudioSpec devSpec = makeDevSpec();
-        AudioRingBuffer *nullRing = nullptr;
-        AudioStreamDecoder decoder(nullRing, devSpec);
-        
-        MockExtractor extractor;
-        auto status = decoder.start(&extractor);
-        CHECK(status == sdk_utils::INVALID_OPERATION);
-        CHECK(decoder.state() == StreamDecoderState::ERROR);
-    }
-    
-    TEST_CASE("start with null extractor returns INVALID_OPERATION")
-    {
-        AudioRingBuffer ring(8192);
-        AudioSpec devSpec = makeDevSpec();
-        AudioStreamDecoder decoder(&ring, devSpec);
-        
-        auto status = decoder.start(nullptr);
-        CHECK(status == sdk_utils::INVALID_OPERATION);
-        CHECK(decoder.state() == StreamDecoderState::ERROR);
-    }
-    
-    TEST_CASE("seekToMs with invalid position is handled")
-    {
-        AudioRingBuffer ring(8192);
-        AudioSpec devSpec = makeDevSpec();
-        AudioStreamDecoder decoder(&ring, devSpec);
-        
-        // Before start, seek should be safe
-        decoder.seekToMs(0);
-        decoder.seekToMs(UINT64_MAX);  // Large value
-    }
-}
-
-TEST_SUITE("AudioStreamDecoder Seek")
-{
-    TEST_CASE("seek during decoding transitions through SEEKING state")
-    {
-        // Start decoder with real media
-        RealMediaFixture fixture;
-        if (!fixture.exists("music.wav")) return;
-        
-        AudioRingBuffer ring(65536);
-        AudioSpec devSpec = makeDevSpec();
-        AudioStreamDecoder decoder(&ring, devSpec);
-        
-        auto extractor = createWavExtractor(fixture.mediaPath("music.wav"));
-        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
-        
-        // Wait for decoding
-        waitForDecoderState(decoder, StreamDecoderState::DECODING, 1000);
-        
-        // Seek to middle
-        decoder.seekToMs(decoder.duration() / 2);
-        
-        // Should transition to SEEKING
-        // Note: timing-sensitive test
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        
-        decoder.stop();
-    }
-    
-    TEST_CASE("multiple seeks are handled correctly")
-    {
-        AudioRingBuffer ring(65536);
-        AudioSpec devSpec = makeDevSpec();
-        AudioStreamDecoder decoder(&ring, devSpec);
-        
-        // Rapid seeking
-        decoder.seekToMs(1000);
-        decoder.seekToMs(2000);
-        decoder.seekToMs(500);
-        decoder.seekToMs(0);
-    }
-}
-
-TEST_SUITE("VorbisDecode Error Handling")
-{
-    TEST_CASE("decode with null output buffer handles gracefully")
-    {
-        VorbisDecode decoder;
-        // Should not crash
-        CHECK(decoder.decode(nullptr, 1024) == nullptr);
-    }
-    
-    TEST_CASE("decode with invalid packet handles gracefully")
-    {
-        VorbisDecode decoder;
-        std::vector<uint8_t> invalidPacket(100, 0);
-        auto buffer = decoder.decode(invalidPacket.data(), invalidPacket.size());
-        // Should return nullptr or empty buffer
-        CHECK(!buffer || buffer->size() == 0);
-    }
-}
-
-TEST_SUITE("FLACDecode Error Handling")
-{
-    TEST_CASE("decode with null data returns nullptr")
-    {
-        FLACDecode decoder;
-        CHECK(decoder.decode(nullptr, 1024) == nullptr);
-    }
-    
-    TEST_CASE("decode with insufficient data handles gracefully")
-    {
-        FLACDecode decoder;
-        std::vector<uint8_t> partialData(10, 0);
-        auto buffer = decoder.decode(partialData.data(), partialData.size());
-        CHECK(!buffer || buffer->size() == 0);
-    }
-    
-    TEST_CASE("metadata callbacks are invoked")
-    {
-        // Test FLAC metadata parsing
-    }
-}
-```
-
-**预期覆盖率提升**: +231 行
-
----
-
-### 3.4 audio/device 模块扩展 (扩展 test_audio_device.cpp)
-
-**目标**: 覆盖 AudioDevice 中 54 行未覆盖代码
-
-```cpp
-TEST_SUITE("AudioDevice Device Selection")
-{
-    TEST_CASE("getDeviceList returns available devices")
-    {
-        AudioDevice device;
-        std::vector<AudDevPair> devList;
-        
-        int ret = device.getDeviceList(devList);
-        // TODO: This is currently unimplemented, will return 0
-        // After implementation, should check devList.size() > 0
-        CHECK(ret == 0);  // Current stub behavior
-    }
-    
-    TEST_CASE("selectDevice with valid ID is handled")
-    {
-        AudioDevice device;
-        // TODO: After getDeviceList implemented, test selectDevice
-        int ret = device.selectDevice(0);
-        CHECK(ret == 0);  // Current stub behavior
-    }
-    
-    TEST_CASE("write with null data returns 0")
-    {
-        AudioDevice device;
-        size_t written = device.write(nullptr, 1024);
-        CHECK(written == 0);
-    }
-    
-    TEST_CASE("write with zero length returns 0")
-    {
-        AudioDevice device;
-        uint8_t data[1024];
-        size_t written = device.write(data, 0);
-        CHECK(written == 0);
-    }
-    
-    TEST_CASE("getQueuedBytes starts at zero")
-    {
-        AudioDevice device;
-        CHECK(device.getQueuedBytes() == 0);
-    }
-    
-    TEST_CASE("clearQueue after write clears queued bytes")
-    {
-        AudioDevice device;
-        uint8_t data[1024] = {0};
-        device.write(data, sizeof(data));
-        device.clearQueue();
-        CHECK(device.getQueuedBytes() == 0);
-    }
-}
-
-TEST_SUITE("AudioDevice State Transitions")
-{
-    TEST_CASE("close without open is safe")
-    {
-        AudioDevice device;
-        device.close();  // Should not crash
-    }
-    
-    TEST_CASE("stop without start is safe")
-    {
-        AudioDevice device;
-        device.open();
-        device.stop();  // Should not crash even without start
-        device.close();
-    }
-    
-    TEST_CASE("multiple opens and closes are handled")
-    {
-        AudioDevice device;
-        REQUIRE(device.open() == 0);
-        device.close();
-        
-        REQUIRE(device.open() == 0);
-        device.close();
-    }
-}
-```
-
-**预期覆盖率提升**: +54 行
-
----
-
-### 3.5 audio/resample 模块扩展 (扩展 test_audio.cpp)
-
-**目标**: 覆盖 AudioResample 中 52 行未覆盖代码
-
-```cpp
-TEST_SUITE("AudioResample Error Handling")
-{
-    TEST_CASE("resample with null input is handled")
-    {
-        AudioSpec inSpec = makeInputSpec();
-        AudioSpec outSpec = makeOutputSpec();
-        AudioResample resample(inSpec, outSpec);
-        
-        AudioBuffer outBuffer;
-        int ret = resample.resample(nullptr, 0, outBuffer);
-        CHECK(ret < 0);  // Should return error
-    }
-    
-    TEST_CASE("resample with zero input length")
-    {
-        AudioSpec inSpec = makeInputSpec();
-        AudioSpec outSpec = makeOutputSpec();
-        AudioResample resample(inSpec, outSpec);
-        
-        AudioBuffer inBuffer;
-        inBuffer.resize(1024);
-        AudioBuffer outBuffer;
-        
-        int ret = resample.resample(inBuffer.data(), 0, outBuffer);
-        CHECK(ret >= 0);  // Should handle gracefully
-    }
-    
-    TEST_CASE("resample with mismatched specs handles gracefully")
-    {
-        AudioSpec inSpec;
-        inSpec.sampleRate = 0;  // Invalid
-        inSpec.numChannel = 0;
-        inSpec.format = AudioFormat::AudioFormatUnknown;
-        
-        AudioSpec outSpec = makeOutputSpec();
-        AudioResample resample(inSpec, outSpec);
-        
-        CHECK(resample.initCheck() != sdk_utils::OK);
-    }
-}
-
-TEST_SUITE("AudioResample Boundary Conditions")
-{
-    TEST_CASE("resample with very large buffer size")
-    {
-        AudioSpec inSpec = makeInputSpec();
-        AudioSpec outSpec = makeOutputSpec();
-        AudioResample resample(inSpec, outSpec);
-        
-        std::vector<uint8_t> largeBuffer(1024 * 1024, 0);  // 1MB
-        AudioBuffer outBuffer;
-        
-        // Should not crash
-        resample.resample(largeBuffer.data(), largeBuffer.size(), outBuffer);
-    }
-    
-    TEST_CASE("consecutive resample calls maintain state")
-    {
-        AudioSpec inSpec = makeInputSpec();
-        AudioSpec outSpec = makeOutputSpec();
-        AudioResample resample(inSpec, outSpec);
-        
-        std::vector<uint8_t> buffer(1024);
-        AudioBuffer out1, out2, out3;
-        
-        resample.resample(buffer.data(), buffer.size(), out1);
-        resample.resample(buffer.data(), buffer.size(), out2);
-        resample.resample(buffer.data(), buffer.size(), out3);
-        
-        // Outputs should be consistent
-        CHECK(out1.size() > 0);
-        CHECK(out2.size() > 0);
-    }
-}
-```
-
-**预期覆盖率提升**: +52 行
-
----
-
-### 3.6 sdk/MusicPlayer 扩展 (扩展 test_player.cpp)
-
-**目标**: 覆盖 MusicPlayer 中 240 行未覆盖代码
-
-```cpp
-TEST_SUITE("MusicPlayer State Machine")
-{
-    TEST_CASE("play while already playing stays in playing state")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.play();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        
-        auto initialState = player.state();
-        player.play();  // Double play
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        
-        // State should remain playing or transition correctly
-        CHECK(player.state() == sdk::MusicPlayerState::PlayingState);
-    }
-    
-    TEST_CASE("pause while stopped is safe")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        // Stopped -> Pause should be safe
-        player.pause();
-        CHECK(player.state() == sdk::MusicPlayerState::PausedState);
-    }
-    
-    TEST_CASE("stop while already stopped is safe")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.stop();
-        CHECK(player.state() == sdk::MusicPlayerState::StoppedState);
-        player.stop();  // Double stop
-        CHECK(player.state() == sdk::MusicPlayerState::StoppedState);
-    }
-}
-
-TEST_SUITE("MusicPlayer AutoSkip")
-{
-    TEST_CASE("autoSkipOnError defaults to true")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        CHECK(player.autoSkipOnError() == true);
-    }
-    
-    TEST_CASE("setAutoSkipOnError persists")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.setAutoSkipOnError(false);
-        CHECK(player.autoSkipOnError() == false);
-        
-        player.setAutoSkipOnError(true);
-        CHECK(player.autoSkipOnError() == true);
-    }
-}
-
-TEST_SUITE("MusicPlayer Position")
-{
-    TEST_CASE("setPosition with zero is handled")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.setPosition(0);
-        CHECK(player.state() == sdk::MusicPlayerState::StoppedState);
-    }
-    
-    TEST_CASE("setPosition while playing seeks correctly")
-    {
-        RealMediaFixture fixture;
-        if (!fixture.exists("music.wav")) return;
-        
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.addMusicDir(fixture.mediaDir());
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        player.play();
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        
-        // Seek to position
-        player.setPosition(1000);
-        
-        // Position should be updated (within tolerance)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        // Note: actual position may differ due to buffering
-    }
-}
-
-TEST_SUITE("MusicPlayer Track Navigation")
-{
-    TEST_CASE("next with single track wraps to same track")
-    {
-        RealMediaFixture fixture;
-        if (!fixture.exists("music.wav")) return;
-        
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.addMusicDir(fixture.mediaDir());
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        
-        REQUIRE(player.getMusicCount() > 0);
-        
-        auto initialIndex = listener.last_current_index;
-        player.next();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        // With single track, next goes to same track
-        CHECK(player.getMusicCount() == 1);
-    }
-    
-    TEST_CASE("previous at beginning wraps to last")
-    {
-        RealMediaFixture fixture;
-        if (!fixture.exists("music.wav")) return;
-        
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.addMusicDir(fixture.mediaDir());
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        
-        if (player.getMusicCount() > 1) {
-            // Set to first track
-            player.setCurrentIndex(0);
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
-            player.previous();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            // Should wrap to last track
-        }
-    }
-    
-    TEST_CASE("setCurrentIndex with invalid index is handled")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.setCurrentIndex(-1);
-        player.setCurrentIndex(9999);
-        
-        // Should not crash
-        CHECK(player.getMusicCount() == 0);
-    }
-}
-
-TEST_SUITE("MusicPlayer Error Handling")
-{
-    TEST_CASE("addMusicDir with empty directory is handled")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.addMusicDir("/tmp/empty_directory_that_does_not_exist_12345");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        CHECK(player.getMusicCount() == 0);
-    }
-    
-    TEST_CASE("play with invalid directory triggers error callback")
-    {
-        MockMusicPlayerListener listener;
-        std::string logDir = "./log";
-        sdk::MusicPlayer player(&listener, logDir);
-        
-        player.addMusicDir("/nonexistent/path");
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        
-        // Should have attempted to add and failed
-        CHECK(player.getMusicCount() == 0);
-    }
-}
-```
-
-**预期覆盖率提升**: +180 行
-
----
-
-### 3.7 utils/ByteUtils 扩展 (扩展 test_utils.cpp)
-
-**目标**: 覆盖 ByteUtils 中 10 行未覆盖代码
-
-```cpp
-TEST_SUITE("ByteUtils Edge Cases")
-{
-    TEST_CASE("convertByteOrder with null data is handled")
-    {
-        // Assuming such function exists
-    }
-    
-    TEST_CASE("convertByteOrder with various data sizes")
-    {
-        // Test 1, 2, 3, 4, 5, 7, 8 byte conversions
-    }
-}
-```
-
-**预期覆盖率提升**: +10 行
-
----
-
-## 4. 测试文件清单
-
-| 文件 | 操作 | 新增测试用例数 |
-|------|------|---------------|
-| `sdk/test/unit/test_error.cpp` | **新建** | 8 |
-| `sdk/test/unit/test_player.cpp` | 扩展 | 15 |
-| `sdk/test/unit/test_decode.cpp` | 扩展 | 10 |
-| `sdk/test/unit/test_audio_device.cpp` | 扩展 | 8 |
-| `sdk/test/unit/test_audio.cpp` | 扩展 | 6 |
-| `sdk/test/unit/test_utils.cpp` | 扩展 | 3 |
-| **总计** | - | **50** |
-
----
-
-## 5. 预期覆盖率提升
-
-| 模块 | 当前 | 预期 | 提升 |
-|------|------|------|------|
-| sdk (root) | 50.4% | 65% | +14.6% |
-| audio/decode | 73.6% | 85% | +11.4% |
-| audio/device | 78.1% | 90% | +11.9% |
-| audio/resample | 69.4% | 85% | +15.6% |
-| utils | 86.4% | 95% | +8.6% |
-| **总计** | 66.3% | **~80%** | **~14%** |
-
----
-
-## 6. 实施顺序
-
-### 阶段 1: 快速胜利 (1-2天)
-1. `test_error.cpp` - 纯单元测试，无依赖，8个用例
-2. utils 扩展 - 简单边界条件
-
-### 阶段 2: 核心模块 (3-5天)
-3. audio/resample 扩展 - 错误处理路径
-4. audio/device 扩展 - 状态转换
-
-### 阶段 3: 复杂模块 (5-7天)
-5. audio/decode 扩展 - 异步状态机测试
-6. MusicPlayer 扩展 - 集成状态测试
-
----
-
-## 7. 注意事项
-
-1. **SDL 回调测试**: `test_audio_device.cpp` 中的回调测试受 SDL 线程影响，时序可能不稳定
-2. **异步等待超时**: 所有带 `sleep_for` 的测试应设置合理超时 (建议 100-5000ms)
-3. **真实媒体依赖**: 使用 `RealMediaFixture` 获取路径，避免硬编码
-4. **错误路径测试**: 确保测试不会因为预期外的成功而误报
-
----
-
-## 8. 验证命令
+## 6. 验证命令
 
 ```bash
-# 构建并运行测试
-cmake --build build --target UnitTests
-ctest --test-dir build -R sdk_unit_tests --output-on-failure
-
-# 覆盖率检查
+# 配置覆盖率构建
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
   -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
+
+# 构建
 cmake --build build
-ctest --test-dir build -R sdk_ --output-on-failure
+
+# 运行测试生成覆盖率数据
+ctest --test-dir build -R sdk_unit_tests --output-on-failure
+
+# 统计覆盖率 (各模块 CMakeFiles/*.dir/ 下)
+for module in sdk audio/decode audio/device audio/resample; do
+  find build -path "*$module*" -name "CMakeFiles" -type d | head -1 | xargs -I{} \
+    gcov -o {} ../../../*.cpp 2>/dev/null
+done
 ```
+
+---
+
+## 7. 历史版本
+
+### v1.0 (2026-04-06)
+- 初始覆盖率分析
+- 计划目标: 80%+

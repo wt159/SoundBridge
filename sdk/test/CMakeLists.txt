@@ -170,12 +170,18 @@ set(UNIT_TEST_SOURCES
     unit/test_utils.cpp
     unit/test_audio.cpp
     unit/test_audio_device.cpp
+    unit/test_audio_device_lifecycle.cpp
     unit/test_audio_common.cpp
     unit/test_extractor.cpp
     unit/test_extractor_isolated.cpp
     unit/test_decode.cpp
+    unit/test_stream_decoder.cpp
     unit/test_playlist.cpp
+    unit/test_playlist_advance.cpp
     unit/test_player.cpp
+    unit/test_player_integration.cpp
+    unit/test_error.cpp
+    unit/test_resample_formats.cpp
     unit/test_media_smoke.cpp
 )
 
