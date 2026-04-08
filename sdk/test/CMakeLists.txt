@@ -12,41 +12,6 @@ endif()
 message(STATUS "Using local doctest: ${DOCTEST_HEADER}")
 
 # ============================================================
-# Test Framework Options
-# ============================================================
-option(ENABLE_COVERAGE "Enable code coverage reporting (Linux/macOS only)" OFF)
-option(COVERAGE_EXCLUDE_3RDPARTY "Exclude 3rdparty from coverage" ON)
-
-# ============================================================
-# Coverage Configuration (Linux/macOS only)
-# ============================================================
-if(ENABLE_COVERAGE)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        if(UNIX OR APPLE)
-            message(STATUS "Coverage enabled (${CMAKE_SYSTEM_NAME})")
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-arcs -ftest-coverage")
-            set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
-            set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} --coverage")
-        else()
-            message(WARNING "Coverage not supported on ${CMAKE_SYSTEM_NAME} - disabling")
-            set(ENABLE_COVERAGE OFF)
-        endif()
-    else()
-        message(WARNING "Coverage not supported for ${CMAKE_CXX_COMPILER_ID}")
-        set(ENABLE_COVERAGE OFF)
-    endif()
-endif()
-
-# Coverage exclude patterns
-if(ENABLE_COVERAGE AND COVERAGE_EXCLUDE_3RDPARTY)
-    set(COVERAGE_EXCLUDE_PATTERNS
-        "*/3rdparty/*"
-        "*/test/*"
-        "*/build/*"
-    )
-endif()
-
-# ============================================================
 # Link Directories
 # ============================================================
 link_directories(${3RDPARTY_DIST_DIR}/lib)
@@ -210,34 +175,21 @@ set_tests_properties(sdk_unit_tests PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
 
 # ============================================================
-# Coverage Report Target (Linux/macOS only)
+# Coverage Report Targets (Linux only, gated by root CMakeLists.txt)
 # ============================================================
-if(ENABLE_COVERAGE)
+if(COVERAGE_ENABLED)
     add_custom_target(coverage
-        COMMAND ${CMAKE_COMMAND} -E echo "Running tests with coverage..."
-        COMMAND ctest -R sdk_ --output-on-failure
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating coverage report..."
-        COMMAND lcov --directory ${CMAKE_BINARY_DIR} 
-            --capture 
-            --output-file coverage.info
-            --binary ${CMAKE_BINARY_DIR}/sdk/test/UnitTests
-        COMMAND lcov --remove coverage.info 
-            ${COVERAGE_EXCLUDE_PATTERNS}
-            --output-file coverage.filtered.info
-        COMMAND genhtml coverage.filtered.info 
-            --output-directory ${CMAKE_BINARY_DIR}/coverage_html
-            --title "SoundBridge SDK Coverage"
-            --show-details
-            --legend
-        COMMAND ${CMAKE_COMMAND} -E echo "Coverage report: file://${CMAKE_BINARY_DIR}/coverage_html/index.html"
+        COMMAND ${CMAKE_COMMAND} -E env "SB_BUILD_DIR=${CMAKE_BINARY_DIR}" "SB_COVERAGE_MIN_PERCENT=35" "${SDK_ROOT_DIR}/../scripts/coverage/run_linux.sh"
+        DEPENDS TestSdkSuite UnitTests
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-        COMMENT "Generate code coverage report"
-        DEPENDS UnitTests
+        COMMENT "Generate SDK coverage report"
     )
-    
+
     add_custom_target(coverage_clean
-        COMMAND find ${CMAKE_BINARY_DIR} -name "*.gcno" -o -name "*.gcda" -o -name "*.info" | xargs rm -f
-        COMMAND rm -rf ${CMAKE_BINARY_DIR}/coverage_html
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/coverage
+        COMMAND find ${CMAKE_BINARY_DIR} -name "*.gcda" -delete
+        COMMAND find ${CMAKE_BINARY_DIR} -name "*.gcno" -delete
+        COMMAND find ${CMAKE_BINARY_DIR} -name "*.info" -delete
         COMMENT "Clean coverage files"
     )
 endif()
