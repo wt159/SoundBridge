@@ -51,7 +51,7 @@ if (fixture.exists("music.wav")) {
 - 真实媒体路径由 `SB_MEDIA_DIR` / `SB_MEDIA_FILTER` / `SB_MEDIA_LIMIT` 控制；不要把机器本地绝对路径写死在测试里。
 - Windows 运行测试依赖 `SOUNDBRIDGE_QT_TEST_BIN_DIR`；改测试启动方式时别破坏这条注入链。
 
-## CODE COVERAGE (2026-04)
+## CODE COVERAGE (Linux only, 2026-04)
 当前整体 SDK 覆盖率：**33.17%**
 
 | Category | Coverage |
@@ -67,21 +67,19 @@ if (fixture.exists("music.wav")) {
 
 生成覆盖率报告：
 ```bash
-# 重新配置并编译（带覆盖率标志）
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
-  -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
+  -DENABLE_COVERAGE=ON -G "Unix Makefiles"
 
-# 构建并运行测试
-cmake --build build
-ctest --test-dir build -R sdk_ --output-on-failure
+cmake --build build --target coverage
 
-# gcov 文件在 build 目录各模块的 CMakeFiles/*.dir/ 目录下
+# HTML 报告：build/coverage/html/index.html
+# Summary：build/coverage/summary.txt
 ```
 
 ## ANTI-PATTERNS
 - 不要手改 `thirdparty/doctest/doctest.h`。
-- 不要把覆盖率结果当成 `audio/device` 的唯一真相；SDL 回调线程有 gcov 盲区。
+- 不要把覆盖率结果当成 `audio/device` 的唯一真相；SDL 回调线程和覆盖率采样都有盲区。
 - 不要只新增测试文件、不补 `CMakeLists.txt`；那样 CTest 根本不会执行。
 - 禁止硬编码媒体路径（如 `"../../music"`），必须使用 `RealMediaFixture`。
 

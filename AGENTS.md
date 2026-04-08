@@ -82,11 +82,11 @@ ctest --test-dir build -R sdk_unit_tests --output-on-failure
 ctest --test-dir build -R sdk_player_tests --output-on-failure
 ctest --test-dir build -R sdk_ --output-on-failure
 
-# 覆盖率报告（需要 Debug + -fprofile-arcs -ftest-coverage）
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
-cmake --build build
-ctest --test-dir build -R sdk_ --output-on-failure
-# gcov 报告在 build 目录
+# 覆盖率报告（Linux only，35% 门禁）
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DENABLE_COVERAGE=ON -G "Unix Makefiles"
+cmake --build build --target coverage
+# HTML 报告：build/coverage/html/index.html
+# Summary：build/coverage/summary.txt
 
 # 打包
 cmake --build build --target package_portable

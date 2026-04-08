@@ -34,7 +34,7 @@ sdk/audio/
 
 ## ANTI-PATTERNS
 - 不要把 SDL 设备选择/驱动枚举当成已完成能力；`AudioDevice::getDeviceList()` 和 `selectDevice()` 目前还是 TODO 桩实现。
-- 不要把 `AudioDevice` 的回调测试当成完全稳定的覆盖率证据；SDL 回调在线程里触发，gcov/时序都可能看不全。
+- 不要把 `AudioDevice` 的回调测试当成完全稳定的覆盖率证据；SDL 回调在线程里触发，覆盖率采样和时序都可能看不全。
 - 不要在 `AudioResample` 重复 `init()` 后指望重新配置生效；当前实现遇到 `m_isInit` 直接返回。
 - 不要绕过 `AudioStreamDecoder` 的状态轮询直接假设 seek/stop 已完成；现有测试都通过 wait/poll 辅助函数验证状态迁移。
 
