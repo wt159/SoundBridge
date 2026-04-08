@@ -12,8 +12,8 @@
 ### 1.2 测试目标
 
 1. **统一测试框架**：所有测试使用 doctest
-2. **提升测试覆盖率**：当前 33.17%，目标 80%+
-3. **支持代码覆盖率**：集成 gcov/lcov
+2. **提升测试覆盖率**：当前 33.17%，通过 Linux-only 覆盖率门禁持续改善
+3. **支持代码覆盖率**：集成 lcov/genhtml
 4. **简化维护**：单一断言风格，单一入口
 
 ---
@@ -30,8 +30,8 @@
                     ┌───────────────────┼───────────────────┐
                     ▼                   ▼                   ▼
              ┌───────────┐       ┌───────────┐       ┌───────────┐
-             │  Build    │       │   Test    │       │ Coverage │
-             │ (cmake)   │──────▶│ (ctest)   │──────▶│ gcov/lcov │
+              │  Build    │       │   Test    │       │ Coverage │
+              │ (cmake)   │──────▶│ (ctest)   │──────▶│ lcov/genhtml │
              └───────────┘       └───────────┘       └───────────┘
                                           │
                           ┌────────────────┴────────────────┐
@@ -124,36 +124,35 @@ cmake --build build --target coverage
 
 ### 4.2 覆盖率目标
 
-| 模块 | 目标覆盖率 | 状态 |
+| 模块 | 当前覆盖率 | 备注 |
 |------|-----------|------|
-| cosmos | 95% | ✅ 已有 91.89% |
-| log | 99% | ✅ 已有 ~55% |
-| utils | 90% | 已有 45.95% |
-| audio/resample | 80% | 已有 44.70% |
-| audio/decode | 75% | 已有 40.63% |
-| audio/device | 75% | 已有 43.56% |
-| extractor | 70% | 已有 27.25% |
-| **整体 SDK** | **80%** | 已有 33.17% |
+| cosmos | 91.89% | 当前覆盖率 |
+| log | ~55% | 当前覆盖率 |
+| utils | 45.95% | 当前覆盖率 |
+| audio/resample | 44.70% | 当前覆盖率 |
+| audio/decode | 40.63% | 当前覆盖率 |
+| audio/device | 43.56% | 当前覆盖率 |
+| extractor | 27.25% | 当前覆盖率 |
+| **整体 SDK** | **33.17%** | Linux 门禁 35% |
 
 ### 4.3 生成覆盖率报告
 
 ```bash
-# 重新配置并编译（带覆盖率标志）
+# 重新配置并编译（Linux only，启用 coverage 目标）
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
-  -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
+  -DENABLE_COVERAGE=ON -G "Unix Makefiles"
 
-# 构建并运行所有测试
-cmake --build build
-ctest --test-dir build -R sdk_ --output-on-failure
+# 构建并运行 coverage 目标
+cmake --build build --target coverage
 
-# gcov 文件在各模块的 build/.../CMakeFiles/*.dir/ 目录下
-# 可使用 gcov 工具生成报告
+# HTML 报告：build/coverage/html/index.html
+# Summary：build/coverage/summary.txt
 ```
 
 ### 4.4 已知限制
 
-- **gcov 多线程限制**：SDL 等第三方库未使用 coverage 标志编译，AudioDevice 的 `audioCallback` 不会被 gcov 记录
+- **覆盖率采样限制**：SDL 等第三方库未直接纳入 coverage 目标，AudioDevice 的 `audioCallback` 仍可能出现采样盲区
 - **覆盖率较低原因**：当前测试主要覆盖核心路径，边界条件和异常路径覆盖不足
 
 ---
@@ -245,6 +244,6 @@ std::unique_ptr<ExtractorHelper> extractor = fixture.create("music.wav", ".wav",
 
 ### 7.2 下一步
 
-1. **覆盖率提升**：通过持续测试改进，目标 80%
+1. **覆盖率提升**：通过持续测试改进，保持并逐步提升 Linux-only 35% 门禁之上
 2. **边界测试**：完善 Extractor 边界情况
 3. **异常路径覆盖**：增加异常输入、错误恢复测试
