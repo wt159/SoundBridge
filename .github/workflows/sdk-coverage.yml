@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install coverage tools
-        run: sudo apt-get update && sudo apt-get install -y lcov libpulse-dev
+        run: sudo apt-get update && sudo apt-get install -y lcov libpulse-dev qtbase5-dev
 
       - name: Build 3rdparty deps
         run: |
