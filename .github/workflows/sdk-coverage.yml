@@ -49,6 +49,8 @@ jobs:
 
       - name: Build coverage target
         run: cmake --build build --target coverage
+        env:
+          SDL_AUDIODRIVER: dummy
 
       - name: Upload coverage HTML
         uses: actions/upload-artifact@v4
