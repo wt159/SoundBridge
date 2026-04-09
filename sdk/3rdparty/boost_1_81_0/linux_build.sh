@@ -4,9 +4,10 @@ system_name=$1
 system_process=$2
 toolchain=$3
 install_dir=$4
-prefix=../dist/${install_dir}
-build_dir=../build
-boost_dir=$(cd ../boost_1_81_0 && pwd)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+prefix="${script_dir}/../dist/${install_dir}"
+build_dir="${script_dir}/../build"
+boost_dir="${script_dir}"
 
 cores=1
 processors=$(grep -c "^processor" /proc/cpuinfo)
@@ -40,7 +41,7 @@ if [ -f "$boost_dir/b2" ]; then
 else
     echo "boost_build: b2 does not exist"
     echo "boost_build: bootstrap"
-    sh $boost_dir/bootstrap.sh $toolchain
+    sh "$boost_dir/bootstrap.sh" "$toolchain"
 fi
 
 echo "boost_build: b2"

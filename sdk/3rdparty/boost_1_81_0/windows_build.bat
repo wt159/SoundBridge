@@ -5,10 +5,11 @@ set system_name=%1
 set system_process=%2
 set toolchain=%3
 set install_dir=%4
-set prefix=../dist/%install_dir%
-set build_dir=../build
-set boost_dir=%cd%\..\boost_1_81_0
-cd %boost_dir%
+set script_dir=%~dp0
+set prefix=%script_dir%\..\dist\%install_dir%
+set build_dir=%script_dir%\..\build
+set boost_dir=%script_dir%
+cd /d %boost_dir%
 
 echo boost_build: system_name is %system_name%
 echo boost_build: system_process is %system_process%
