@@ -4,33 +4,29 @@ system_name=$1
 system_process=$2
 toolchain=$3
 install_dir=$4
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [ "$system_name" == "windows" ];
 then
-    current_dir=$(pwd)
     MAKE=mingw32-make
-    echo "[$system_name]当前目录为：$current_dir"
-    
 else
-    current_dir="$PWD"
     MAKE=make
-    echo "[$system_name]当前目录为：$current_dir"
 fi
 
-root_dir=$current_dir/../ffmpeg-4.4.4
-prefix_dir=$root_dir/../dist/$install_dir
+root_dir="$script_dir"
+prefix_dir="$script_dir/../dist/$install_dir"
 echo "[$system_name]安装目录为：$prefix_dir"
 
 echo "ffmpeg_build: system_name is $system_name"
 echo "ffmpeg_build: system_process is $system_process"
 echo "ffmpeg_build: toolchain is $toolchain"
 echo "ffmpeg_build: prefix is $prefix_dir"
-echo "ffmpeg_build: build_dir is $current_dir"
+echo "ffmpeg_build: build_dir is $root_dir"
 
-cd $root_dir
+cd "$root_dir"
 echo "start config"
 ./configure --pkg-config-flags="" \
-    --prefix=$prefix_dir \
+    --prefix="$prefix_dir" \
     --enable-shared \
     --enable-gpl \
     --enable-version3 \
