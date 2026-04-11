@@ -15,7 +15,13 @@ ROOT_DIR="${SB_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BUILD_DIR="${SB_BUILD_DIR:-${ROOT_DIR}/build}"
 REPORT_DIR="${SB_COVERAGE_REPORT_DIR:-${BUILD_DIR}/coverage}"
 MIN_PERCENT="${SB_COVERAGE_MIN_PERCENT:-35}"
+LCOV_RC_ARGS=(--rc branch_coverage=0 --rc derive_function_end_line=0)
+LCOV_IGNORE_INCONSISTENT=(--ignore-errors inconsistent)
+LCOV_IGNORE_UNUSED=(--ignore-errors unused)
+LCOV_IGNORE_CORRUPT=(--ignore-errors corrupt)
 
+rm -rf "${REPORT_DIR}"
+find "${BUILD_DIR}" -name "*.gcda" -delete
 mkdir -p "${REPORT_DIR}"
 
 # ── 1. Run all SDK tests ────────────────────────────────────────────────────
@@ -27,18 +33,10 @@ echo "--- Capturing coverage data ---"
 lcov --capture \
     --directory "${BUILD_DIR}" \
     --output-file "${REPORT_DIR}/raw.info" \
-    --rc lcov_branch_coverage=0
+    "${LCOV_IGNORE_INCONSISTENT[@]}" \
+    "${LCOV_RC_ARGS[@]}"
 
-# ── 3. Remove test / 3rdparty / build paths ─────────────────────────────────
-echo "--- Filtering non-business paths ---"
-lcov --remove "${REPORT_DIR}/raw.info" \
-    '*/sdk/test/*' \
-    '*/sdk/3rdparty/*' \
-    '*/build/*' \
-    --output-file "${REPORT_DIR}/filtered.info" \
-    --rc lcov_branch_coverage=0
-
-# ── 4. Keep only sdk business compilation units (.cpp/.cc/.cxx) ─────────────
+# ── 3. Keep only sdk business compilation units (.cpp/.cc/.cxx) ─────────────
 echo "--- Extracting SDK business sources ---"
 SDK_SOURCES=()
 while IFS= read -r src; do
@@ -52,28 +50,33 @@ if [ ${#SDK_SOURCES[@]} -eq 0 ]; then
     exit 1
 fi
 
-lcov --extract "${REPORT_DIR}/filtered.info" \
+lcov --extract "${REPORT_DIR}/raw.info" \
     "${SDK_SOURCES[@]}" \
     --output-file "${REPORT_DIR}/business.info" \
-    --rc lcov_branch_coverage=0
+    "${LCOV_IGNORE_INCONSISTENT[@]}" \
+    "${LCOV_IGNORE_UNUSED[@]}" \
+    "${LCOV_RC_ARGS[@]}"
 
-# ── 5. Generate HTML report ─────────────────────────────────────────────────
+# ── 4. Generate HTML report ─────────────────────────────────────────────────
 echo "--- Generating HTML report ---"
 genhtml "${REPORT_DIR}/business.info" \
+    "${LCOV_IGNORE_INCONSISTENT[@]}" \
     --output-directory "${REPORT_DIR}/html" \
     --title "SoundBridge SDK Coverage" \
     --show-details \
     --legend
 
-# ── 6. Summary + threshold gate ─────────────────────────────────────────────
+# ── 5. Summary + threshold gate ─────────────────────────────────────────────
 echo "--- Coverage summary ---"
 # lcov --summary writes to stderr; redirect to tee via stdout
 lcov --summary "${REPORT_DIR}/business.info" \
-    --rc lcov_branch_coverage=0 \
+    "${LCOV_IGNORE_INCONSISTENT[@]}" \
+    "${LCOV_IGNORE_CORRUPT[@]}" \
+    "${LCOV_RC_ARGS[@]}" \
     2>&1 | tee "${REPORT_DIR}/summary.txt"
 
-# Parse "  lines......: XX.X%" from summary
-LINES_PCT=$(grep -oP 'lines\.{6}:\s+\K[0-9]+(\.[0-9]+)?' "${REPORT_DIR}/summary.txt" || true)
+# Parse "  lines......: XX.X%" / "  lines.......: XX.X%" from summary
+LINES_PCT=$(grep -oP 'lines\.+:\s+\K[0-9]+(\.[0-9]+)?' "${REPORT_DIR}/summary.txt" || true)
 
 if [ -z "${LINES_PCT}" ]; then
     echo "ERROR: failed to parse lines coverage from ${REPORT_DIR}/summary.txt" >&2
