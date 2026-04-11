@@ -12,3 +12,4 @@ sdk/test/log/**
 .cache
 .sisyphus/
 .worktrees/
+.cocoindex_code/
