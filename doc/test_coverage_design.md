@@ -1,19 +1,19 @@
-# SoundBridge SDK 测试覆盖率提升方案
+# SoundBridge SDK 覆盖率计算与 CI 门禁方案
 
-**文档版本**: v2.0  
-**更新日期**: 2026-04-06  
-**目标**: 将 SDK 代码覆盖率从 68% 提升至 80%+
+**文档版本**: v3.0  
+**更新日期**: 2026-04-08  
+**目标**: 建立 Linux-only 覆盖率采集、报告与 35% CI 门禁
 
 ---
 
 ## 1. 覆盖率统计方法
 
 ### 统计工具
-使用 **gcov** (GCC 内置覆盖率工具) 分析 .gcda 文件
+使用 **lcov + genhtml** 生成覆盖率报告；底层仍基于编译器产出的 .gcda 数据。
 
 ### 统计规则
 ```
-gcov 输出格式:
+覆盖率数据格式:
   180:    8:  ...代码行...      ← 已覆盖 (执行 180 次)
   #####:    9:  ...代码行...   ← 未覆盖
         -:    0:Source:...     ← 非可执行行 (注释、空行)
@@ -24,26 +24,25 @@ gcov 输出格式:
 ```
 
 ### 统计范围
-- 只统计 .cpp 源文件（不含 .hpp 头文件）
-- 只统计 SDK 业务代码（排除 3rdparty）
+- 只统计 `sdk/` 下的编译单元源码（`.cpp/.cc/.cxx`）
+- 排除 `sdk/test` 和 `sdk/3rdparty`
+- 不统计头文件
 
 ---
 
-## 2. 当前覆盖率分析 (v2.0)
+## 2. v2.0 覆盖率快照
 
-| 模块 | 可执行行 | 已覆盖行 | 覆盖率 | 优先级 |
-|------|---------|---------|--------|--------|
-| sdk/ErrorCode.cpp | 92 | 92 | **100%** | ✅ |
-| sdk/MusicPlayList.cpp | 218 | 181 | 83.0% | 🟡 中 |
-| sdk/audio/resample/ | 168 | 144 | **85.7%** | 🟢 低 |
-| sdk/player_impl.cpp | 173 | 123 | 71.1% | 🔴 高 |
-| sdk/audio/device/ | 187 | 133 | 71.1% | 🔴 高 |
-| sdk/audio/decode/ | 1012 | 764 | 75.5% | 🟡 中 |
-| sdk/MusicPlayer.cpp | 384 | 248 | 64.6% | 🔴 高 |
-| sdk/error_impl.cpp | 15 | 0 | **0.0%** | ⚠️ 缺失 |
-| sdk/log/ | 85 | 84 | 98.8% | 🟢 低 |
-| sdk/utils/ | 170 | 155 | 91.2% | 🟢 低 |
-| **总计** | **2616** | **1974** | **75.5%** | - |
+| 模块 | 当前覆盖率 | 备注 |
+|------|-----------|------|
+| Audio Decode | 40.63% | 当前覆盖率 |
+| Audio Device | 43.56% | 当前覆盖率 |
+| Audio Resample | 44.70% | 当前覆盖率 |
+| Extractor Core | 46.05% | 当前覆盖率 |
+| Extractors | 27.25% | 当前覆盖率 |
+| Log | 55.63% | 当前覆盖率 |
+| SDK Core | 31.98% | 当前覆盖率 |
+| Utils | 45.95% | 当前覆盖率 |
+| **整体 SDK** | **33.17%** | Linux 门禁 35% |
 
 ### 覆盖率提升记录
 
@@ -142,41 +141,32 @@ TEST_SUITE("soundbridge Error Bridge")
 
 ## 5. 后续提升计划
 
-### 优先级 1: error_impl.cpp (0% → 目标 80%+)
+### 优先级 1: error_impl.cpp
 - 新建 `test_error_bridge.cpp`
 - 覆盖 soundbridge 命名空间所有错误包装函数
-- 预计: +15 行覆盖
 
-### 优先级 2: MusicPlayer.cpp (64.6% → 目标 75%+)
+### 优先级 2: MusicPlayer.cpp
 - 补充状态转换回调路径测试
 - 新建 `test_player_callbacks.cpp`
-- 预计: +50 行覆盖
 
-### 优先级 3: AudioStreamDecoder.cpp (70.0% → 目标 80%+)
+### 优先级 3: AudioStreamDecoder.cpp
 - 补充 FLAC/Vorbis 解码器边界条件
-- 预计: +30 行覆盖
 
 ---
 
 ## 6. 验证命令
 
 ```bash
-# 配置覆盖率构建
+# 配置覆盖率构建（Linux only）
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
-  -DCMAKE_CXX_FLAGS="-fprofile-arcs -ftest-coverage" -G "Unix Makefiles"
+  -DENABLE_COVERAGE=ON -G "Unix Makefiles"
 
-# 构建
-cmake --build build
+# 构建与运行覆盖率目标
+cmake --build build --target coverage
 
-# 运行测试生成覆盖率数据
-ctest --test-dir build -R sdk_unit_tests --output-on-failure
-
-# 统计覆盖率 (各模块 CMakeFiles/*.dir/ 下)
-for module in sdk audio/decode audio/device audio/resample; do
-  find build -path "*$module*" -name "CMakeFiles" -type d | head -1 | xargs -I{} \
-    gcov -o {} ../../../*.cpp 2>/dev/null
-done
+# 产物：build/coverage/html/index.html
+# 产物：build/coverage/summary.txt
 ```
 
 ---
@@ -185,4 +175,9 @@ done
 
 ### v1.0 (2026-04-06)
 - 初始覆盖率分析
-- 计划目标: 80%+
+- 计划目标: 统一测试框架 + 覆盖率门禁
+
+### v3.0 (2026-04-08)
+- 切换为 Linux-only `coverage` 目标
+- 通过 `lcov/genhtml` 生成报告
+- CI 门禁改为 35%

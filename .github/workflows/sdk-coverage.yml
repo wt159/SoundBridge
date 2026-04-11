@@ -1,0 +1,59 @@
+name: sdk-coverage
+
+on:
+  push:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'app/**'
+      - 'scripts/**'
+      - 'sdk/**'
+      - '.github/workflows/sdk-coverage.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'app/**'
+      - 'scripts/**'
+      - 'sdk/**'
+      - '.github/workflows/sdk-coverage.yml'
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install coverage tools
+        run: sudo apt-get update && sudo apt-get install -y lcov libpulse-dev qtbase5-dev
+
+      - name: Build 3rdparty deps
+        run: |
+          cmake -S sdk/3rdparty -B sdk/3rdparty/build \
+            --no-warn-unused-cli \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+            -G "Unix Makefiles" \
+            -DBUILD_OPTION_BOOST=ON \
+            -DBUILD_OPTION_FFMPEG=ON \
+            -DBUILD_OPTION_FLAC=ON \
+            -DBUILD_OPTION_OGG=ON \
+            -DBUILD_OPTION_VORBIS=ON \
+            -DBUILD_OPTION_SDL2=ON \
+            -DBUILD_OPTION_ZLIB=ON
+          cmake --build sdk/3rdparty/build
+          cmake --install sdk/3rdparty/build
+
+      - name: Configure coverage build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DENABLE_COVERAGE=ON -G "Unix Makefiles"
+
+      - name: Build coverage target
+        run: cmake --build build --target coverage
+        env:
+          SDL_AUDIODRIVER: dummy
+
+      - name: Upload coverage HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-coverage-html
+          path: build/coverage/html
