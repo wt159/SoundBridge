@@ -13,3 +13,4 @@ sdk/test/log/**
 .sisyphus/
 .worktrees/
 .cocoindex_code/
+build-coverage/
