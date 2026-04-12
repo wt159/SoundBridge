@@ -41,6 +41,7 @@ public:
     ~AudioStreamDecoder();
 
     sdk_utils::status_t start(ExtractorHelper *extractor);
+    sdk_utils::status_t start(ExtractorHelper *extractor, const DecodeOptions &opts);
     void stop();
     void seekToMs(uint64_t targetMs);
 

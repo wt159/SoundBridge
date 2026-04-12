@@ -114,6 +114,12 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
     return sdk_utils::OK;
 }
 
+sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, const DecodeOptions &opts)
+{
+    m_options = opts;
+    return start(extractor);
+}
+
 void AudioStreamDecoder::stop()
 {
     m_stopRequest.store(true);
@@ -410,6 +416,15 @@ void AudioStreamDecoder::threadFunc()
 
         if (m_stopRequest.load()) {
             break;
+        }
+
+        // 在解码前添加背压检查
+        size_t minSpace = m_options.minWriteSpace > 0 ? m_options.minWriteSpace
+                                                      : calculateMinWriteSpace(m_codecID);
+
+        if (m_ring->availableWrite() < minSpace) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
         }
 
         int ret = runDecode();
