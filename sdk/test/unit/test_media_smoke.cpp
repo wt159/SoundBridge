@@ -147,4 +147,51 @@ TEST_SUITE("MediaSmoke")
         AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
         REQUIRE(buffer != nullptr);
     }
+
+    TEST_CASE("ASF media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("萨克斯机.asf")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("萨克斯机.asf", ".asf", "MediaSmoke asf", source, extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("WMA media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("十七岁-陶喆.96.wma")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("十七岁-陶喆.96.wma", ".wma", "MediaSmoke wma", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
 }

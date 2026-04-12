@@ -243,6 +243,11 @@ bool waitForDecoderStateWithDrain(AudioStreamDecoder &decoder, AudioRingBuffer &
     return false;
 }
 
+static std::vector<AudioBuffer::AudioBufferPtr> copyPacketizedMeta(const ExtractorHelper &extractor)
+{
+    return extractor.getPacketizedMetaData();
+}
+
 AudioSpec createStreamDecoderDeviceSpec(ExtractorHelper *extractor);
 AudioSpec createStreamDecoderDeviceSpec(ExtractorHelper *extractor)
 {
@@ -317,6 +322,43 @@ TEST_SUITE("AudioDecode")
         CHECK(callback.lastSpec.spec.sampleRate > 0);
         CHECK(callback.lastSpec.spec.numChannel > 0);
     }
+
+    TEST_CASE("Decode ASF checked-in media with packetized fallback")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("萨克斯机.asf"));
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("萨克斯机.asf", ".asf", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_WMAV2);
+
+        const std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+        REQUIRE(packets.empty() == false);
+
+        std::vector<AudioBuffer::AudioBufferPtr> frames;
+        ChunkedDecodeCallback callback(frames);
+        AudioCodecConfig config;
+        AudioSpec spec       = extractor->getAudioSpec();
+        config.sampleRate    = spec.sampleRate;
+        config.channels      = spec.numChannel;
+        config.bitsPerSample = spec.bitsPerSample;
+        config.bitRate       = extractor->getBitRate();
+        config.blockAlign    = extractor->getBlockAlign();
+        config.extraData     = extractor->getCodecExtraData();
+
+        AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
+        REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+        const int result = decode.decodePackets(packets);
+        CHECK(result == 0);
+        CHECK(frames.empty() == false);
+        CHECK(callback.spec.sampleRate > 0);
+        CHECK(callback.spec.numChannel > 0);
+        CHECK(callback.spec.bytesPerSample > 0);
+    }
 }
 
 TEST_SUITE("AudioDecodeProcess")
@@ -385,6 +427,29 @@ TEST_SUITE("AudioDecodeProcess")
         REQUIRE(source != nullptr);
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioDecodeProcess process(extractor.get());
+        REQUIRE(process.initCheck() == sdk_utils::OK);
+        REQUIRE(process.getDecodeBuffer() != nullptr);
+
+        const AudioSpec spec = process.getDecodeSpec();
+        CHECK(spec.sampleRate > 0);
+        CHECK(spec.numChannel > 0);
+        CHECK(spec.durationMs > 0);
+    }
+
+    TEST_CASE("Process ASF checked-in media through extractor")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("萨克斯机.asf"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "萨克斯机.asf", ".asf", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_WMAV2);
 
         AudioDecodeProcess process(extractor.get());
         REQUIRE(process.initCheck() == sdk_utils::OK);
@@ -799,6 +864,30 @@ TEST_SUITE("AudioStreamDecoder")
         decoder.seekToMs(0);
 
         REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 3000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("Stream decoder ASF checked-in media to EOS")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("萨克斯机.asf"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "萨克斯机.asf", ".asf", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_WMAV2);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
         CHECK(decoder.durationMs() > 0);
 
         decoder.stop();
