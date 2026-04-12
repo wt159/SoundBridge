@@ -235,16 +235,49 @@ DecodeResult AudioStreamDecoder::decodeNext(const DecodeOptions &opts)
         return DecodeResult::WAIT;
     }
 
-    // 3. 调用现有解码逻辑 (runDecode)
-    int ret = runDecode();
-    DecodeResult result;
+    // 3. 根据 codec 使用逐帧/逐块解码
+    DecodeResult result = DecodeResult::ERROR;
 
-    if (ret == 0) {
-        result = DecodeResult::EOS;
-    } else if (ret > 0) {
-        result = DecodeResult::OK;
+    if (m_codecID == AUDIO_CODEC_ID_FLAC) {
+        FLACDecode flacDecode(this);
+        flacDecode.setAbortFlag(&m_abortDecode);
+        DataSourceBase *ds = m_extractor->getDataSource();
+        if (ds != nullptr) {
+            flacDecode.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
+                                          m_extractor->getDataSize());
+            int ret = flacDecode.processOne();
+            if (ret == 0) {
+                result = DecodeResult::EOS;
+            } else if (ret > 0) {
+                result = DecodeResult::OK;
+            } else {
+                result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
+            }
+        }
+    } else if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
+        VorbisDecode vorbisDecode(this);
+        vorbisDecode.setAbortFlag(&m_abortDecode);
+        DataSourceBase *ds = m_extractor->getDataSource();
+        if (ds != nullptr) {
+            vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize());
+            int ret = vorbisDecode.decodeOne();
+            if (ret == 0) {
+                result = DecodeResult::EOS;
+            } else if (ret > 0) {
+                result = DecodeResult::OK;
+            } else {
+                result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
+            }
+        }
     } else {
-        result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
+        int ret = runDecode();
+        if (ret == 0) {
+            result = DecodeResult::EOS;
+        } else if (ret > 0) {
+            result = DecodeResult::OK;
+        } else {
+            result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
+        }
     }
 
     // 4. 处理结果
