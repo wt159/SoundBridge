@@ -56,26 +56,6 @@ protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
 
 private:
-    struct DecoderAdapter {
-        enum Type { NONE, FLAC, VORBIS, FFMPEG } type;
-        union {
-            FLACDecode *flac;
-            VorbisDecode *vorbis;
-            void *ffmpeg;
-        };
-
-        DecoderAdapter()
-            : type(NONE)
-            , flac(nullptr)
-        {
-        }
-
-        Type getType() const { return type; }
-        bool isFlac() const { return type == FLAC; }
-        bool isVorbis() const { return type == VORBIS; }
-        bool isFfmpg() const { return type == FFMPEG; }
-    };
-
     size_t calculateMinWriteSpace(AudioCodecID codecId) const;
 
     void threadFunc();
@@ -105,6 +85,5 @@ private:
 
     std::thread m_thread;
 
-    DecoderAdapter m_adapter;
     DecodeOptions m_options;
 };
