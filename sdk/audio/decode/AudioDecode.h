@@ -3,6 +3,7 @@
 #include "AudioCommon.hpp"
 #include "ErrorUtils.h"
 #include <memory>
+#include <vector>
 
 struct AudioCodecConfig {
     int sampleRate;
@@ -48,6 +49,7 @@ public:
     ~AudioDecode();
     sdk_utils::status_t initCheck();
     int decode(const char *data, ssize_t size);
+    int decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets);
 
 private:
     class Impl;
