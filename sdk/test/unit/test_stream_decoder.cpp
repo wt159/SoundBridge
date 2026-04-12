@@ -25,8 +25,8 @@ AudioSpec makeDevSpec()
     return spec;
 }
 
-bool waitForDecoderState(AudioStreamDecoder &decoder, StreamDecoderState expectedState,
-                         int timeoutMs)
+[[maybe_unused]] bool waitForDecoderState(AudioStreamDecoder &decoder,
+                                          StreamDecoderState expectedState, int timeoutMs)
 {
     const int pollMs = 5;
     int elapsed      = 0;
@@ -292,6 +292,67 @@ TEST_SUITE("AudioStreamDecoder State Queries")
 
         CHECK(decoder.positionMs() == 0);
     }
+}
+
+TEST_CASE("canDecode returns false when not started")
+{
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec;
+    devSpec.sampleRate    = 44100;
+    devSpec.format        = AudioFormatS16;
+    devSpec.numChannel    = 2;
+    devSpec.bitsPerSample = 16;
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    CHECK(decoder.canDecode() == false);
+}
+
+TEST_CASE("canDecode returns true when started")
+{
+    RealMediaFixture fixture;
+    if (!fixture.exists("小镇姑娘-陶喆.flac")) {
+        return;
+    }
+
+    std::shared_ptr<FileSource> source;
+    auto extractor = fixture.create("小镇姑娘-陶喆.flac", ".flac", source);
+    REQUIRE(extractor != nullptr);
+    REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec = extractor->getAudioSpec();
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+    CHECK(decoder.canDecode() == true);
+
+    decoder.stop();
+}
+
+TEST_CASE("decodeNext returns OK or WAIT when decoding")
+{
+    RealMediaFixture fixture;
+    if (!fixture.exists("小镇姑娘-陶喆.flac")) {
+        return;
+    }
+
+    std::shared_ptr<FileSource> source;
+    auto extractor = fixture.create("小镇姑娘-陶喆.flac", ".flac", source);
+    REQUIRE(extractor != nullptr);
+
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec = extractor->getAudioSpec();
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+    // Wait for some data
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    DecodeResult ret = decoder.decodeNext();
+    CHECK((ret == DecodeResult::OK || ret == DecodeResult::WAIT));
+
+    decoder.stop();
 }
 
 TEST_SUITE("AudioStreamDecoder Lifecycle")
