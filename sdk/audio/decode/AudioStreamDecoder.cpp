@@ -107,9 +107,11 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_processedBytes   = 0;
     m_consumedBytes.store(0);
     m_ring->reset();
-    m_state.store(StreamDecoderState::DECODING);
     if (startThread) {
+        m_state.store(StreamDecoderState::DECODING);
         m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
+    } else {
+        m_state.store(StreamDecoderState::IDLE);
     }
     return sdk_utils::OK;
 }
@@ -212,8 +214,8 @@ DecodeResult AudioStreamDecoder::decodeNext(const DecodeOptions &opts)
     StreamDecoderState currentState = m_state.load();
 
     if (currentState == StreamDecoderState::IDLE) {
-        LOGE("decodeNext called but not started");
-        return DecodeResult::ERROR;
+        m_state.store(StreamDecoderState::DECODING);
+        currentState = StreamDecoderState::DECODING;
     }
 
     if (currentState == StreamDecoderState::EOS) {

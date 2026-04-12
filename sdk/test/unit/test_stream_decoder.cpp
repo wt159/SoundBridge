@@ -329,6 +329,57 @@ TEST_CASE("canDecode returns true when started")
     decoder.stop();
 }
 
+TEST_CASE("start with autoDecode false does not start thread")
+{
+    RealMediaFixture fixture;
+    if (!fixture.exists("music.wav")) {
+        return;
+    }
+
+    std::shared_ptr<FileSource> source;
+    auto extractor = fixture.create("music.wav", ".wav", source);
+    REQUIRE(extractor != nullptr);
+
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec = extractor->getAudioSpec();
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    DecodeOptions opts;
+    opts.autoDecode = false;
+    REQUIRE(decoder.start(extractor.get(), opts) == sdk_utils::OK);
+
+    CHECK(decoder.canDecode() == false);
+    CHECK(decoder.state() == StreamDecoderState::IDLE);
+
+    decoder.stop();
+}
+
+TEST_CASE("decodeNext returns OK when manually started with FLAC")
+{
+    RealMediaFixture fixture;
+    if (!fixture.exists("小镇姑娘-陶喆.flac")) {
+        return;
+    }
+
+    std::shared_ptr<FileSource> source;
+    auto extractor = fixture.create("小镇姑娘-陶喆.flac", ".flac", source);
+    REQUIRE(extractor != nullptr);
+
+    AudioRingBuffer ring(1 << 20);
+    AudioSpec devSpec = extractor->getAudioSpec();
+    AudioStreamDecoder decoder(&ring, devSpec);
+
+    DecodeOptions opts;
+    opts.autoDecode = false;
+    REQUIRE(decoder.start(extractor.get(), opts) == sdk_utils::OK);
+    REQUIRE(decoder.state() == StreamDecoderState::IDLE);
+
+    DecodeResult ret = decoder.decodeNext();
+    REQUIRE((ret == DecodeResult::OK || ret == DecodeResult::WAIT));
+
+    decoder.stop();
+}
+
 TEST_CASE("decodeNext returns OK or WAIT when decoding")
 {
     RealMediaFixture fixture;
