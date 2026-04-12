@@ -116,6 +116,8 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
 
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
 {
+    DecodeOptions defaultOpts;
+    m_options = defaultOpts;
     return start(extractor, true);
 }
 
