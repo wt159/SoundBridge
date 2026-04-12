@@ -179,6 +179,73 @@ bool AudioStreamDecoder::canDecode() const
     return true;
 }
 
+DecodeResult AudioStreamDecoder::decodeNext(const DecodeOptions &opts)
+{
+    // 使用传入的选项或成员选项
+    DecodeOptions effectiveOpts = opts;
+    if (opts.minWriteSpace == 0 && m_options.minWriteSpace > 0) {
+        effectiveOpts = m_options;
+    }
+    if (effectiveOpts.minWriteSpace == 0) {
+        effectiveOpts.minWriteSpace = calculateMinWriteSpace(m_codecID);
+    }
+
+    // 1. 状态检查
+    StreamDecoderState currentState = m_state.load();
+
+    if (currentState == StreamDecoderState::IDLE) {
+        LOGE("decodeNext called but not started");
+        return DecodeResult::ERROR;
+    }
+
+    if (currentState == StreamDecoderState::EOS) {
+        return DecodeResult::EOS;
+    }
+
+    if (currentState == StreamDecoderState::ERROR) {
+        LOGE("decodeNext called but in ERROR state");
+        return DecodeResult::ERROR;
+    }
+
+    if (m_stopRequest.load() || m_abortDecode.load()) {
+        return DecodeResult::ABORT;
+    }
+
+    // 2. 背压检查
+    size_t minSpace = effectiveOpts.minWriteSpace;
+    size_t avail    = m_ring->availableWrite();
+    if (avail < minSpace) {
+        return DecodeResult::WAIT;
+    }
+
+    // 3. 调用现有解码逻辑 (runDecode)
+    int ret = runDecode();
+    DecodeResult result;
+
+    if (ret == 0) {
+        result = DecodeResult::EOS;
+    } else if (ret > 0) {
+        result = DecodeResult::OK;
+    } else {
+        result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
+    }
+
+    // 4. 处理结果
+    switch (result) {
+    case DecodeResult::OK:
+        m_state.store(StreamDecoderState::DECODING);
+        return DecodeResult::OK;
+    case DecodeResult::EOS:
+        m_state.store(StreamDecoderState::EOS);
+        return DecodeResult::EOS;
+    case DecodeResult::ERROR:
+        m_state.store(StreamDecoderState::ERROR);
+        return DecodeResult::ERROR;
+    default:
+        return result;
+    }
+}
+
 void AudioStreamDecoder::threadFunc()
 {
     if (m_ring == nullptr || m_extractor == nullptr) {

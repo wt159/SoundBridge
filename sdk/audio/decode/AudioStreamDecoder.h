@@ -30,6 +30,11 @@ enum class DecodeResult {
 
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
 
+struct DecodeOptions {
+    size_t minWriteSpace = 0; // 0 = 自动计算
+    bool autoDecode      = true; // 默认开启自动解码
+};
+
 class AudioStreamDecoder : public NonCopyable, public AudioDecodeCallback {
 public:
     AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &devSpec);
@@ -43,11 +48,7 @@ public:
     uint64_t positionMs() const;
     uint64_t durationMs() const;
     bool canDecode() const;
-
-    struct DecodeOptions {
-        size_t minWriteSpace = 0; // 0 = 自动计算
-        bool autoDecode      = true; // 默认开启自动解码
-    };
+    DecodeResult decodeNext(const DecodeOptions &opts = DecodeOptions());
 
 protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
