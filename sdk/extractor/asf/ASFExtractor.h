@@ -213,6 +213,10 @@ public:
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
+    {
+        return m_packetizedMetaBuf;
+    }
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
@@ -245,6 +249,7 @@ private:
     AudioSpec m_audioSpec;
     AudioCodecID m_audioCodecID;
     AudioBuffer::AudioBufferPtr m_metaBuf;
+    std::vector<AudioBuffer::AudioBufferPtr> m_packetizedMetaBuf;
     ASF::HeaderObject m_headerObj;
     ASF::DataObject m_dataObj;
     uint8_t m_audioStreamNumber;
