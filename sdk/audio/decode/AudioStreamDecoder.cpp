@@ -33,6 +33,8 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_bytesPerMs(0)
     , m_abortDecode(false)
     , m_thread()
+    , m_adapter()
+    , m_options()
 {
 }
 

@@ -16,6 +16,10 @@
 #include <thread>
 #include <vector>
 
+// Forward declarations
+class FLACDecode;
+class VorbisDecode;
+
 enum class DecodeResult {
     OK    = 0,
     WAIT  = 1, // 需等待 (ring 满 / 数据不足)
@@ -48,6 +52,26 @@ protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
 
 private:
+    struct DecoderAdapter {
+        enum Type { NONE, FLAC, VORBIS, FFMPEG } type;
+        union {
+            FLACDecode *flac;
+            VorbisDecode *vorbis;
+            void *ffmpeg;
+        };
+
+        DecoderAdapter()
+            : type(NONE)
+            , flac(nullptr)
+        {
+        }
+
+        Type getType() const { return type; }
+        bool isFlac() const { return type == FLAC; }
+        bool isVorbis() const { return type == VORBIS; }
+        bool isFfmpg() const { return type == FFMPEG; }
+    };
+
     void threadFunc();
     int runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
@@ -74,4 +98,7 @@ private:
     std::atomic<bool> m_abortDecode;
 
     std::thread m_thread;
+
+    DecoderAdapter m_adapter;
+    DecodeOptions m_options;
 };
