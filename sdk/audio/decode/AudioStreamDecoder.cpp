@@ -38,6 +38,21 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
 {
 }
 
+size_t AudioStreamDecoder::calculateMinWriteSpace(AudioCodecID codecId) const
+{
+    switch (codecId) {
+    case AUDIO_CODEC_ID_FLAC:
+        return 32 * 1024; // 32KB - FLAC frame typically 16-64KB
+    case AUDIO_CODEC_ID_VORBIS:
+        return 16 * 1024; // 16KB - Vorbis typical ov_read is 8KB
+    case AUDIO_CODEC_ID_AAC:
+    case AUDIO_CODEC_ID_MP3:
+        return 8 * 1024; // 8KB - FFmpeg conservative
+    default:
+        return 4 * 1024; // 4KB default
+    }
+}
+
 AudioStreamDecoder::~AudioStreamDecoder()
 {
     stop();

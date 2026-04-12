@@ -72,6 +72,8 @@ private:
         bool isFfmpg() const { return type == FFMPEG; }
     };
 
+    size_t calculateMinWriteSpace(AudioCodecID codecId) const;
+
     void threadFunc();
     int runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
