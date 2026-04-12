@@ -58,7 +58,7 @@ AudioStreamDecoder::~AudioStreamDecoder()
     stop();
 }
 
-sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
+sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
     m_extractor = extractor;
@@ -91,7 +91,6 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
         };
         m_lazyResample.emplace(factory);
         if (m_srcSpec.format != AudioFormatUnknown) {
-            // format 已知时立即初始化，否则等首帧回调
             auto r = m_lazyResample->Value();
             if (r == nullptr) {
                 m_state.store(StreamDecoderState::ERROR);
@@ -110,14 +109,26 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
     m_consumedBytes.store(0);
     m_ring->reset();
     m_state.store(StreamDecoderState::DECODING);
-    m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
+    if (startThread) {
+        m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
+    }
     return sdk_utils::OK;
+}
+
+sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
+{
+    return start(extractor, true);
 }
 
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, const DecodeOptions &opts)
 {
+    if (opts.autoDecode) {
+        m_options = opts;
+        return start(extractor);
+    }
+
     m_options = opts;
-    return start(extractor);
+    return start(extractor, false);
 }
 
 void AudioStreamDecoder::stop()
