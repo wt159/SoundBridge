@@ -141,12 +141,6 @@ status_t AudioDecodeProcess::init()
         size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
         m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
     } else {
-        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-        if (extPtr == nullptr) {
-            LOGE("getMetaData failed");
-            return INVALID_OPERATION;
-        }
-        LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
         AudioCodecConfig config;
         config.sampleRate    = m_spec.sampleRate;
         config.channels      = m_spec.numChannel;
@@ -159,7 +153,20 @@ status_t AudioDecodeProcess::init()
             LOG_ERROR(LOG_TAG, "new AudioDecode failed or initCheck failed, %p", m_decode.get());
             return INVALID_OPERATION;
         }
-        int ret = m_decode->decode(extPtr->data(), extPtr->size());
+        std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData
+            = m_extractor->getPacketizedMetaData();
+        int ret = 0;
+        if (!packetizedMetaData.empty()) {
+            ret = m_decode->decodePackets(packetizedMetaData);
+        } else {
+            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+            if (extPtr == nullptr) {
+                LOGE("getMetaData failed");
+                return INVALID_OPERATION;
+            }
+            LOG_INFO(LOG_TAG, "extractor buffer size(): %ld", extPtr->size());
+            ret = m_decode->decode(extPtr->data(), extPtr->size());
+        }
         if (ret < 0) {
             LOG_ERROR(LOG_TAG, "decode failed");
             return INVALID_OPERATION;

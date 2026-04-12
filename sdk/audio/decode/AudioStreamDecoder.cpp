@@ -675,12 +675,6 @@ int AudioStreamDecoder::runDecode()
         return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
     }
 
-    AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-    if (extPtr == nullptr || extPtr->size() == 0) {
-        LOGE("extractor getMetaData failed");
-        return kDecodeError;
-    }
-
     AudioCodecConfig config;
     config.sampleRate    = m_srcSpec.sampleRate;
     config.channels      = m_srcSpec.numChannel;
@@ -694,7 +688,19 @@ int AudioStreamDecoder::runDecode()
         LOGE("AudioDecode init failed, codec=%#x", m_codecID);
         return kDecodeError;
     }
-    int ret = decode.decode(extPtr->data(), extPtr->size());
+    std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData
+        = m_extractor->getPacketizedMetaData();
+    int ret = 0;
+    if (!packetizedMetaData.empty()) {
+        ret = decode.decodePackets(packetizedMetaData);
+    } else {
+        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
+        if (extPtr == nullptr || extPtr->size() == 0) {
+            LOGE("extractor getMetaData failed");
+            return kDecodeError;
+        }
+        ret = decode.decode(extPtr->data(), extPtr->size());
+    }
     if (ret < 0) {
         return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
     }
