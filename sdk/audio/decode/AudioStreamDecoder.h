@@ -16,6 +16,14 @@
 #include <thread>
 #include <vector>
 
+enum class DecodeResult {
+    OK    = 0,
+    WAIT  = 1, // 需等待 (ring 满 / 数据不足)
+    EOS   = 2,
+    ERROR = -1,
+    ABORT = -2
+};
+
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
 
 class AudioStreamDecoder : public NonCopyable, public AudioDecodeCallback {
@@ -30,6 +38,11 @@ public:
     StreamDecoderState state() const;
     uint64_t positionMs() const;
     uint64_t durationMs() const;
+
+    struct DecodeOptions {
+        size_t minWriteSpace = 0; // 0 = 自动计算
+        bool autoDecode      = true; // 默认开启自动解码
+    };
 
 protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
