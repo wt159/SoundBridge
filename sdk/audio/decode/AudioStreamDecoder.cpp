@@ -153,6 +153,32 @@ uint64_t AudioStreamDecoder::durationMs() const
     return m_durationMs;
 }
 
+bool AudioStreamDecoder::canDecode() const
+{
+    StreamDecoderState currentState = m_state.load();
+
+    // 未启动或已结束
+    if (currentState == StreamDecoderState::IDLE || currentState == StreamDecoderState::EOS
+        || currentState == StreamDecoderState::ERROR) {
+        return false;
+    }
+
+    // 停止请求
+    if (m_stopRequest.load() || m_abortDecode.load()) {
+        return false;
+    }
+
+    // ring 无空间
+    size_t minSpace
+        = m_options.minWriteSpace > 0 ? m_options.minWriteSpace : calculateMinWriteSpace(m_codecID);
+
+    if (m_ring->availableWrite() < minSpace) {
+        return false;
+    }
+
+    return true;
+}
+
 void AudioStreamDecoder::threadFunc()
 {
     if (m_ring == nullptr || m_extractor == nullptr) {

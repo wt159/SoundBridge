@@ -42,6 +42,7 @@ public:
     StreamDecoderState state() const;
     uint64_t positionMs() const;
     uint64_t durationMs() const;
+    bool canDecode() const;
 
     struct DecodeOptions {
         size_t minWriteSpace = 0; // 0 = 自动计算
