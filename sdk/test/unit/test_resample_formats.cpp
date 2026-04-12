@@ -135,22 +135,26 @@ TEST_SUITE("AudioResample Error Handling")
         CHECK(result != sdk_utils::OK);
     }
 
-    TEST_CASE("resample with input larger than line size")
+    TEST_CASE("resample grows input buffer for oversized streaming pcm block")
     {
-        AudioSpec inSpec  = makeInputSpec();
-        AudioSpec outSpec = makeOutputSpec();
+        AudioSpec inSpec  = makeInputSpec(AudioFormatFLT32);
+        AudioSpec outSpec = makeOutputSpec(AudioFormatS16);
 
         AudioResample resample(inSpec, outSpec);
         REQUIRE(resample.initCheck() == sdk_utils::OK);
 
-        // Create a buffer larger than expected line size
-        std::vector<uint8_t> largeBuffer(1024 * 1024, 0); // 1MB
-        std::vector<uint8_t> outBuffer(2048);
+        const size_t oversizedSamples = 1152;
+        const size_t inLen            = oversizedSamples * static_cast<size_t>(inSpec.numChannel)
+            * static_cast<size_t>(inSpec.bytesPerSample);
+        REQUIRE(inLen == 9216);
+
+        std::vector<uint8_t> inBuffer(inLen, 0);
+        std::vector<uint8_t> outBuffer(16384, 0);
         size_t outLen = outBuffer.size();
 
-        int result
-            = resample.resample(largeBuffer.data(), largeBuffer.size(), outBuffer.data(), &outLen);
-        CHECK(result != sdk_utils::OK); // Should return error (-3)
+        int result = resample.resample(inBuffer.data(), inBuffer.size(), outBuffer.data(), &outLen);
+        CHECK(result == sdk_utils::OK);
+        CHECK(outLen > 0);
     }
 }
 

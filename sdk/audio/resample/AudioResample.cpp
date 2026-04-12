@@ -41,6 +41,10 @@ public:
 
 private:
     bool AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResampleSpec &out);
+    bool ensureInputCapacity(int requiredSamples);
+    bool ensureOutputCapacity(int requiredSamples);
+    bool reallocSampleBuffer(uint8_t ***buffer, int *lineSize, int channelNum, int samples,
+                             AVSampleFormat sampleFmt);
     void getAVErrText(int err, char *errText, int errTextSize);
     void printAudioSpec(AudioResampleSpec &spec);
 };
@@ -167,20 +171,31 @@ int AudioResample::Impl::resample(void *in, size_t inLen, void *out, size_t *out
         LOG_WARNING(LOG_TAG, "not init");
         return -1;
     }
-    if (inLen > (size_t)m_inSpec.lineSize) {
-        LOG_WARNING(LOG_TAG, "inLen is too large, inLen: %d, lineSize: %d", inLen,
-                    m_inSpec.lineSize);
+    int inputSamples = static_cast<int>((inLen + static_cast<size_t>(m_inSpec.bytesPerSample) - 1)
+                                        / static_cast<size_t>(m_inSpec.bytesPerSample));
+    if (!ensureInputCapacity(inputSamples)) {
+        LOG_WARNING(LOG_TAG, "ensureInputCapacity failed, inLen: %zu, inputSamples: %d", inLen,
+                    inputSamples);
         return -3;
-    } else if (inLen < (size_t)m_inSpec.lineSize) {
-        m_inSpec.samples = inLen / m_inSpec.bytesPerSample;
+    }
+
+    int outputSamples = av_rescale_rnd(swr_get_delay(m_swrCtx, m_inSpec.sampleRate) + inputSamples,
+                                       m_outSpec.sampleRate, m_inSpec.sampleRate, AV_ROUND_UP);
+    if (!ensureOutputCapacity(outputSamples)) {
+        LOG_WARNING(LOG_TAG, "ensureOutputCapacity failed, inputSamples: %d, outputSamples: %d",
+                    inputSamples, outputSamples);
+        return -4;
+    }
+
+    if (inLen < (size_t)m_inSpec.lineSize) {
         memset(m_inData[0], 0, m_inSpec.lineSize);
         memcpy(m_inData[0], in, inLen);
     } else {
         memcpy(m_inData[0], in, inLen);
     }
     // LOG_DEBUG(LOG_TAG, "inLen: %d, in_samples: %d", inLen, m_inSpec.samples);
-    int ret = swr_convert(m_swrCtx, m_outData, m_outSpec.samples, (const uint8_t **)m_inData,
-                          m_inSpec.samples);
+    int ret
+        = swr_convert(m_swrCtx, m_outData, outputSamples, (const uint8_t **)m_inData, inputSamples);
     if (ret < 0) {
         getAVErrText(ret, m_error, sizeof(m_error));
         LOG_ERROR(LOG_TAG, "swr_convert failed: %s", m_error);
@@ -235,6 +250,64 @@ bool AudioResample::Impl::AudioSpec2AudioResampleSpec(AudioSpec &in, AudioResamp
     }
     out.bytesPerSample = in.numChannel * av_get_bytes_per_sample(out.sampleFmt);
     return ret;
+}
+
+bool AudioResample::Impl::ensureInputCapacity(int requiredSamples)
+{
+    if (requiredSamples <= m_inSpec.samples) {
+        return true;
+    }
+
+    if (!reallocSampleBuffer(&m_inData, &m_inSpec.lineSize, m_in.numChannel, requiredSamples,
+                             m_inSpec.sampleFmt)) {
+        return false;
+    }
+
+    m_inSpec.samples = requiredSamples;
+    return true;
+}
+
+bool AudioResample::Impl::ensureOutputCapacity(int requiredSamples)
+{
+    if (requiredSamples <= m_outSpec.samples) {
+        return true;
+    }
+
+    if (!reallocSampleBuffer(&m_outData, &m_outSpec.lineSize, m_out.numChannel, requiredSamples,
+                             m_outSpec.sampleFmt)) {
+        return false;
+    }
+
+    m_outSpec.samples = requiredSamples;
+    return true;
+}
+
+bool AudioResample::Impl::reallocSampleBuffer(uint8_t ***buffer, int *lineSize, int channelNum,
+                                              int samples, AVSampleFormat sampleFmt)
+{
+    uint8_t **newBuffer = (uint8_t **)av_malloc(sizeof(uint8_t *) * channelNum);
+    if (newBuffer == nullptr) {
+        LOG_ERROR(LOG_TAG, "av_malloc sample buffer failed");
+        return false;
+    }
+
+    int newLineSize = 0;
+    int ret = av_samples_alloc(newBuffer, &newLineSize, channelNum, samples, sampleFmt, m_isAlign);
+    if (ret <= 0) {
+        getAVErrText(ret, m_error, sizeof(m_error));
+        LOG_ERROR(LOG_TAG, "av_samples_alloc failed: %s", m_error);
+        av_freep(&newBuffer);
+        return false;
+    }
+
+    if (*buffer != nullptr) {
+        av_freep(&(*buffer)[0]);
+        av_freep(buffer);
+    }
+
+    *buffer   = newBuffer;
+    *lineSize = newLineSize;
+    return true;
 }
 
 void AudioResample::Impl::getAVErrText(int err, char *errText, int errTextSize)
