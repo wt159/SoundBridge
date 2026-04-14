@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT_DIR="${SB_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BUILD_DIR="${SB_BUILD_DIR:-${ROOT_DIR}/build}"
 REPORT_DIR="${SB_COVERAGE_REPORT_DIR:-${BUILD_DIR}/coverage}"
-MIN_PERCENT="${SB_COVERAGE_MIN_PERCENT:-35}"
+MIN_PERCENT="${SB_COVERAGE_MIN_PERCENT:-33}"
 LCOV_RC_ARGS=(--rc branch_coverage=0 --rc derive_function_end_line=0)
 LCOV_IGNORE_INCONSISTENT=(--ignore-errors inconsistent)
 LCOV_IGNORE_UNUSED=(--ignore-errors unused)

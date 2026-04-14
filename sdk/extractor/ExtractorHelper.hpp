@@ -7,6 +7,7 @@
 #include "ErrorUtils.h"
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 enum standardExtractors {
     WAV_EXTRACTOR,
@@ -50,6 +51,10 @@ public:
     virtual AudioSpec getAudioSpec()                  = 0;
     virtual AudioCodecID getAudioCodecID()            = 0;
     virtual AudioBuffer::AudioBufferPtr getMetaData() = 0;
+    virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
+    {
+        return std::vector<AudioBuffer::AudioBufferPtr>();
+    }
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return nullptr; }
     virtual int getBitRate() { return 0; }
     virtual int getBlockAlign() { return 0; }

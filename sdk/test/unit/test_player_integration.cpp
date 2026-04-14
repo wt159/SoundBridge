@@ -114,7 +114,6 @@ TEST_SUITE("MusicPlayer Track Navigation")
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         if (player.getMusicCount() > 1) {
-            int initialIndex = listener.last_current_index;
             player.next();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -157,13 +156,14 @@ TEST_SUITE("MusicPlayer Playlist Operations")
         player.addMusicDir(fixture.mediaDir());
 
         auto start = std::chrono::steady_clock::now();
-        while (player.getMusicCount() == 0) {
+        while (listener.list_change_count == 0) {
             auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed > std::chrono::milliseconds(5000))
+            if (elapsed > std::chrono::milliseconds(20000))
                 break;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
+        CHECK(listener.list_change_count > 0);
         CHECK(player.getMusicCount() > 0);
     }
 

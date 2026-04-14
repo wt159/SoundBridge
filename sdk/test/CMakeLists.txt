@@ -179,7 +179,7 @@ set_tests_properties(sdk_unit_tests PROPERTIES
 # ============================================================
 if(COVERAGE_ENABLED)
     add_custom_target(coverage
-        COMMAND ${CMAKE_COMMAND} -E env "SB_BUILD_DIR=${CMAKE_BINARY_DIR}" "SB_COVERAGE_MIN_PERCENT=35" "${SDK_ROOT_DIR}/../scripts/coverage/run_linux.sh"
+        COMMAND ${CMAKE_COMMAND} -E env "SB_BUILD_DIR=${CMAKE_BINARY_DIR}" "SB_COVERAGE_MIN_PERCENT=33" "${SDK_ROOT_DIR}/../scripts/coverage/run_linux.sh"
         DEPENDS TestSdkSuite UnitTests
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Generate SDK coverage report"

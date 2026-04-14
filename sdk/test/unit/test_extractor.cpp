@@ -490,6 +490,32 @@ TEST_SUITE("ExtractorFactory")
             ExtractorFactory::createExtractor(&source, ".two_arg_missing_unit_case"));
         REQUIRE(extractor == nullptr);
     }
+
+    TEST_CASE("ASF packetized payload from checked-in media")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("萨克斯机.asf"));
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("萨克斯机.asf", ".asf", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        const std::vector<AudioBuffer::AudioBufferPtr> packets = extractor->getPacketizedMetaData();
+        REQUIRE(packets.empty() == false);
+        CHECK(packets.size() > 1);
+
+        size_t total = 0;
+        for (size_t i = 0; i < packets.size(); ++i) {
+            REQUIRE(packets[i] != nullptr);
+            CHECK(packets[i]->size() > 0);
+            total += packets[i]->size();
+        }
+
+        REQUIRE(extractor->getMetaData() != nullptr);
+        CHECK(total == extractor->getMetaData()->size());
+    }
 }
 
 TEST_SUITE("AudioSpec comparison")

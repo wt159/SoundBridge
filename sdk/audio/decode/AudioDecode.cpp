@@ -1,11 +1,12 @@
 #include "AudioDecode.h"
 extern "C" {
 #include "libavcodec/avcodec.h"
-#include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
 }
 #include "LogWrapper.h"
+#include <cstring>
 #include <string>
+#include <vector>
 
 #define LOG_TAG "AudioDecode"
 
@@ -13,7 +14,6 @@ using namespace sdk_utils;
 
 class AudioDecode::Impl {
 private:
-    AudioCodecID m_codecID;
     AVCodecID m_avCodecID;
     AVCodec *m_codec;
     AVCodecContext *m_ctx;
@@ -33,6 +33,7 @@ public:
     Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config);
     ~Impl();
     int decode(const char *data, ssize_t size);
+    int decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets);
     status_t initCheck() { return m_initCheck; }
 
 private:
@@ -42,8 +43,7 @@ private:
 
 AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback,
                         const AudioCodecConfig &config)
-    : m_codecID(codec)
-    , m_avCodecID((AVCodecID)codec)
+    : m_avCodecID((AVCodecID)codec)
     , m_codec(nullptr)
     , m_ctx(nullptr)
     , m_parserCtx(nullptr)
@@ -288,6 +288,61 @@ err:
     return ret;
 }
 
+int AudioDecode::Impl::decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
+{
+    if (packets.empty()) {
+        return 0;
+    }
+
+    if (m_parserCtx) {
+        size_t totalSize = 0;
+        for (const auto &packet : packets) {
+            if (packet) {
+                totalSize += packet->size();
+            }
+        }
+        if (totalSize == 0) {
+            return 0;
+        }
+
+        std::vector<char> joined(totalSize);
+        size_t offset = 0;
+        for (const auto &packet : packets) {
+            if (!packet || packet->size() == 0) {
+                continue;
+            }
+            std::memcpy(joined.data() + offset, packet->data(), packet->size());
+            offset += packet->size();
+        }
+        return decode(joined.data(), static_cast<ssize_t>(offset));
+    }
+
+    for (const auto &packet : packets) {
+        if (!packet || packet->size() == 0) {
+            continue;
+        }
+
+        m_pkt->data = reinterpret_cast<uint8_t *>(packet->data());
+        m_pkt->size = static_cast<int>(packet->size());
+        int ret     = decode(m_ctx, m_pkt, m_frame);
+        if (ret < 0) {
+            LOG_ERROR(LOG_TAG, "decode packet failed: %s", getAVErrorString(ret));
+            m_pkt->data = nullptr;
+            m_pkt->size = 0;
+            return ret;
+        }
+    }
+
+    m_pkt->data = nullptr;
+    m_pkt->size = 0;
+    int ret     = decode(m_ctx, m_pkt, m_frame);
+    if (ret < 0) {
+        LOG_ERROR(LOG_TAG, "decode packet flush failed: %s", getAVErrorString(ret));
+        return ret;
+    }
+    return 0;
+}
+
 char *AudioDecode::Impl::getAVErrorString(int errnum)
 {
     av_strerror(errnum, m_error, sizeof(m_error));
@@ -347,4 +402,9 @@ status_t AudioDecode::initCheck()
 int AudioDecode::decode(const char *data, ssize_t size)
 {
     return m_impl->decode(data, size);
+}
+
+int AudioDecode::decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
+{
+    return m_impl->decodePackets(packets);
 }

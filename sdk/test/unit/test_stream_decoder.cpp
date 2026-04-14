@@ -508,6 +508,31 @@ TEST_SUITE("AudioStreamDecoder with Real Media")
         decoder.stop();
     }
 
+    TEST_CASE("AudioStreamDecoder drains ASF checked-in media without ERROR")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("萨克斯机.asf")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("萨克斯机.asf", ".asf", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec  = extractor->getAudioSpec();
+        devSpec.durationMs = 0;
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.state() == StreamDecoderState::EOS);
+        CHECK(decoder.durationMs() > 0);
+        decoder.stop();
+    }
+
     TEST_CASE("FLAC stream decoder completes to EOS")
     {
         RealMediaFixture fixture;

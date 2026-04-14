@@ -329,6 +329,7 @@ status_t ASFExtractor::initWithFFmpegDemux()
     }
 
     std::vector<uint8_t> audioData;
+    std::vector<AudioBuffer::AudioBufferPtr> packetizedAudioData;
     if (fileSize > 0 && fileSize < INT32_MAX) {
         audioData.reserve(static_cast<size_t>(fileSize));
     }
@@ -345,6 +346,10 @@ status_t ASFExtractor::initWithFFmpegDemux()
             size_t oldSize = audioData.size();
             audioData.resize(oldSize + static_cast<size_t>(pkt->size));
             memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
+
+            AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(pkt->size);
+            memcpy(packet->data(), pkt->data, pkt->size);
+            packetizedAudioData.push_back(packet);
         }
         av_packet_unref(pkt);
     }
@@ -353,14 +358,15 @@ status_t ASFExtractor::initWithFFmpegDemux()
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
-    if (audioData.empty()) {
+    if (audioData.empty() || packetizedAudioData.empty()) {
         LOGW("initWithFFmpegDemux no audio payload collected");
         return NO_INIT;
     }
 
     m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
     memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
-    m_validFormat = true;
+    m_packetizedMetaBuf = packetizedAudioData;
+    m_validFormat       = true;
     LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
     normalizeAudioSpec(m_audioSpec);
     return OK;
