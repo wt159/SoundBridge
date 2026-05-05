@@ -12,6 +12,12 @@ namespace {
 static const int kDecodeOk    = 0;
 static const int kDecodeAbort = 1;
 static const int kDecodeError = -1;
+
+static bool shouldTrustExtractorPcmFormat(AudioCodecID codecId)
+{
+    return codecId == AUDIO_CODEC_ID_NONE || codecId == AUDIO_CODEC_ID_FLAC
+        || codecId == AUDIO_CODEC_ID_VORBIS;
+}
 }
 
 AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &devSpec)
@@ -69,6 +75,11 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_srcSpec    = m_extractor->getAudioSpec();
     m_codecID    = m_extractor->getAudioCodecID();
     m_durationMs = m_srcSpec.durationMs;
+
+    if (!shouldTrustExtractorPcmFormat(m_codecID)) {
+        m_srcSpec.format         = AudioFormatUnknown;
+        m_srcSpec.bytesPerSample = 0;
+    }
 
     m_bytesPerMs = static_cast<uint64_t>(m_srcSpec.sampleRate)
         * static_cast<uint64_t>(m_srcSpec.numChannel)
@@ -504,10 +515,20 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
     // 懒初始化：format 未知时在首帧回调处触发 Lazy 工厂
     if (m_lazyResample.isInit() && !m_lazyResample->IsValueCreated()
         && out.spec.format != AudioFormatUnknown) {
+        m_srcSpec.sampleRate     = out.spec.sampleRate;
+        m_srcSpec.numChannel     = out.spec.numChannel;
         m_srcSpec.format         = out.spec.format;
         m_srcSpec.bytesPerSample = out.spec.bytesPerSample;
         m_srcSpec.bitsPerSample  = out.spec.bitsPerSample;
-        m_lazyResample->Value(); // 触发工厂函数，此时 m_srcSpec.format 已更新
+        m_bytesPerMs             = static_cast<uint64_t>(m_srcSpec.sampleRate)
+            * static_cast<uint64_t>(m_srcSpec.numChannel)
+            * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
+
+        if (m_srcSpec == m_devSpec) {
+            m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
+        } else {
+            m_lazyResample->Value(); // 触发工厂函数，此时 m_srcSpec 已更新为真实解码格式
+        }
     }
 
     size_t frameBytes = static_cast<size_t>(out.spec.samples)
