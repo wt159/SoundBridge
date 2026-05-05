@@ -148,6 +148,28 @@ TEST_SUITE("MediaSmoke")
         REQUIRE(buffer != nullptr);
     }
 
+    TEST_CASE("AIFF media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("俱乐部音乐循环-Freesound.aiff")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("俱乐部音乐循环-Freesound.aiff", ".aiff", "MediaSmoke aiff",
+                                source, extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
     TEST_CASE("ASF media smoke test")
     {
         RealMediaFixture fixture;
@@ -166,6 +188,50 @@ TEST_SUITE("MediaSmoke")
         std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
         REQUIRE(decode->initCheck() == sdk_utils::OK);
 
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("APE media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music-ape.ape")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("music-ape.ape", ".ape", "MediaSmoke ape", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("MKV media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music-mkv.mkv")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("music-mkv.mkv", ".mkv", "MediaSmoke mkv", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
         AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
         REQUIRE(buffer != nullptr);
         CHECK(buffer->size() > 0);
@@ -190,6 +256,28 @@ TEST_SUITE("MediaSmoke")
         std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
         REQUIRE(decode->initCheck() == sdk_utils::OK);
 
+        AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
+        REQUIRE(buffer != nullptr);
+        CHECK(buffer->size() > 0);
+    }
+
+    TEST_CASE("AMR media smoke test")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("小镇姑娘-陶喆.96.amr")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        if (!fixture.openOrSkip("小镇姑娘-陶喆.96.amr", ".amr", "MediaSmoke amr", source,
+                                extractor)) {
+            return;
+        }
+
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+        std::shared_ptr<AudioDecodeProcess> decode(new AudioDecodeProcess(extractor.get()));
+        REQUIRE(decode->initCheck() == sdk_utils::OK);
         AudioBuffer::AudioBufferPtr buffer = decode->getDecodeBuffer();
         REQUIRE(buffer != nullptr);
         CHECK(buffer->size() > 0);

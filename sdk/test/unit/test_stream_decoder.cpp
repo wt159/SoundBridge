@@ -583,6 +583,56 @@ TEST_SUITE("AudioStreamDecoder with Real Media")
         decoder.stop();
     }
 
+    TEST_CASE("AIFF stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("俱乐部音乐循环-Freesound.aiff")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("俱乐部音乐循环-Freesound.aiff", ".aiff", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("MP3 stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("小镇姑娘-陶喆.128.mp3")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("小镇姑娘-陶喆.128.mp3", ".mp3", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
     TEST_CASE("AAC stream decoder completes to EOS")
     {
         RealMediaFixture fixture;
@@ -592,6 +642,131 @@ TEST_SUITE("AudioStreamDecoder with Real Media")
 
         std::shared_ptr<FileSource> source;
         auto extractor = fixture.create("48000_fltp_1.aac", ".aac", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("M4A stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("摇滚乐_Freesound.m4a")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("摇滚乐_Freesound.m4a", ".m4a", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("APE stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music-ape.ape")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("music-ape.ape", ".ape", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("MKV stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music-mkv.mkv")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("music-mkv.mkv", ".mkv", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("WMA stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("十七岁-陶喆.96.wma")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("十七岁-陶喆.96.wma", ".wma", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = extractor->getAudioSpec();
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
+        CHECK(decoder.durationMs() > 0);
+
+        decoder.stop();
+    }
+
+    TEST_CASE("AMR stream decoder completes to EOS")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("小镇姑娘-陶喆.96.amr")) {
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("小镇姑娘-陶喆.96.amr", ".amr", source);
         REQUIRE(source != nullptr);
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);

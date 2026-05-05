@@ -97,6 +97,11 @@ public:
     }
 };
 
+struct MediaDecodeCase {
+    const char *fileName;
+    const char *extension;
+};
+
 class ChunkedDecodeCallback : public AudioDecodeCallback {
 public:
     std::vector<AudioBuffer::AudioBufferPtr> &frames;
@@ -321,6 +326,139 @@ TEST_SUITE("AudioDecode")
         CHECK(callback.decodeCount > 0);
         CHECK(callback.lastSpec.spec.sampleRate > 0);
         CHECK(callback.lastSpec.spec.numChannel > 0);
+    }
+
+    TEST_CASE("AAC extractor guessed pcm format differs from decoded frame format")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("48000_fltp_1.aac"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "48000_fltp_1.aac", ".aac", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        const AudioSpec guessedSpec = extractor->getAudioSpec();
+        CHECK(guessedSpec.format != AudioFormatUnknown);
+
+        TestDecodeCallback callback;
+        AudioCodecConfig config;
+        config.sampleRate    = guessedSpec.sampleRate;
+        config.channels      = guessedSpec.numChannel;
+        config.bitsPerSample = guessedSpec.bitsPerSample;
+        config.bitRate       = extractor->getBitRate();
+        config.blockAlign    = extractor->getBlockAlign();
+        config.extraData     = extractor->getCodecExtraData();
+
+        AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
+        REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+        REQUIRE(metaData != nullptr);
+        REQUIRE(metaData->size() > 0);
+
+        const int result = decode.decode(metaData->data(), static_cast<ssize_t>(metaData->size()));
+        REQUIRE(result >= 0);
+        REQUIRE(callback.decodeCount > 0);
+        CHECK(callback.lastSpec.spec.format != AudioFormatUnknown);
+        CHECK(callback.lastSpec.spec.format != guessedSpec.format);
+    }
+
+    TEST_CASE("Decode APE checked-in media with extractor codec config")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("music-ape.ape"));
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor
+            = createRealMediaExtractorForProcess(fixture, "music-ape.ape", ".ape", source);
+        REQUIRE(source != nullptr);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        TestDecodeCallback callback;
+        AudioSpec guessedSpec = extractor->getAudioSpec();
+        AudioCodecConfig config;
+        config.sampleRate    = guessedSpec.sampleRate;
+        config.channels      = guessedSpec.numChannel;
+        config.bitsPerSample = guessedSpec.bitsPerSample;
+        config.bitRate       = extractor->getBitRate();
+        config.blockAlign    = extractor->getBlockAlign();
+        config.extraData     = extractor->getCodecExtraData();
+
+        AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
+        REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+        AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+        REQUIRE(metaData != nullptr);
+        REQUIRE(metaData->size() > 0);
+
+        const int result = decode.decode(metaData->data(), static_cast<ssize_t>(metaData->size()));
+        CHECK(result >= 0);
+        CHECK(callback.decodeCount > 0);
+        CHECK(callback.lastSpec.spec.sampleRate > 0);
+        CHECK(callback.lastSpec.spec.numChannel > 0);
+    }
+
+    TEST_CASE("Decode all FFmpeg-backed checked-in media with extractor codec config")
+    {
+        RealMediaFixture fixture;
+        const MediaDecodeCase cases[] = {
+            { "小镇姑娘-陶喆.128.mp3", ".mp3" },
+            { "48000_fltp_1.aac", ".aac" },
+            { "摇滚乐_Freesound.m4a", ".m4a" },
+            { "萨克斯机.asf", ".asf" },
+            { "music-ape.ape", ".ape" },
+            { "music-mkv.mkv", ".mkv" },
+            { "十七岁-陶喆.96.wma", ".wma" },
+            { "小镇姑娘-陶喆.96.amr", ".amr" },
+        };
+
+        for (const auto &media : cases) {
+            CAPTURE(media.fileName);
+            REQUIRE(fixture.exists(media.fileName));
+
+            std::shared_ptr<FileSource> source;
+            std::unique_ptr<ExtractorHelper> extractor
+                = createRealMediaExtractorForProcess(fixture, media.fileName, media.extension,
+                                                     source);
+            REQUIRE(source != nullptr);
+            REQUIRE(extractor != nullptr);
+            REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+            TestDecodeCallback callback;
+            AudioSpec guessedSpec = extractor->getAudioSpec();
+            AudioCodecConfig config;
+            config.sampleRate    = guessedSpec.sampleRate;
+            config.channels      = guessedSpec.numChannel;
+            config.bitsPerSample = guessedSpec.bitsPerSample;
+            config.bitRate       = extractor->getBitRate();
+            config.blockAlign    = extractor->getBlockAlign();
+            config.extraData     = extractor->getCodecExtraData();
+
+            AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
+            REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+            const std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+            int result = 0;
+            if (!packets.empty()) {
+                result = decode.decodePackets(packets);
+            } else {
+                AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
+                REQUIRE(metaData != nullptr);
+                REQUIRE(metaData->size() > 0);
+                result = decode.decode(metaData->data(), static_cast<ssize_t>(metaData->size()));
+            }
+
+            CHECK(result >= 0);
+            CHECK(callback.decodeCount > 0);
+            CHECK(callback.lastSpec.spec.sampleRate > 0);
+            CHECK(callback.lastSpec.spec.numChannel > 0);
+            CHECK(callback.lastSpec.spec.bytesPerSample > 0);
+            CHECK(callback.lastSpec.spec.format != AudioFormatUnknown);
+        }
     }
 
     TEST_CASE("Decode ASF checked-in media with packetized fallback")
