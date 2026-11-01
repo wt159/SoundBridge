@@ -27,6 +27,7 @@ cd "$root_dir"
 echo "start config"
 ./configure --pkg-config-flags="" \
     --prefix="$prefix_dir" \
+    --ln_s="cp -f" \
     --enable-shared \
     --enable-gpl \
     --enable-version3 \

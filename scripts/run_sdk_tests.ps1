@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$QtRootPath = "F:\Qt\Qt5.14.2",
+    # 默认优先读环境变量 QT_ROOT_PATH，与 cmake/toolchain 的解析顺序保持一致
+    [string]$QtRootPath = $(if ($env:QT_ROOT_PATH) { $env:QT_ROOT_PATH } else { "F:\Qt\Qt5.14.2" }),
     [string]$QtVersion = "5.14.2",
     [string]$QtMingwDir = "mingw73_64",
     [string]$ThirdPartyDistName = "windows_x86_64_gcc_debug",

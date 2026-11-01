@@ -12,7 +12,8 @@ if(NOT DEFINED BUILD_OPTION_FLAC)
 endif()
 # g3log
 if(NOT DEFINED BUILD_OPTION_G3LOG)
-    option(BUILD_OPTION_G3LOG "Build g3log" OFF)
+    # g3sinks 依赖 g3log 的头文件与库，默认一起构建，避免单独开启 g3sinks 时找不到 g3log
+    option(BUILD_OPTION_G3LOG "Build g3log" ON)
 endif()
 # g3sinks
 if(NOT DEFINED BUILD_OPTION_G3SINKS)

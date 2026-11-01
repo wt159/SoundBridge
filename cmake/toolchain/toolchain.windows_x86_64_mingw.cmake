@@ -8,7 +8,15 @@ set(CMAKE_TARGET_BUILD_TYPE Debug)
 string(TOLOWER "${CMAKE_BUILD_TYPE}" CMAKE_TARGET_BUILD_TYPE)
 
 # 设置C和C++编译器路径
-set(QT_ROOT_PATH "F:/Qt/Qt5.14.2" CACHE PATH "Qt root path")
+# Qt 安装根目录优先取环境变量 QT_ROOT_PATH，未设置时回退到默认路径。
+# 换机器时只需设置环境变量，不必修改本文件或每次传 -DQT_ROOT_PATH。
+if(DEFINED ENV{QT_ROOT_PATH} AND NOT "$ENV{QT_ROOT_PATH}" STREQUAL "")
+    set(_QT_ROOT_PATH_DEFAULT "$ENV{QT_ROOT_PATH}")
+else()
+    set(_QT_ROOT_PATH_DEFAULT "F:/Qt/Qt5.14.2")
+endif()
+message(STATUS "QT_ROOT_PATH default: ${_QT_ROOT_PATH_DEFAULT}")
+set(QT_ROOT_PATH "${_QT_ROOT_PATH_DEFAULT}" CACHE PATH "Qt root path")
 set(QT_VERSION "5.14.2" CACHE STRING "Qt version")
 set(QT_MINGW_DIR "mingw73_64" CACHE STRING "Qt MinGW target directory")
 set(QT_TOOLS_MINGW_DIR "mingw730_64" CACHE STRING "Qt Tools MinGW directory")

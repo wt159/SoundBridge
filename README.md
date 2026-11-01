@@ -26,6 +26,35 @@
 git clone git@github.com:wt159/SoundBridge.git
 ```
 
+## 准备环境（Windows）
+
+新机器从零拉起构建环境，按下面的依赖清单准备。项目只支持 **GCC/MinGW**（`cmake/toolchain/`
+下没有 MSVC toolchain，编译参数也是 GCC 风格），不能用 Visual Studio 的 cl.exe。
+
+| 组件 | 版本 | 说明 |
+|------|------|------|
+| Qt | 5.14.2 `mingw73_64` | 需同时安装 `Tools/mingw730_64`（含 `g++`、`mingw32-make`、`windeployqt`） |
+| CMake | **3.x**（实测 3.31.6） | 不能装 4.x：根 `CMakeLists.txt` 声明 `cmake_minimum_required(VERSION 3.2)`，CMake 4 已移除对 <3.5 的兼容 |
+| Git for Windows | 任意 | 构建 FFmpeg 需要其中的 `bash`、`sed`、`pr` 等 |
+| Python 3.9+ | 任意 | 仅在用脚本安装 Qt 时需要（`aqtinstall`） |
+
+Qt 的安装位置通过环境变量 `QT_ROOT_PATH` 指定，`cmake/toolchain/toolchain.windows_x86_64_mingw.cmake`
+会优先读取它，未设置时回退到 `F:/Qt/Qt5.14.2`。因此换机器只需改这个环境变量，不必改工具链文件：
+
+```bat
+setx QT_ROOT_PATH D:\Qt
+```
+
+### 一键脚本（推荐）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows_env.ps1 -QtRoot D:\Qt
+```
+
+脚本是幂等的，会依次完成：安装 CMake（免安装 zip）→ 安装 Qt 与 MinGW（走清华镜像）→
+设置 `QT_ROOT_PATH` 与 `PATH` → 编译并安装 `sdk/3rdparty` → 配置根工程。
+首次执行编译第三方库约需 40~70 分钟。只想重装某一环时可加 `-SkipQt` / `-SkipThirdParty`。
+
 ## 编译
 
 [**注意第一次编译请先编译sdk/3rdparty目录下的依赖库，点击跳转**](sdk/3rdparty/Readme.md)

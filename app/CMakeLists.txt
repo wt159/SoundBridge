@@ -28,7 +28,9 @@ include_directories(${QT_LIB_PATH}/../include/QtGui)
 link_directories(${3RDPARTY_DIST_DIR}/lib)
 link_directories(${3RDPARTY_DIST_DIR}/bin)
 
-set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${QT_LIB_PATH})
+# Qt5Config.cmake 位于 <Qt安装目录>/lib/cmake/Qt5，因此前缀要指向 Qt 的 mingw 根目录，
+# 而不是它的 lib 子目录（保留 QT_LIB_PATH 以兼容已有缓存配置）。
+set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${QT_MINGW_PATH} ${QT_LIB_PATH})
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
 add_executable(${PROJECT_NAME} WIN32 ${APP_SOURCES})

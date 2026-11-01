@@ -18,20 +18,10 @@ echo boost_build: prefix is %prefix%
 echo boost_build: build_dir is %build_dir%
 echo boost_build: boost_dir is %boost_dir%
 
-set cores=0
-for /f "skip=2" %%c in ('wmic cpu get NumberOfCores') do (
-    set /a cores+=1
-)
-:end_cores
-set processors=0
-for /f "skip=1" %%p in ('wmic cpu get NumberOfLogicalProcessors') do (
-    set /a processors=%%p
-    goto end_processors
-)
-:end_processors
-set /a max_threads=%cores% * %processors%
-echo boost_build: cores is %cores%
-echo boost_build: processors is %processors%
+rem Use NUMBER_OF_PROCESSORS instead of wmic: wmic is removed on newer Windows
+rem and cannot run in restricted environments. The env var works everywhere.
+set max_threads=%NUMBER_OF_PROCESSORS%
+if not defined max_threads set max_threads=4
 echo boost_build: max_threads is %max_threads%
 
 if exist %build_dir% (
@@ -57,9 +47,11 @@ if exist %boost_dir%/b2.exe (
 )
 
 echo boost_build: b2
-@REM --build-type=complete variant=release threading=multi link=shared runtime-link=shared
+@REM g3sinks 里写死了 Boost_USE_STATIC_LIBS=OFF，因此静态/动态两套都要产出；
+@REM address-model=64 限定只编 64 位，否则 b2 会尝试链接 32 位 DLL 而失败
 b2.exe cxxflags="--std=gnu++11" -j %max_threads% ^
     --build-dir=%build_dir% --prefix=%prefix% ^
+    address-model=64 link=static,shared runtime-link=shared ^
     --without-atomic ^
     --without-chrono ^
     --without-container ^
