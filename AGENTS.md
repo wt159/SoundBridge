@@ -97,3 +97,17 @@ cmake --build build --target package_portable
 - `sdk/cosmos/` 是 header-only 工具区；规则不够特殊，暂不单独挂子 AGENTS。
 - `music/` 里包含真实媒体样本；涉及 extractor / decode 的改动，优先补 `sdk_media_smoke` 或 `sdk_extractor_spec_tests`。
 - 用户口头说“提交一版”时，默认含义是：`git add` + `git commit` + `git push`；除非用户显式缩小范围，否则按这三个步骤执行。
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues on `wt159/SoundBridge`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root, covering both `app/` and `sdk/`. See `docs/agents/domain.md`.
