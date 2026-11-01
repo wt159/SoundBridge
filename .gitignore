@@ -12,5 +12,6 @@ sdk/test/log/**
 .cache
 .sisyphus/
 .worktrees/
+.workbuddy/
 .cocoindex_code/
 build-coverage/
