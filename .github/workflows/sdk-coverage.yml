@@ -20,17 +20,21 @@ on:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install coverage tools
         run: sudo apt-get update && sudo apt-get install -y lcov libpulse-dev qtbase5-dev
 
       - name: Build 3rdparty deps
         run: |
+          # zlib/ogg/vorbis/SDL/g3log 等供应商源码仍声明 cmake_minimum_required < 3.5，
+          # 而 runner 上的 CMake 4 已移除对 < 3.5 的兼容。这里用 policy 变量兜底，
+          # 避免修改 sdk/3rdparty 下的第三方代码。
           cmake -S sdk/3rdparty -B sdk/3rdparty/build \
-            --no-warn-unused-cli \
+            -Wno-unused-cli \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
             -G "Unix Makefiles" \
@@ -53,7 +57,7 @@ jobs:
           SDL_AUDIODRIVER: dummy
 
       - name: Upload coverage HTML
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdk-coverage-html
           path: build/coverage/html
