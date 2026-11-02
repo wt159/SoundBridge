@@ -109,6 +109,39 @@ Windows 直接运行仅适用于 Qt 与第三方 DLL 已经可被系统搜索到
 如果出现缺少 DLL，优先使用下方 `package_portable` 流程，或先执行 `windeployqt` 并补齐
 `sdk/3rdparty/dist/<windows-dist>/bin` 中的 DLL。
 
+### 一条命令启动（Windows 开发态）
+
+`build/app` 里只有 Qt 运行时，SDL2d/FFmpeg 仍在 `sdk/3rdparty/dist/<dist>/bin` 下，
+所以直接双击 `SoundBridge.exe` 会因缺 DLL **静默退出**（没有弹窗，也没有输出）。
+`scripts/run_player.ps1` 负责把这层 PATH 拼好：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_player.ps1
+
+# 常用参数
+#   -Rebuild   启动前增量编译 SoundBridge
+#   -TailLog   跟随最新日志（Ctrl+C 只退出 tail，不影响播放器）
+#   -Wait      阻塞到播放器退出，适合脚本化冒烟
+```
+
+脚本用 `Start-Process` 起进程，播放器不挂在当前终端名下。
+
+### 调试界面（截图 / 量坐标 / 点击）
+
+`scripts/ui.py` 只用 Python 标准库（ctypes 直连 Win32），不依赖 Pillow / pyautogui。
+本机安全策略禁止 `Add-Type`，PowerShell 侧的 UIAutomation 不可用，这个脚本是替代品：
+
+```bash
+python scripts/ui.py shot  --window SoundBridge --out shot.png   # 截图，被遮挡也能截
+python scripts/ui.py map   --window SoundBridge --step 10        # 亮度字符图，用来量控件坐标
+python scripts/ui.py where --window SoundBridge                  # 窗口矩形 / 客户区原点
+python scripts/ui.py click --window SoundBridge --client 220,649 --dry-run
+```
+
+`--client X,Y` 是**客户区坐标**（不含标题栏与边框），与 Qt 控件 `geometry()` 同一套；
+工具自己加客户区原点做换算，窗口被拖动也不受影响。`--dry-run` 只打印命中窗口，不动作。
+不知坐标时先跑 `map`，按字符图读像素位置 —— 注意别拿缩放的预览图量，会偏。
+
 ### Portable 运行（推荐）
 
 在仓库根目录先执行打包，再运行打包产物，可减少缺少运行库的问题。

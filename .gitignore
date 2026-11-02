@@ -15,3 +15,6 @@ sdk/test/log/**
 .workbuddy/
 .cocoindex_code/
 build-coverage/
+__pycache__/
+*.pyc
+ui_shot_*.png
