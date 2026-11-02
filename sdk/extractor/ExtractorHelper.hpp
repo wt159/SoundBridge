@@ -40,6 +40,13 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
     { ".wma", ASF_EXTRACTOR }
 };
 
+// 提取器只上报「容器里能确定的事实」。AudioSpec 的契约（来源 #21）：
+//   - sampleRate / numChannel：必须有效（> 0）。ExtractorFactory::createExtractor 在出口校验，
+//     不合格直接返回 nullptr；
+//   - format / bytesPerSample：允许 Unknown / 0。mp3、ogg 这类容器不声明 PCM 采样格式，
+//     真实值要等解码首帧才知道，调用方必须按首帧回填（AudioStreamDecoder 的懒重采样、
+//     AudioDecodeProcess 的回调都这么做）。
+// 任何「拿 spec 直接算字节数或时长」的代码，都必须先处理第二类字段为 0 的情况。
 class ExtractorHelper {
 public:
     virtual ~ExtractorHelper() { }

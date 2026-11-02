@@ -12,19 +12,19 @@
 
 ## 受支持
 
-| 扩展名 | 提取器 | 解码路径 | 覆盖度断言 | 备注 |
-|---|---|---|---|---|
-| `.wav` | `WAVExtractor` | 项目自实现，PCM 直通 | 待补（#16） | 兼容 `.w64` 之前先按不支持处理 |
-| `.aiff` | `AIFFExtractor` | 项目自实现 | 待补（#16） | |
-| `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | 待补（#16） | 解码输出为 fltp（4 B/采样） |
-| `.aac` | `AACExtractor` | ffmpeg + adts parser | 待补（#16） | |
-| `.flac` | `FLACExtractor` | libFLAC 直解 | 待补（#16） | 同步 `decodeNext()` 路径有缺陷，见 #18 |
-| `.ogg` | `OGGExtractor` | libvorbis 直解 | 待补（#16） | 同上；`AudioSpec.durationMs` 目前为 0 |
-| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 待补（#16） | ALAC（无 parser）路径尚未验证 |
-| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 待补（#16） | 唯一实现了 `getPacketizedMetaData()` 的提取器 |
-| `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 待补（#16） | |
-| `.ape` | `APEExtractor` | ffmpeg demux + 分包 | **已有**：`APE decode covers advertised duration` | 2026-11 修复只解首帧的问题（`50b538f0c`） |
-| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 待补（#16） | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），断言需容错 |
+| 扩展名 | 提取器 | 解码路径 | spec 完整性 | 覆盖度断言 | 备注 |
+|---|---|---|---|---|---|
+| `.wav` | `WAVExtractor` | 项目自实现，PCM 直通 | 完整 | 待补（#16） | 兼容 `.w64` 之前先按不支持处理 |
+| `.aiff` | `AIFFExtractor` | 项目自实现 | 完整 | 待补（#16） | |
+| `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 解码输出为 fltp（4 B/采样），真实格式由首帧回填 |
+| `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | 待补（#16） | |
+| `.flac` | `FLACExtractor` | libFLAC 直解 | 完整 | 待补（#16） | 同步 `decodeNext()` 路径有缺陷，见 #18 |
+| `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 同步路径同 #18；`durationMs` 目前为 0 |
+| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | ALAC（无 parser）路径尚未验证 |
+| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 唯一实现了 `getPacketizedMetaData()` 的提取器 |
+| `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 完整 | 待补（#16） | |
+| `.ape` | `APEExtractor` | ffmpeg demux + 分包 | 完整 | **已有**：`APE decode covers advertised duration` | 2026-11 修复只解首帧的问题（`50b538f0c`） |
+| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），断言需容错 |
 
 ## 不支持（明确摘除，别再注册回去）
 
@@ -33,6 +33,12 @@
 | `.amr` | 已从注册表与 `defaultExtractorMap` 摘除 | 此前被指向 `ASFExtractor`，对真实 AMR-NB/WB 只会静默解错。内容恰为 ASF/WMA 的文件仍可被魔法字节嗅探识别，那是内容嗅探而非扩展名支持 |
 | `.opus` | 已从 `standardExtractors` 枚举与映射中删除 | 从未有过 `OpusExtractor`，也没有 Opus 解码器；`VorbisDecode` 不能顶替 |
 | `.au` / `.nsp` / `.w64` / `.wsig` | 从未注册 | 素材或许可解，但补支持属于「扩格式面」，不在正确性基线范围内 |
+
+## spec 完整性约定（来源 [#21](https://github.com/wt159/SoundBridge/issues/21)）
+
+`sampleRate` / `numChannel` 必须有效——`ExtractorFactory::createExtractor` 在出口校验，不合格直接返回 `nullptr`。
+`format` / `bytesPerSample` 允许为 `Unknown` / 0：mp3、ogg 的容器不声明 PCM 采样格式，真实值由解码首帧回填。
+**因此任何按 spec 算字节数或时长的代码都必须先处理这两个字段为 0 的情况**——不能直接拿来做除法或乘算。
 
 ## 维护规则
 

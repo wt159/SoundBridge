@@ -104,7 +104,14 @@ status_t AudioDecodeProcess::init()
         mergeDecodeBuffer(m_decBuf, m_decBufVec);
         m_decBufVec.clear();
         size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
-        m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        if (bytesPreMs == 0) {
+            // #21：一帧都没解出来时 bytesPerSample 可能仍是 0（mp3/ogg 的 spec 允许未知），
+            // 这里不能除，否则整除崩溃；时长留 0，语义交给 #15 定案。
+            LOG_WARNING(LOG_TAG, "bytesPerMs is 0 (no decoded frame), durationMs left 0");
+            m_spec.durationMs = 0;
+        } else {
+            m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        }
     } else if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
         VorbisDecode vorbisDecode(this);
         DataSourceBase *dataSource = m_extractor->getDataSource();
@@ -139,7 +146,14 @@ status_t AudioDecodeProcess::init()
         mergeDecodeBuffer(m_decBuf, m_decBufVec);
         m_decBufVec.clear();
         size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
-        m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        if (bytesPreMs == 0) {
+            // #21：一帧都没解出来时 bytesPerSample 可能仍是 0（mp3/ogg 的 spec 允许未知），
+            // 这里不能除，否则整除崩溃；时长留 0，语义交给 #15 定案。
+            LOG_WARNING(LOG_TAG, "bytesPerMs is 0 (no decoded frame), durationMs left 0");
+            m_spec.durationMs = 0;
+        } else {
+            m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        }
     } else {
         AudioCodecConfig config;
         config.sampleRate    = m_spec.sampleRate;
@@ -176,7 +190,14 @@ status_t AudioDecodeProcess::init()
 
         m_decBufVec.clear();
         size_t bytesPreMs = m_spec.sampleRate * m_spec.numChannel * m_spec.bytesPerSample;
-        m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        if (bytesPreMs == 0) {
+            // #21：一帧都没解出来时 bytesPerSample 可能仍是 0（mp3/ogg 的 spec 允许未知），
+            // 这里不能除，否则整除崩溃；时长留 0，语义交给 #15 定案。
+            LOG_WARNING(LOG_TAG, "bytesPerMs is 0 (no decoded frame), durationMs left 0");
+            m_spec.durationMs = 0;
+        } else {
+            m_spec.durationMs = m_decSize * 1000 / bytesPreMs;
+        }
     }
     return NO_ERROR;
 }

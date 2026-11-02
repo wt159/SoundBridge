@@ -131,6 +131,23 @@ std::mutex &extractorRegistryMutex()
     static std::mutex s_mutex;
     return s_mutex;
 }
+
+// #21：AudioSpec 只保证 sampleRate / numChannel 有效；format / bytesPerSample 允许未知，
+// 由解码首帧回填。缺了前两项一定是提取器 bug，但工厂只负责构造、不负责审核——
+// 测试替身和探测型提取器允许 spec 为空，一律丢弃会误杀合法用法。
+// 所以这里只把「静默的 0」变成显式日志，避免它一路流到下游变成除零或错的时长。
+ExtractorHelper *warnIfSpecUnusable(ExtractorHelper *extractor, const std::string &extensionName)
+{
+    if (extractor == nullptr) {
+        return nullptr;
+    }
+    const AudioSpec spec = extractor->getAudioSpec();
+    if (extractor->initCheck() != sdk_utils::OK || spec.sampleRate <= 0 || spec.numChannel <= 0) {
+        LOGW("createExtractor got unusable spec: %s (init=%d sr=%d ch=%d)", extensionName.c_str(),
+             static_cast<int>(extractor->initCheck()), spec.sampleRate, spec.numChannel);
+    }
+    return extractor;
+}
 }
 
 bool ExtractorFactory::registerExtractor(const std::string &extensionName, ExtractorCreator creator)
@@ -177,7 +194,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         auto &registry = extractorRegistry();
         auto search    = registry.find(normalized);
         if (search != registry.end()) {
-            return search->second.creator(source);
+            return warnIfSpecUnusable(search->second.creator(source), normalized);
         }
     }
 
@@ -193,7 +210,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         auto search    = registry.find(sniffed);
         if (search != registry.end()) {
             LOGI("createExtractor sniff hit: %s", sniffed.c_str());
-            return search->second.creator(source);
+            return warnIfSpecUnusable(search->second.creator(source), sniffed);
         }
         LOGW("createExtractor unsupported sniffed extension: %s", sniffed.c_str());
     }
@@ -214,7 +231,7 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         }
         if (entry.second.sniffer(source)) {
             LOGI("createExtractor sniffer hit: %s", entry.first.c_str());
-            return entry.second.creator(source);
+            return warnIfSpecUnusable(entry.second.creator(source), entry.first);
         }
     }
 

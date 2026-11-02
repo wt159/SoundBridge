@@ -744,19 +744,76 @@ TEST_SUITE("ExtractorRealMedia")
         CHECK(spec.numChannel > 0);
     }
 
+    // #21：AudioSpec 契约——sampleRate / numChannel 必须有效，format / bytesPerSample 允许未知。
+    // 中文名素材在 Windows 下打不开（#14），这里显式跳过并打印，不静默通过。
+    TEST_CASE("real media extractors report a usable audio spec")
+    {
+        struct SpecCase {
+            const char *fileName;
+            const char *extension;
+        };
+        const SpecCase cases[] = {
+            { "music.wav", ".wav" },
+            { "ring.wav", ".wav" },
+            { "48000_fltp_1.aac", ".aac" },
+            { "WavinFlag.aac", ".aac" },
+            { "music-ape.ape", ".ape" },
+            { "music-mkv.mkv", ".mkv" },
+            { "小镇姑娘-陶喆.flac", ".flac" },
+            { "摇滚乐_Freesound.m4a", ".m4a" },
+            { "萨克斯机.asf", ".asf" },
+            { "十七岁-陶喆.96.wma", ".wma" },
+        };
+
+        RealMediaFixture fixture;
+        int checked = 0;
+        for (const auto &item : cases) {
+            std::shared_ptr<FileSource> source(
+                new FileSource(fixture.mediaPath(item.fileName).c_str()));
+            if (!source || source->initCheck() != sdk_utils::OK) {
+                MESSAGE("skip (cannot open): " << item.fileName);
+                continue;
+            }
+
+            INFO(item.fileName);
+            std::unique_ptr<ExtractorHelper> extractor(
+                ExtractorFactory::createExtractor(source.get(), item.extension, true));
+            REQUIRE(extractor != nullptr); // 工厂出口校验通过才算合法提取器
+
+            const AudioSpec spec = extractor->getAudioSpec();
+            CHECK(spec.sampleRate > 0);
+            CHECK(spec.numChannel > 0);
+            ++checked;
+        }
+        MESSAGE("spec-check covered " << checked << " file(s)");
+        CHECK(checked >= 5); // 至少 wav / aac / ape / mkv 这几条 ASCII 名素材
+    }
+
     // 决策来源：#20「受支持格式」的边界与清单。
-    // 注册表是唯一机器可读真源，doc/format-support.md 是人读副本；这里把两者钉在一起。
+    // 静态表 defaultExtractorMap 是人读清单的精确副本；注册表是进程级全局状态，
+    // 别的用例会往里塞测试替身（`.dup_unit_test_ext` 之类），所以只断言「覆盖」不比对全等。
     TEST_CASE("supported extensions match the registry")
     {
         const std::vector<std::string> expected = { ".aac", ".aiff", ".ape", ".asf", ".flac",
                                                     ".m4a", ".mkv",  ".mp3", ".ogg", ".wav",
                                                     ".wma" };
-        const std::vector<std::string> actual   = ExtractorFactory::registeredExtensions();
-        CHECK(actual == expected);
+
+        std::vector<std::string> documented;
+        documented.reserve(defaultExtractorMap.size());
+        for (const auto &entry : defaultExtractorMap) {
+            documented.push_back(entry.first);
+        }
+        std::sort(documented.begin(), documented.end());
+        CHECK(documented == expected);
+
+        const std::vector<std::string> registered = ExtractorFactory::registeredExtensions();
+        for (const auto &ext : expected) {
+            CHECK(std::find(registered.begin(), registered.end(), ext) != registered.end());
+        }
 
         // .amr 曾被误注册到 ASFExtractor，.opus 曾只存在于枚举里——退回任何一个都是回归
-        CHECK(std::find(actual.begin(), actual.end(), ".amr") == actual.end());
-        CHECK(std::find(actual.begin(), actual.end(), ".opus") == actual.end());
+        CHECK(std::find(registered.begin(), registered.end(), ".amr") == registered.end());
+        CHECK(std::find(registered.begin(), registered.end(), ".opus") == registered.end());
     }
 
     TEST_CASE("APE audio spec from checked-in media")
