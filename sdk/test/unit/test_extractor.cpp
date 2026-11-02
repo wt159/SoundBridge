@@ -168,32 +168,54 @@ TEST_SUITE("DataSourceBase interface")
 
 TEST_SUITE("FileSource")
 {
+    // 临时目录要落在进程真能写的地方。Windows 原生进程把 "/tmp" 解释成
+    // "<当前盘>:\tmp"，该目录默认不存在，用例会因建文件失败而红。
+    // 取值顺序：显式覆盖(SB_TEST_TMP) → POSIX(TMPDIR) → Windows(TEMP/TMP) → 当前目录。
+    std::string unitTempDir()
+    {
+        static const char *const envNames[] = { "SB_TEST_TMP", "TMPDIR", "TEMP", "TMP" };
+        for (size_t i = 0; i < sizeof(envNames) / sizeof(envNames[0]); ++i) {
+            const char *value = std::getenv(envNames[i]);
+            if (value == nullptr || value[0] == '\0') {
+                continue;
+            }
+
+            std::string dir(value);
+            while (dir.size() > 1 && (dir[dir.size() - 1] == '/' || dir[dir.size() - 1] == '\\')) {
+                dir.erase(dir.size() - 1);
+            }
+            return dir;
+        }
+
+        return std::string(".");
+    }
+
     std::string createUnitFilePath(const std::string &name)
     {
-        return std::string("/tmp/") + name;
+        return unitTempDir() + "/" + name;
     }
 
     std::string createUnitNoExtensionPath(const std::string &name)
     {
-        return std::string("/tmp/") + name;
+        return unitTempDir() + "/" + name;
     }
 
     TEST_CASE("Missing file returns no init")
     {
-        FileSource source("/tmp/soundbridge_missing_file_source_case.bin");
+        FileSource source(createUnitFilePath("soundbridge_missing_file_source_case.bin").c_str());
         REQUIRE(source.initCheck() == sdk_utils::NO_INIT);
     }
 
     TEST_CASE("Missing file readAt returns no init")
     {
-        FileSource source("/tmp/soundbridge_missing_file_source_case.bin");
+        FileSource source(createUnitFilePath("soundbridge_missing_file_source_case.bin").c_str());
         char buffer[8];
         REQUIRE(source.readAt(0, buffer, sizeof(buffer)) == sdk_utils::NO_INIT);
     }
 
     TEST_CASE("Missing file getSize returns no init")
     {
-        FileSource source("/tmp/soundbridge_missing_file_source_case.bin");
+        FileSource source(createUnitFilePath("soundbridge_missing_file_source_case.bin").c_str());
         off64_t size = 0;
         REQUIRE(source.getSize(&size) == sdk_utils::NO_INIT);
     }
@@ -745,7 +767,8 @@ TEST_SUITE("ExtractorRealMedia")
     }
 
     // #21：AudioSpec 契约——sampleRate / numChannel 必须有效，format / bytesPerSample 允许未知。
-    // 中文名素材在 Windows 下打不开（#14），这里显式跳过并打印，不静默通过。
+    // #14：素材一律经 FileSource 打开（它按 UTF-8 转宽字符），中文名与 ASCII 名同等对待；
+    //      跳过分支只为「素材没随仓库下发」留口子，末尾用全量计数把它变成可审计失败。
     TEST_CASE("real media extractors report a usable audio spec")
     {
         struct SpecCase {
@@ -766,7 +789,8 @@ TEST_SUITE("ExtractorRealMedia")
         };
 
         RealMediaFixture fixture;
-        int checked = 0;
+        const size_t caseCount = sizeof(cases) / sizeof(cases[0]);
+        size_t checked         = 0;
         for (const auto &item : cases) {
             std::shared_ptr<FileSource> source(
                 new FileSource(fixture.mediaPath(item.fileName).c_str()));
@@ -785,8 +809,8 @@ TEST_SUITE("ExtractorRealMedia")
             CHECK(spec.numChannel > 0);
             ++checked;
         }
-        MESSAGE("spec-check covered " << checked << " file(s)");
-        CHECK(checked >= 5); // 至少 wav / aac / ape / mkv 这几条 ASCII 名素材
+        MESSAGE("spec-check covered " << checked << "/" << caseCount << " file(s)");
+        CHECK(checked == caseCount);
     }
 
     // 决策来源：#20「受支持格式」的边界与清单。

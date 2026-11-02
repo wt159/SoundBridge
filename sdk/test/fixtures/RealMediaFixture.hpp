@@ -3,7 +3,6 @@
 #include <ExtractorFactory.h>
 #include <FileSource.h>
 #include <cstdlib>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -77,10 +76,13 @@ struct RealMediaFixture {
     }
 
 private:
+    // exists() 的语义是「能被 FileSource 打开」，不是「文件在磁盘上存在」。
+    // Windows 上 std::ifstream 走窄字符路径，中文名素材一律打不开（#14）；
+    // FileSource 内部经 Utf8Path 转宽字符，与生产链路走同一条路径解析。
     static bool pathExists(const std::string &path)
     {
-        std::ifstream stream(path.c_str(), std::ios::binary);
-        return stream.good();
+        FileSource probe(path.c_str());
+        return probe.initCheck() == sdk_utils::OK;
     }
 
     static std::string joinPath(const std::string &directory, const std::string &fileName)
