@@ -110,6 +110,38 @@ def window_pid(hwnd):
     return pid.value
 
 
+SW_RESTORE = 9
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+MK_LBUTTON = 0x0001
+
+
+def activate_window(hwnd):
+    """把窗口提到前台。后台窗口被别的窗口盖住时，屏幕坐标点击会打到上层窗口上。
+
+    注意：从非前台进程调用 SetForegroundWindow 常常被系统忽略，返回 False 也属正常；
+    这种情况请用 --post 走消息投递。
+    """
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
+    time.sleep(0.12)
+    return user32.GetForegroundWindow() == hwnd
+
+
+def post_click(hwnd, client_x, client_y, double=False):
+    """把鼠标消息直接投给窗口：不依赖前台，也不怕被遮挡。"""
+    lparam = (client_y << 16) | (client_x & 0xFFFF)
+    rounds = 2 if double else 1
+    for index in range(rounds):
+        user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+        time.sleep(0.03)
+        user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
+        if index + 1 < rounds:
+            time.sleep(0.06)
+
+
 def process_image_name(pid):
     """取进程可执行文件名（含扩展名）。用于区分同名但不同来源的窗口。"""
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -381,6 +413,7 @@ def cmd_click(args):
             raise UiError("客户区坐标 (%d,%d) 超出客户区 %dx%d，放弃点击"
                           % (rel_x, rel_y, cw, ch), 5)
         x, y = cx + rel_x, cy + rel_y
+        target_hwnd = hwnd
         print("目标窗口: %s" % describe(hwnd))
         print("客户区 (%d,%d) + 原点 (%d,%d) -> 屏幕 (%d,%d)" % (rel_x, rel_y, cx, cy, x, y))
     else:
@@ -388,12 +421,27 @@ def cmd_click(args):
             raise UiError("需要绝对坐标 X Y，或 --window ... --client X,Y", 2)
         x, y = args.coords
         hwnd = user32.WindowFromPoint(wt.POINT(x, y))
-        root = user32.GetAncestor(hwnd, GA_ROOT) if hwnd else 0
-        print("屏幕 (%d,%d) 命中: %s" % (x, y, describe(root) if root else "无窗口"))
+        target_hwnd = user32.GetAncestor(hwnd, GA_ROOT) if hwnd else 0
+        print("屏幕 (%d,%d) 命中: %s"
+              % (x, y, describe(target_hwnd) if target_hwnd else "无窗口"))
 
     if args.dry_run:
         print("--dry-run：未执行点击")
         return 0
+
+    if args.post:
+        if not args.client:
+            raise UiError("--post 需要 --window ... --client X,Y（消息坐标是客户区坐标）", 2)
+        post_click(target_hwnd, args.client[0], args.client[1], args.double)
+        print("已投递点击事件 客户区(%d,%d)%s"
+              % (args.client[0], args.client[1], "（双击）" if args.double else ""))
+        return 0
+
+    if not args.no_activate and target_hwnd:
+        if activate_window(target_hwnd):
+            print("窗口已激活到前台")
+        else:
+            print("警告: 没能把窗口提到前台，若点击无反应请改用 --post")
 
     user32.SetCursorPos(x, y)
     time.sleep(0.05)
@@ -444,6 +492,10 @@ def build_parser():
                          help="客户区相对坐标 X,Y（配合 --window）")
     p_click.add_argument("--dry-run", action="store_true", help="只报命中窗口，不点击")
     p_click.add_argument("--double", action="store_true", help="双击")
+    p_click.add_argument("--no-activate", action="store_true",
+                         help="点击前不把窗口提到前台（默认会提，否则后台窗口的点击会被上层窗口截走）")
+    p_click.add_argument("--post", action="store_true",
+                         help="用消息投递代替真实鼠标（窗口被遮挡或抢不到前台时用）")
     p_click.set_defaults(func=cmd_click)
 
     return parser
