@@ -35,7 +35,6 @@ bool MKVExtractor::sniff(DataSourceBase *source)
 MKVExtractor::MKVExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
-    , m_metaBuf(nullptr)
     , m_codecExtraData(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
@@ -190,11 +189,6 @@ status_t MKVExtractor::initWithFFmpegDemux()
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
     }
 
-    std::vector<uint8_t> audioData;
-    if (fileSize > 0 && fileSize < INT32_MAX) {
-        audioData.reserve(static_cast<size_t>(fileSize));
-    }
-
     AVPacket *pkt = av_packet_alloc();
     if (!pkt) {
         avformat_close_input(&fmt);
@@ -206,9 +200,13 @@ status_t MKVExtractor::initWithFFmpegDemux()
     int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            size_t oldSize = audioData.size();
-            audioData.resize(oldSize + static_cast<size_t>(pkt->size));
-            memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
+            // 只保留解复用边界，不另拼整块（#17）：MKV 里可能是无 parser 的 codec
+            //（ape/alac/pcm），整块送进去会被当成一个 packet，只能解出开头。
+            AudioBuffer::AudioBufferPtr packet
+                = std::make_shared<AudioBuffer>(static_cast<size_t>(pkt->size));
+            memcpy(packet->data(), pkt->data, static_cast<size_t>(pkt->size));
+            m_packetizedMetaBuf.push_back(packet);
+
             if (pkt->duration > 0) {
                 totalPktDuration += pkt->duration;
             }
@@ -238,15 +236,14 @@ status_t MKVExtractor::initWithFFmpegDemux()
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
-    if (audioData.empty()) {
+    if (m_packetizedMetaBuf.empty()) {
         LOGW("initWithFFmpegDemux no audio payload collected");
         return NO_INIT;
     }
 
-    m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
-    memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     m_validFormat = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
+         m_packetizedMetaBuf.size());
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }

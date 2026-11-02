@@ -328,11 +328,7 @@ status_t ASFExtractor::initWithFFmpegDemux()
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
     }
 
-    std::vector<uint8_t> audioData;
     std::vector<AudioBuffer::AudioBufferPtr> packetizedAudioData;
-    if (fileSize > 0 && fileSize < INT32_MAX) {
-        audioData.reserve(static_cast<size_t>(fileSize));
-    }
 
     AVPacket *pkt = av_packet_alloc();
     if (!pkt) {
@@ -343,10 +339,6 @@ status_t ASFExtractor::initWithFFmpegDemux()
 
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            size_t oldSize = audioData.size();
-            audioData.resize(oldSize + static_cast<size_t>(pkt->size));
-            memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
-
             AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(pkt->size);
             memcpy(packet->data(), pkt->data, pkt->size);
             packetizedAudioData.push_back(packet);
@@ -358,16 +350,15 @@ status_t ASFExtractor::initWithFFmpegDemux()
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
-    if (audioData.empty() || packetizedAudioData.empty()) {
+    if (packetizedAudioData.empty()) {
         LOGW("initWithFFmpegDemux no audio payload collected");
         return NO_INIT;
     }
 
-    m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
-    memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     m_packetizedMetaBuf = packetizedAudioData;
     m_validFormat       = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
+         packetizedAudioData.size());
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }
@@ -655,9 +646,18 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
 
         pkt.info.dump();
 
+        // parsePayloadData 按「一个 ASF 数据包」为单位追加 payload，所以这里按增量切片，
+        // 得到的就是解复用边界——wmav2 在 ffmpeg 里没有 parser，整块送解码只能解出开头（#17）。
+        const size_t before = audioData.size();
         status_t ret = parsePayloadData(offset, pkt, packetStart, pkt.info.packetLength, audioData);
         if (ret != OK) {
             return NO_INIT;
+        }
+        if (audioData.size() > before) {
+            const size_t chunkSize = audioData.size() - before;
+            AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(chunkSize);
+            memcpy(packet->data(), audioData.data() + before, chunkSize);
+            m_packetizedMetaBuf.push_back(packet);
         }
 
         packetEnd = packetStart + pkt.info.packetLength;
@@ -673,11 +673,6 @@ status_t ASFExtractor::parseDataObject(off64_t startOffset, ASF::DataObject &dat
         if (dataObj.totalDataPackets > 0 && packetCount >= dataObj.totalDataPackets) {
             break;
         }
-    }
-
-    if (!audioData.empty()) {
-        m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
-        memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     }
 
     LOGI("%s: exit, packets=%zu, audio=%zu", __func__, packetCount, audioData.size());

@@ -542,6 +542,50 @@ TEST_SUITE("ExtractorFactory")
         REQUIRE(extractor->getMetaData() != nullptr);
         CHECK(total == extractor->getMetaData()->size());
     }
+
+    // 决策来源：#17——payload 只有一种表示（解复用边界），整块视图由基类按需拼合并缓存。
+    // 这么定是因为「拼接后送解码」只在 codec 有 ffmpeg parser 时安全：aac/mp3/flac/vorbis 有，
+    // ape/wmav2/alac/pcm 没有，后者整块送进去只能解出开头（APE 曾 4.6s / 24.9s）。
+    // 边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
+    TEST_CASE("packetized payload is the only representation")
+    {
+        struct PayloadCase {
+            const char *fileName;
+            const char *extension;
+        };
+        const PayloadCase cases[] = {
+            { "music-ape.ape", ".ape" },
+            { "萨克斯机.asf", ".asf" },
+            { "music-mkv.mkv", ".mkv" },
+            { "摇滚乐_Freesound.m4a", ".m4a" },
+        };
+
+        RealMediaFixture fixture;
+        for (const auto &item : cases) {
+            INFO(item.fileName);
+            std::shared_ptr<FileSource> source;
+            std::unique_ptr<ExtractorHelper> extractor;
+            REQUIRE(fixture.create(item.fileName, item.extension, source, extractor));
+            REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+            const std::vector<AudioBuffer::AudioBufferPtr> packets
+                = extractor->getPacketizedMetaData();
+            REQUIRE(packets.size() > 1);
+
+            size_t total = 0;
+            for (size_t i = 0; i < packets.size(); ++i) {
+                REQUIRE(packets[i] != nullptr);
+                CHECK(packets[i]->size() > 0);
+                total += packets[i]->size();
+            }
+
+            AudioBuffer::AudioBufferPtr joined = extractor->getMetaData();
+            REQUIRE(joined != nullptr);
+            CHECK(joined->size() == total);
+            // 拼合结果要缓存，否则每次取整块都重新拷一遍
+            CHECK(extractor->getMetaData().get() == joined.get());
+        }
+    }
 }
 
 TEST_SUITE("AudioSpec comparison")

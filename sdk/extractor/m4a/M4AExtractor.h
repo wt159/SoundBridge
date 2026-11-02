@@ -13,7 +13,10 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
+    {
+        return m_packetizedMetaBuf;
+    }
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
@@ -31,7 +34,9 @@ private:
 private:
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
-    AudioBuffer::AudioBufferPtr m_metaBuf;
+    // payload 只保留解复用边界（#17）：AAC 有 parser，拼不拼都能解；ALAC 没有 parser，
+    // 一旦拼接就只能解出首帧。统一按包保存，两种 codec 都不会踩坑。
+    std::vector<AudioBuffer::AudioBufferPtr> m_packetizedMetaBuf;
     AudioBuffer::AudioBufferPtr m_codecExtraData;
     sdk_utils::status_t m_initCheck;
     bool m_validFormat;

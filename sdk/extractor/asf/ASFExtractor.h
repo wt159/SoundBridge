@@ -212,7 +212,6 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
     {
         return m_packetizedMetaBuf;
@@ -248,7 +247,8 @@ private:
     bool m_validFormat;
     AudioSpec m_audioSpec;
     AudioCodecID m_audioCodecID;
-    AudioBuffer::AudioBufferPtr m_metaBuf;
+    // payload 只有一种表示：解复用得到的包（#17）。
+    // 需要整块的消费者走 ExtractorHelper::getMetaData() 的按需拼合，不再另存拼接副本。
     std::vector<AudioBuffer::AudioBufferPtr> m_packetizedMetaBuf;
     ASF::HeaderObject m_headerObj;
     ASF::DataObject m_dataObj;

@@ -90,7 +90,6 @@ APEExtractor::APEExtractor(DataSourceBase *source)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
-    , m_metaBuf(nullptr)
     , m_codecExtraData(nullptr)
     , m_bitRate(0)
     , m_blockAlign(0)
@@ -267,11 +266,6 @@ status_t APEExtractor::initWithFFmpegDemux()
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
     }
 
-    std::vector<uint8_t> audioData;
-    if (fileSize > 0 && fileSize < INT32_MAX) {
-        audioData.reserve(static_cast<size_t>(fileSize));
-    }
-
     AVPacket *pkt = av_packet_alloc();
     if (!pkt) {
         avformat_close_input(&fmt);
@@ -281,11 +275,8 @@ status_t APEExtractor::initWithFFmpegDemux()
 
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            size_t oldSize = audioData.size();
-            audioData.resize(oldSize + static_cast<size_t>(pkt->size));
-            memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
-
-            // 同时保留未拼接的原始帧，供上层逐包解码使用（APE 无 parser）。
+            // 只保留未拼接的原始帧，供上层逐包解码使用（APE 无 parser）。
+            // 不再同时拼一份整块副本：需要整块的消费者由基类 getMetaData() 按需拼（#17）。
             AudioBuffer::AudioBufferPtr frame
                 = std::make_shared<AudioBuffer>(static_cast<size_t>(pkt->size));
             memcpy(frame->data(), pkt->data, static_cast<size_t>(pkt->size));
@@ -302,15 +293,14 @@ status_t APEExtractor::initWithFFmpegDemux()
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
-    if (audioData.empty()) {
+    if (m_packetizedMetaBuf.empty()) {
         LOGW("initWithFFmpegDemux no audio payload collected");
         return NO_INIT;
     }
 
-    m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
-    memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     m_validFormat = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
+         m_packetizedMetaBuf.size());
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }

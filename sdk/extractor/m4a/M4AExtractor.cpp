@@ -116,7 +116,6 @@ bool M4AExtractor::sniff(DataSourceBase *source)
 M4AExtractor::M4AExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
-    , m_metaBuf(nullptr)
     , m_codecExtraData(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
@@ -271,11 +270,6 @@ status_t M4AExtractor::initWithFFmpegDemux()
         memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
     }
 
-    std::vector<uint8_t> audioData;
-    if (fileSize > 0 && fileSize < INT32_MAX) {
-        audioData.reserve(static_cast<size_t>(fileSize));
-    }
-
     AVPacket *pkt = av_packet_alloc();
     if (!pkt) {
         avformat_close_input(&fmt);
@@ -305,23 +299,25 @@ status_t M4AExtractor::initWithFFmpegDemux()
 
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
+            // 每个解复用包当一个 payload：ADTS 包装也按包做，边界天然对齐（#17）。
+            size_t frameSize = static_cast<size_t>(pkt->size);
+            if (useAdts) {
+                frameSize += 7;
+            }
+            AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(frameSize);
+            size_t fill                        = 0;
             if (useAdts) {
                 int profile = aot - 1;
                 if (aot == 5 || aot == 29) {
                     profile = 1; // use AAC LC in ADTS
                 }
                 uint8_t adts[7];
-                int frameLen = pkt->size + 7;
-                buildAdtsHeader(adts, profile, srIndex, chCfg, frameLen);
-                size_t oldSize = audioData.size();
-                audioData.resize(oldSize + 7 + static_cast<size_t>(pkt->size));
-                memcpy(audioData.data() + oldSize, adts, 7);
-                memcpy(audioData.data() + oldSize + 7, pkt->data, pkt->size);
-            } else {
-                size_t oldSize = audioData.size();
-                audioData.resize(oldSize + static_cast<size_t>(pkt->size));
-                memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
+                buildAdtsHeader(adts, profile, srIndex, chCfg, static_cast<int>(frameSize));
+                memcpy(packet->data(), adts, 7);
+                fill = 7;
             }
+            memcpy(packet->data() + fill, pkt->data, static_cast<size_t>(pkt->size));
+            m_packetizedMetaBuf.push_back(packet);
         }
         av_packet_unref(pkt);
     }
@@ -334,15 +330,14 @@ status_t M4AExtractor::initWithFFmpegDemux()
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
 
-    if (audioData.empty()) {
+    if (m_packetizedMetaBuf.empty()) {
         LOGW("initWithFFmpegDemux no audio payload collected");
         return NO_INIT;
     }
 
-    m_metaBuf = std::make_shared<AudioBuffer>(audioData.size());
-    memcpy(m_metaBuf->data(), audioData.data(), audioData.size());
     m_validFormat = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, payload=%zu", m_audioCodecID, audioData.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
+         m_packetizedMetaBuf.size());
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }
