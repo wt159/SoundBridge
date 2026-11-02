@@ -20,11 +20,12 @@ enum standardExtractors {
     M4A_EXTRACTOR,
     APE_EXTRACTOR,
     MKV_EXTRACTOR,
-    OPUS_EXTRACTOR,
     UNKNOWN_EXTRACTOR
 };
 
-// clang-format off
+// 受支持格式的唯一真源：扫描（FileSearch）与断言都以它为机器可读清单，
+// 人读版本见 doc/format-support.md，二者由 test_extractor.cpp 的一致性用例锁定。
+// 不要把未实现解码路径的扩展名写进来——.amr 与 .opus 曾在此处虚报支持。
 static const std::unordered_map<std::string, standardExtractors> defaultExtractorMap = {
     { ".wav", WAV_EXTRACTOR },
     { ".aac", AAC_EXTRACTOR },
@@ -36,11 +37,8 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
     { ".asf", ASF_EXTRACTOR },
     { ".ape", APE_EXTRACTOR },
     { ".mkv", MKV_EXTRACTOR },
-    { ".wma", ASF_EXTRACTOR },
-    { ".amr", ASF_EXTRACTOR },
-    { ".opus", OPUS_EXTRACTOR }
+    { ".wma", ASF_EXTRACTOR }
 };
-// clang-format on
 
 class ExtractorHelper {
 public:

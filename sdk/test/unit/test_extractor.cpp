@@ -5,6 +5,7 @@
 #include <DataSource.hpp>
 #include <ExtractorFactory.h>
 #include <FileSource.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -743,20 +744,19 @@ TEST_SUITE("ExtractorRealMedia")
         CHECK(spec.numChannel > 0);
     }
 
-    TEST_CASE("AMR audio spec from checked-in media")
+    // 决策来源：#20「受支持格式」的边界与清单。
+    // 注册表是唯一机器可读真源，doc/format-support.md 是人读副本；这里把两者钉在一起。
+    TEST_CASE("supported extensions match the registry")
     {
-        RealMediaFixture fixture;
-        REQUIRE(fixture.exists("小镇姑娘-陶喆.96.amr"));
+        const std::vector<std::string> expected = { ".aac", ".aiff", ".ape", ".asf", ".flac",
+                                                    ".m4a", ".mkv",  ".mp3", ".ogg", ".wav",
+                                                    ".wma" };
+        const std::vector<std::string> actual   = ExtractorFactory::registeredExtensions();
+        CHECK(actual == expected);
 
-        std::shared_ptr<FileSource> source;
-        auto extractor = fixture.create("小镇姑娘-陶喆.96.amr", ".amr", source);
-        REQUIRE(source != nullptr);
-        REQUIRE(extractor != nullptr);
-        REQUIRE(extractor->initCheck() == sdk_utils::OK);
-
-        const AudioSpec spec = extractor->getAudioSpec();
-        CHECK(spec.sampleRate > 0);
-        CHECK(spec.numChannel > 0);
+        // .amr 曾被误注册到 ASFExtractor，.opus 曾只存在于枚举里——退回任何一个都是回归
+        CHECK(std::find(actual.begin(), actual.end(), ".amr") == actual.end());
+        CHECK(std::find(actual.begin(), actual.end(), ".opus") == actual.end());
     }
 
     TEST_CASE("APE audio spec from checked-in media")

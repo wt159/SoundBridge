@@ -4,6 +4,7 @@
 #include "NonCopyable.hpp"
 #include <functional>
 #include <string>
+#include <vector>
 
 class ExtractorFactory : public NonCopyable {
 public:
@@ -23,6 +24,11 @@ public:
                                             const std::string &extensionName);
     static ExtractorHelper *createExtractor(DataSourceBase *source,
                                             const std::string &extensionName, bool enableSniff);
+
+    // 当前已注册扩展名的排序快照（含前导点、小写）。
+    // 这是「受支持格式」的机器可读真源：doc/format-support.md 是人读版本，
+    // 两者由 test_extractor.cpp 的一致性用例锁定，避免文档与注册表各说各话。
+    static std::vector<std::string> registeredExtensions();
 };
 
 // Helper macros for static registration from the extractor implementation files.

@@ -11,6 +11,7 @@
 #include "mp3/MP3Extractor.h"
 #include "ogg/OGGExtractor.h"
 #include "wav/WAVExtractor.h"
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -221,6 +222,21 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
     return nullptr;
 }
 
+std::vector<std::string> ExtractorFactory::registeredExtensions()
+{
+    std::vector<std::string> extensions;
+    {
+        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+        auto &registry = extractorRegistry();
+        extensions.reserve(registry.size());
+        for (const auto &entry : registry) {
+            extensions.push_back(entry.first);
+        }
+    }
+    std::sort(extensions.begin(), extensions.end());
+    return extensions;
+}
+
 // Register built-in extractors, enabling sniffing when possible.
 REGISTER_EXTRACTOR_WITH_SNIFF(".wav", WAVExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".aac", AACExtractor);
@@ -233,4 +249,3 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".ape", APEExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".mkv", MKVExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
-REGISTER_EXTRACTOR(".amr", ASFExtractor);

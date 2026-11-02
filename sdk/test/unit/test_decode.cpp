@@ -413,7 +413,6 @@ TEST_SUITE("AudioDecode")
             { "music-ape.ape", ".ape" },
             { "music-mkv.mkv", ".mkv" },
             { "十七岁-陶喆.96.wma", ".wma" },
-            { "小镇姑娘-陶喆.96.amr", ".amr" },
         };
 
         for (const auto &media : cases) {
