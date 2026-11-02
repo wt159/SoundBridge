@@ -7,6 +7,7 @@
 extern "C" {
 #include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
+#include "libavutil/rational.h"
 }
 
 #define LOG_TAG "MKVExtractor"
@@ -201,17 +202,36 @@ status_t MKVExtractor::initWithFFmpegDemux()
         return NO_MEMORY;
     }
 
+    // 逐包累加时长：直接用包时间轴算真实内容长度，不读容器声明值（见下方注释）。
+    int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
             size_t oldSize = audioData.size();
             audioData.resize(oldSize + static_cast<size_t>(pkt->size));
             memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
+            if (pkt->duration > 0) {
+                totalPktDuration += pkt->duration;
+            }
         }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
 
-    if (fmt->duration > 0) {
+    // 时长归属（#15）：以「逐包时长累加」为准，容器声明值只作兜底。
+    // Matroska 的 Segment/Duration 是封装器写进去的，写法出错的工具真实存在——
+    // music-mkv.mkv 就把 393216 个采样当毫秒写成 393.216s，实际只有 24.576s。
+    // 包时长来自解复用出的时间轴，不受该字段污染，且解析成本已经付过（本就在读包）。
+    uint64_t measuredMs = 0;
+    if (totalPktDuration > 0) {
+        const double scale = av_q2d(audioStream->time_base) * 1000.0;
+        if (scale > 0) {
+            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
+        }
+    }
+
+    if (measuredMs > 0) {
+        m_audioSpec.durationMs = measuredMs;
+    } else if (fmt->duration > 0) {
         m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
     }
 

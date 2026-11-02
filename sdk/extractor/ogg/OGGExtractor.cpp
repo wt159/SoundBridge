@@ -153,6 +153,24 @@ status_t OGGExtractor::init()
     }
     LOGD("audioSerialNum = %u, pageVec.size() = %lu", audioSerialNum, m_pageVec.size());
     m_dataSource->getSize(&m_dataSize);
+
+    // 时长归属（#15）：Ogg 没有全局时长字段，但末页 granulePosition 就是该流累计的 PCM 采样数
+    //（Vorbis / FLAC / Speex 语义一致），据此换算比按码率估算精确。
+    // 不取的话 durationMs 恒为 0，UI 进度条与 seek 都失去基准。
+    uint64_t totalSamples = 0;
+    for (std::vector<OGG::Page>::reverse_iterator it = m_pageVec.rbegin(); it != m_pageVec.rend();
+         ++it) {
+        if (it->header.serialNumber == audioSerialNum && it->header.granulePosition > 0) {
+            totalSamples = it->header.granulePosition;
+            break;
+        }
+    }
+    if (totalSamples > 0 && m_spec.sampleRate > 0) {
+        m_spec.durationMs = totalSamples * 1000ULL / static_cast<uint64_t>(m_spec.sampleRate);
+        LOGD("durationMs from last granule: %llu samples -> %llu ms",
+             (unsigned long long)totalSamples, (unsigned long long)m_spec.durationMs);
+    }
+
     normalizeAudioSpec(m_spec);
 
     return OK;

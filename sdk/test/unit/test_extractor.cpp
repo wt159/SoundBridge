@@ -813,6 +813,42 @@ TEST_SUITE("ExtractorRealMedia")
         CHECK(checked == caseCount);
     }
 
+    // 决策来源：#15「durationMs 的权威来源」——以包/页时间轴为准，容器声明值只作兜底。
+    // 两处已知偏差都在这里守：MKV 的 Segment/Duration 被写成采样数（393216 当毫秒），
+    // 实际 393216 采样 = 24576ms；OGG 原先根本不设时长（恒 0），
+    // 现由末页 granulePosition（163584 采样 @44100 = 3709ms）换算。
+    // 期望值来自 ffmpeg 交叉测量，系统化的双向覆盖度矩阵见 #16。
+    TEST_CASE("dirty container duration does not leak into AudioSpec")
+    {
+        struct DurationCase {
+            const char *fileName;
+            const char *extension;
+            uint64_t expectedMs;
+        };
+        const DurationCase cases[] = {
+            { "music-mkv.mkv", ".mkv", 24576 },
+            { "Ringtones-耳聆网.ogg", ".ogg", 3709 },
+        };
+
+        RealMediaFixture fixture;
+        for (const auto &item : cases) {
+            INFO(item.fileName);
+            std::shared_ptr<FileSource> source;
+            std::unique_ptr<ExtractorHelper> extractor;
+            REQUIRE(fixture.create(item.fileName, item.extension, source, extractor));
+            REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+            const AudioSpec spec = extractor->getAudioSpec();
+            REQUIRE(spec.durationMs > 0);
+
+            // ±2%：容纳「末页 granule 不含尾部 padding」这类换算级差异，
+            // 但 16 倍、恒 0 这类语义级错误一律挡在外面。
+            const uint64_t tolerance = item.expectedMs / 50;
+            CHECK(spec.durationMs >= item.expectedMs - tolerance);
+            CHECK(spec.durationMs <= item.expectedMs + tolerance);
+        }
+    }
+
     // 决策来源：#20「受支持格式」的边界与清单。
     // 静态表 defaultExtractorMap 是人读清单的精确副本；注册表是进程级全局状态，
     // 别的用例会往里塞测试替身（`.dup_unit_test_ext` 之类），所以只断言「覆盖」不比对全等。
