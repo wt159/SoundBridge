@@ -1,5 +1,7 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include <AudioCommon.hpp>
+#include <AudioRingBuffer.h>
+#include <AudioStreamDecoder.h>
 #include <DataSource.hpp>
 #include <ExtractorFactory.h>
 #include <FileSource.h>
@@ -10,6 +12,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <vector>
 
 TEST_SUITE("DataSourceBase interface")
 {
@@ -786,5 +789,55 @@ TEST_SUITE("ExtractorRealMedia")
         const AudioSpec spec = extractor->getAudioSpec();
         CHECK(spec.sampleRate > 0);
         CHECK(spec.numChannel > 0);
+    }
+
+    // 回归：APE 在 ffmpeg 里没有 parser，AudioDecode 遇到无 parser 的 codec 时会把
+    // 「一整块输入」当成单个 packet 送进解码器，只解出第一帧（73728 采样 = 4608ms），
+    // 之后 flush 收尾，表现为播到 4.6s 就切歌。提取器必须按 packet 暴露数据
+    // （getPacketizedMetaData），解码器才会逐包解码，覆盖标称时长。
+    TEST_CASE("APE decode covers advertised duration")
+    {
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("music-ape.ape"));
+
+        std::shared_ptr<FileSource> source;
+        auto extractor = fixture.create("music-ape.ape", ".ape", source);
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        CHECK(extractor->getPacketizedMetaData().size() > 1);
+
+        const AudioSpec spec = extractor->getAudioSpec();
+        REQUIRE(spec.durationMs > 0);
+        REQUIRE(spec.sampleRate > 0);
+        REQUIRE(spec.numChannel > 0);
+        REQUIRE(spec.bytesPerSample > 0);
+
+        AudioRingBuffer ring(4 * 1024 * 1024);
+        AudioStreamDecoder decoder(&ring, spec);
+        REQUIRE(decoder.start(extractor.get(), false) == sdk_utils::OK);
+
+        unsigned long long decodedBytes = 0;
+        const size_t frameBytes = static_cast<size_t>(spec.numChannel * spec.bytesPerSample);
+        bool reachedEos         = false;
+        for (int i = 0; i < 200000 && !reachedEos; ++i) {
+            const DecodeResult result = decoder.decodeNext();
+            const size_t avail        = ring.availableRead();
+            if (avail > 0) {
+                std::vector<char> sink(avail);
+                decodedBytes += ring.read(sink.data(), avail);
+            }
+            if (result == DecodeResult::EOS) {
+                reachedEos = true;
+            } else {
+                REQUIRE(result != DecodeResult::ERROR);
+            }
+        }
+        REQUIRE(reachedEos);
+
+        const unsigned long long decodedMs
+            = decodedBytes / frameBytes * 1000ULL
+              / static_cast<unsigned long long>(spec.sampleRate);
+        CHECK(decodedMs * 100ULL >= spec.durationMs * 95ULL);
     }
 }

@@ -284,6 +284,12 @@ status_t APEExtractor::initWithFFmpegDemux()
             size_t oldSize = audioData.size();
             audioData.resize(oldSize + static_cast<size_t>(pkt->size));
             memcpy(audioData.data() + oldSize, pkt->data, pkt->size);
+
+            // 同时保留未拼接的原始帧，供上层逐包解码使用（APE 无 parser）。
+            AudioBuffer::AudioBufferPtr frame
+                = std::make_shared<AudioBuffer>(static_cast<size_t>(pkt->size));
+            memcpy(frame->data(), pkt->data, static_cast<size_t>(pkt->size));
+            m_packetizedMetaBuf.push_back(frame);
         }
         av_packet_unref(pkt);
     }
