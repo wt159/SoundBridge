@@ -5,6 +5,10 @@
 `sdk/test/unit/test_extractor.cpp` 的「受支持格式清单与注册表一致」用例锁定——改清单必须同时改这两处，
 否则测试会红。
 
+**本文件只讲好文件。** 文件坏了该退化到什么程度、用什么判据、报什么码，全部在
+[`doc/bad-input-spec.md`](bad-input-spec.md) 里，两份文档不共用容差也不互相引用判据：
+本文件的容差回答「这份素材的标称时长可不可信」，那份的容差回答「这个坏文件应该解出多少」。
+
 判定标准（来源：[#20](https://github.com/wt159/SoundBridge/issues/20)）：
 
 > **受支持 = 能解出与标称时长一致的 PCM，且被覆盖度断言覆盖。**
@@ -42,6 +46,10 @@ tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
 
 - 1% 是相对量；150ms 是绝对下限，覆盖帧/页量化误差（ogg 一页最多约 93ms、AAC 一帧 21ms）；
   25% 上限防止极短素材上的断言退化成「怎么都过」。
+- **这套容差只对完好素材成立。** 矩阵里的 15 份都是完好文件，所以「短于标称」在这里是失败信号；
+  换成一个**被截断的文件**，「短」就是正确行为，判据换成
+  `expect = 截断字节比例 × 完好文件实测时长`、带宽 `±5pp`（见 `doc/bad-input-spec.md` 第 3 节）。
+  两套数值不能互换：实测「字节比例 → 时长比例」最大偏 2.07 个百分点，沿用这里的 1% 会直接假红。
 - 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 14 份为 0.00%，1% 留了 5× 余量。
 - **两侧数值一致**（2026-11-03 核对）：Linux runner 与 Windows 本地跑出的 15 行 `declared/measured`
   逐项相同，偏差仍是 asf 的 +71ms。CI 的 `Report coverage matrix numbers` 步骤每次都用
@@ -76,9 +84,14 @@ mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/mp3/wma
 
 ## spec 完整性约定（来源 [#21](https://github.com/wt159/SoundBridge/issues/21)）
 
-`sampleRate` / `numChannel` 必须有效——`ExtractorFactory::createExtractor` 在出口校验，不合格直接返回 `nullptr`。
+`sampleRate` / `numChannel` 必须有效——契约是 `ExtractorFactory::createExtractor` 在出口校验，不合格直接返回 `nullptr`。
 `format` / `bytesPerSample` 允许为 `Unknown` / 0：mp3、ogg 的容器不声明 PCM 采样格式，真实值由解码首帧回填。
 **因此任何按 spec 算字节数或时长的代码都必须先处理这两个字段为 0 的情况**——不能直接拿来做除法或乘算。
+
+**现状与这条契约有差**：`ExtractorFactory.cpp:143-149` 遇到不合格 spec 只打 `LOGW` 就放行，所以 aac 的
+全零头能带着 `sr=96000 ch=0` 一路走到播放列表。这条差已在
+[`doc/bad-input-spec.md`](bad-input-spec.md) 第 10 节列为实现项（#14，含给测试替身的 `allowEmptySpec` 逃生口）；
+在那条修好之前，**不要**把「`createExtractor()` 非空」当成「文件可播」的证据。
 
 ## 维护规则
 
