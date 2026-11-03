@@ -23,6 +23,8 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#elif defined(__unix__)
+#include <unistd.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -54,6 +56,12 @@ public:
             base = std::getenv("TMPDIR");
         }
         m_dir = (base != nullptr && base[0] != '\0') ? std::string(base) : std::string(".");
+#ifdef _WIN32
+        const int pid = static_cast<int>(_getpid());
+#else
+        const int pid = static_cast<int>(getpid());
+#endif
+        m_prefix = "sb_badinput_" + std::to_string(pid) + "_" + m_tag + "_";
     }
 
     ~TempFileSet()
@@ -68,7 +76,7 @@ public:
 
     std::string make(const char *extension)
     {
-        std::string path = m_dir + "/sb_badinput_" + m_tag + "_" + std::to_string(++s_counter)
+        std::string path = m_dir + "/" + m_prefix + std::to_string(++s_counter)
             + extension;
         m_files.push_back(path);
         return path;
@@ -76,7 +84,7 @@ public:
 
     std::string makeDir()
     {
-        std::string path = m_dir + "/sb_badinput_" + m_tag + "_dir" + std::to_string(++s_counter);
+        std::string path = m_dir + "/" + m_prefix + "dir" + std::to_string(++s_counter);
 #ifdef _WIN32
         _mkdir(path.c_str());
 #else
@@ -88,6 +96,7 @@ public:
 
 private:
     static int s_counter;
+    std::string m_prefix;
     std::string m_dir;
     std::string m_tag;
     std::vector<std::string> m_files;
