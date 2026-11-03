@@ -149,6 +149,7 @@ set(UNIT_TEST_SOURCES
     unit/test_error.cpp
     unit/test_resample_formats.cpp
     unit/test_media_coverage.cpp
+    unit/test_bad_input.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})
@@ -173,7 +174,10 @@ add_test(
 )
 set_tests_properties(sdk_unit_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    # 坏输入用例里有「解析循环原地打转」这一类缺陷，一条挂死的用例会让 CI 一直等到
+    # ctest 默认的 1500 秒（规格 10.#5）。整套本机实测 23.8 s，180 s 留了约 7 倍余量。
+    TIMEOUT 180)
 
 # ============================================================
 # Coverage Report Targets (Linux only, gated by root CMakeLists.txt)
