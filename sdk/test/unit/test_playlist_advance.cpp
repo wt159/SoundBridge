@@ -8,8 +8,13 @@ using namespace sdk;
 namespace {
 
 struct TestPlayListCallback : public MusicPlayListCallback {
-    int currentBufCount = 0;
-    void putMusicPlayListCurBuf(MusicPropertiesPtr) override { currentBufCount++; }
+    int currentBufCount  = 0;
+    int lastCurrentIndex = -1;
+    void putMusicPlayListCurBuf(MusicPropertiesPtr property) override
+    {
+        currentBufCount++;
+        lastCurrentIndex = property ? static_cast<int>(property->index) : -1;
+    }
     void updateMusicList(std::vector<MusicPropertiesPtr> &) override { }
     void onMusicPlayListError(ErrorCode, const std::string &, int, const std::string &) override { }
 };
@@ -210,7 +215,7 @@ TEST_SUITE("skipToNextPlayable")
         CHECK(playlist->skipToNextPlayable() == false);
     }
 
-    TEST_CASE("returns true when track is selectable")
+    TEST_CASE("does not retry the only track")
     {
         RealMediaFixture fixture;
         if (!fixture.exists("music.wav"))
@@ -219,7 +224,8 @@ TEST_SUITE("skipToNextPlayable")
         TestPlayListCallback callback;
         auto playlist = makePlayListWithOneTrack(callback, fixture.mediaPath("music.wav"));
 
-        CHECK(playlist->skipToNextPlayable() == true);
+        // 只有一曲时没有「下一首」：绕回自己就是同一曲重试第二次（规格 8.2 / 实现清单 21）
+        CHECK(playlist->skipToNextPlayable() == false);
     }
 
     TEST_CASE("returns true with multiple tracks")
@@ -297,10 +303,13 @@ TEST_SUITE("startStreaming")
             return;
 
         TestPlayListCallback callback;
-        auto playlist = makePlayListWithOneTrack(callback, fixture.mediaPath("music.wav"));
+        auto playlist = makePlayListWithTracks(
+            callback, { fixture.mediaPath("music.wav"), fixture.mediaPath("music.wav") });
+        REQUIRE(playlist->getMusicCount() == 2);
 
         // skipToNextPlayable internally calls selectTrack which calls startStreaming
         CHECK(playlist->skipToNextPlayable() == true);
+        CHECK(callback.lastCurrentIndex == 1);
     }
 
     TEST_CASE("nextSync triggers streaming on next track")

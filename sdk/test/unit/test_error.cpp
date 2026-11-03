@@ -49,13 +49,22 @@ TEST_SUITE("sdk::ErrorCode")
         CHECK(info.action == sdk::ErrorAction::SkipTrack);
     }
 
-    TEST_CASE("GetErrorInfo for DecodeFailed")
+    TEST_CASE("GetErrorInfo for DataTruncated")
     {
-        auto info = sdk::GetErrorInfo(sdk::ErrorCode::DecodeFailed);
+        auto info = sdk::GetErrorInfo(sdk::ErrorCode::DataTruncated);
         CHECK(info.module == sdk::ErrorModule::Decode);
-        CHECK(info.severity == sdk::ErrorSeverity::Error);
-        CHECK(info.recoverable == false);
+        CHECK(info.recoverable == true);
         CHECK(info.action == sdk::ErrorAction::SkipTrack);
+        CHECK(static_cast<int>(sdk::ErrorCode::DataTruncated) == 0x030003);
+    }
+
+    TEST_CASE("GetErrorInfo for DataCorrupted")
+    {
+        auto info = sdk::GetErrorInfo(sdk::ErrorCode::DataCorrupted);
+        CHECK(info.module == sdk::ErrorModule::Decode);
+        CHECK(info.recoverable == true);
+        CHECK(info.action == sdk::ErrorAction::SkipTrack);
+        CHECK(static_cast<int>(sdk::ErrorCode::DataCorrupted) == 0x030004);
     }
 
     TEST_CASE("GetErrorInfo for ResampleInitFailed")
@@ -189,14 +198,14 @@ TEST_SUITE("sdk::ErrorCode")
 
     TEST_CASE("FormatError with empty detail returns base message only")
     {
-        std::string result = sdk::FormatError(sdk::ErrorCode::DecodeFailed, "");
-        CHECK(result == "Decode failed");
+        std::string result = sdk::FormatError(sdk::ErrorCode::DataCorrupted, "");
+        CHECK(result == "File is corrupted");
     }
 
     TEST_CASE("FormatError with detail adds colon separator")
     {
-        std::string result = sdk::FormatError(sdk::ErrorCode::DecodeFailed, "codec error");
-        CHECK(result == "Decode failed: codec error");
+        std::string result = sdk::FormatError(sdk::ErrorCode::DataCorrupted, "codec error");
+        CHECK(result == "File is corrupted: codec error");
     }
 }
 
@@ -219,12 +228,12 @@ TEST_SUITE("soundbridge::ErrorCode")
         CHECK(info.action == soundbridge::ErrorAction::CheckFile);
     }
 
-    TEST_CASE("soundbridge GetErrorInfo wraps sdk correctly for DecodeFailed")
+    TEST_CASE("soundbridge GetErrorInfo wraps sdk correctly for DataCorrupted")
     {
-        auto info = soundbridge::GetErrorInfo(soundbridge::ErrorCode::DecodeFailed);
+        auto info = soundbridge::GetErrorInfo(soundbridge::ErrorCode::DataCorrupted);
         CHECK(info.module == soundbridge::ErrorModule::Decode);
         CHECK(info.severity == soundbridge::ErrorSeverity::Error);
-        CHECK(info.recoverable == false);
+        CHECK(info.recoverable == true);
         CHECK(info.action == soundbridge::ErrorAction::SkipTrack);
     }
 
@@ -274,8 +283,9 @@ TEST_SUITE("soundbridge::ErrorCode")
 
     TEST_CASE("soundbridge FormatError with detail")
     {
-        auto result = soundbridge::FormatError(soundbridge::ErrorCode::DecodeFailed, "codec error");
-        CHECK(result.find("Decode failed") != std::string::npos);
+        auto result
+            = soundbridge::FormatError(soundbridge::ErrorCode::DataCorrupted, "codec error");
+        CHECK(result.find("File is corrupted") != std::string::npos);
         CHECK(result.find("codec error") != std::string::npos);
     }
 

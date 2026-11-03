@@ -27,6 +27,9 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_interleaveBuf()
     , m_resampleBuf()
     , m_state(StreamDecoderState::IDLE)
+    , m_errorCode(sdk::ErrorCode::Ok)
+    , m_errorMutex()
+    , m_errorDetail()
     , m_stopRequest(false)
     , m_seekRequestMs(-1)
     , m_seekDiscardBytes(0)
@@ -61,9 +64,14 @@ AudioStreamDecoder::~AudioStreamDecoder()
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
+    m_errorCode.store(sdk::ErrorCode::Ok);
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_errorDetail.clear();
+    }
     m_extractor = extractor;
     if (m_ring == nullptr || m_extractor == nullptr) {
-        m_state.store(StreamDecoderState::ERROR);
+        setError(sdk::ErrorCode::DecodeInitFailed, "decoder start with null ring or extractor");
         return sdk_utils::INVALID_OPERATION;
     }
 
@@ -98,7 +106,7 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         if (m_srcSpec.format != AudioFormatUnknown) {
             auto r = m_lazyResample->Value();
             if (r == nullptr) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
                 return sdk_utils::INVALID_OPERATION;
             }
         } else {
@@ -153,6 +161,27 @@ StreamDecoderState AudioStreamDecoder::state() const
     return m_state.load();
 }
 
+sdk::ErrorCode AudioStreamDecoder::errorCode() const
+{
+    return m_errorCode.load();
+}
+
+std::string AudioStreamDecoder::errorDetail() const
+{
+    std::lock_guard<std::mutex> lock(m_errorMutex);
+    return m_errorDetail;
+}
+
+void AudioStreamDecoder::setError(sdk::ErrorCode code, const char *detail)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_errorDetail = (detail != nullptr) ? detail : "";
+    }
+    m_errorCode.store(code);
+    m_state.store(StreamDecoderState::ERROR);
+}
+
 uint64_t AudioStreamDecoder::positionMs() const
 {
     if (m_bytesPerMs == 0) {
@@ -194,7 +223,7 @@ bool AudioStreamDecoder::canDecode() const
 void AudioStreamDecoder::threadFunc()
 {
     if (m_ring == nullptr || m_extractor == nullptr) {
-        m_state.store(StreamDecoderState::ERROR);
+        setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;
     }
 
@@ -205,14 +234,14 @@ void AudioStreamDecoder::threadFunc()
         if (ds != nullptr) {
             if (!flac.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
                                          m_extractor->getDataSize())) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "flac stream init failed");
                 return;
             }
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
                 return;
             }
             flac.setInputBuffer(extPtr);
@@ -230,7 +259,7 @@ void AudioStreamDecoder::threadFunc()
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
                 if (!flac.seekToSample(targetSample)) {
-                    m_state.store(StreamDecoderState::ERROR);
+                    setError(sdk::ErrorCode::DataCorrupted, "flac seek failed");
                     break;
                 }
                 m_abortDecode.store(false);
@@ -250,7 +279,7 @@ void AudioStreamDecoder::threadFunc()
                     m_abortDecode.store(false);
                     continue;
                 }
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "flac decode failed");
                 break;
             }
         }
@@ -267,18 +296,18 @@ void AudioStreamDecoder::threadFunc()
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
             if (!vorbis.initVFFromSource(ds, m_extractor->getDataSize())) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "vorbis stream init failed");
                 return;
             }
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
                 return;
             }
             if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "vorbis stream init failed");
                 return;
             }
         }
@@ -293,7 +322,7 @@ void AudioStreamDecoder::threadFunc()
                 m_processedBytes   = m_consumedBytes.load();
                 m_seekDiscardBytes = 0;
                 if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
-                    m_state.store(StreamDecoderState::ERROR);
+                    setError(sdk::ErrorCode::DataCorrupted, "vorbis seek failed");
                     break;
                 }
                 m_abortDecode.store(false);
@@ -313,7 +342,7 @@ void AudioStreamDecoder::threadFunc()
                     m_abortDecode.store(false);
                     continue;
                 }
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "vorbis decode failed");
                 break;
             }
         }
@@ -340,7 +369,7 @@ void AudioStreamDecoder::threadFunc()
 
             RunDecodeResult ret = runDecode();
             if (ret == RunDecodeResult::Error) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "decode failed");
                 break;
             }
             if (m_stopRequest.load()) {
@@ -367,7 +396,7 @@ void AudioStreamDecoder::threadFunc()
 
         RunDecodeResult ret = runDecode();
         if (ret == RunDecodeResult::Error) {
-            m_state.store(StreamDecoderState::ERROR);
+            setError(sdk::ErrorCode::DataCorrupted, "decode failed");
         } else if (ret == RunDecodeResult::Abort && m_seekRequestMs.load() >= 0) {
             continue;
         } else if (!m_stopRequest.load()) {

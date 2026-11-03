@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../ErrorCode.hpp"
 #include "../resample/AudioResample.h"
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
@@ -13,6 +14,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -39,6 +42,11 @@ public:
     uint64_t durationMs() const;
     bool canDecode() const;
 
+    // 进入 ERROR 之前先写原因：错误码只表达原因，处置由调用方按 ErrorInfo 决定
+    // （docs/adr/0001-error-code-expresses-cause.md）。未进入 ERROR 时返回 Ok。
+    sdk::ErrorCode errorCode() const;
+    std::string errorDetail() const;
+
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
     // 通用路径又一次性解完整段。结果是 `while (ret != EOS)` 在 FLAC/OGG 上永不终止。
@@ -59,6 +67,8 @@ private:
     void threadFunc();
     RunDecodeResult runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
+    // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
+    void setError(sdk::ErrorCode code, const char *detail);
 
 private:
     AudioRingBuffer *m_ring;
@@ -73,6 +83,9 @@ private:
     std::vector<char> m_resampleBuf;
 
     std::atomic<StreamDecoderState> m_state;
+    std::atomic<sdk::ErrorCode> m_errorCode;
+    mutable std::mutex m_errorMutex;
+    std::string m_errorDetail;
     std::atomic<bool> m_stopRequest;
     std::atomic<int64_t> m_seekRequestMs;
     size_t m_seekDiscardBytes;
