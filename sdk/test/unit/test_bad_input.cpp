@@ -217,8 +217,16 @@ struct RecordingPlayerListener : public sdk::MusicPlayerListener {
 };
 
 struct RecordingPlayListCallback : public sdk::MusicPlayListCallback {
+    struct ErrorRecord {
+        sdk::ErrorCode code;
+        std::string detail;
+        int index;
+        std::string path;
+    };
+
     int currentBufCount = 0;
     int lastCurrentIndex = -1;
+    std::vector<ErrorRecord> errors;
 
     void putMusicPlayListCurBuf(sdk::MusicPropertiesPtr property) override
     {
@@ -226,9 +234,11 @@ struct RecordingPlayListCallback : public sdk::MusicPlayListCallback {
         lastCurrentIndex = property ? static_cast<int>(property->index) : -1;
     }
     void updateMusicList(std::vector<sdk::MusicPropertiesPtr> &) override { }
-    void onMusicPlayListError(sdk::ErrorCode, const std::string &, int, const std::string &)
-        override
-    { }
+    void onMusicPlayListError(sdk::ErrorCode code, const std::string &detail, int index,
+                              const std::string &path) override
+    {
+        errors.push_back(ErrorRecord { code, detail, index, path });
+    }
 };
 
 std::shared_ptr<sdk::MusicPlayList> makePlayList(RecordingPlayListCallback &callback,
@@ -303,6 +313,33 @@ bool rejected(const ExtractorOutcome &outcome)
 {
     return !outcome.created || !outcome.initOk;
 }
+
+// #38：直接探工厂出口契约的替身。真实素材要么 init 失败、要么 spec 自洽，
+// 没法单独造出「init 成功但 spec 为空」这一种状态，所以用替身精确锁住出口。
+class FixedSpecProbeExtractor : public ExtractorHelper {
+public:
+    FixedSpecProbeExtractor(int sampleRate, int numChannel, sdk_utils::status_t initStatus)
+        : m_sampleRate(sampleRate)
+        , m_numChannel(numChannel)
+        , m_initStatus(initStatus)
+    {
+    }
+
+    sdk_utils::status_t initCheck() override { return m_initStatus; }
+    AudioSpec getAudioSpec() override
+    {
+        AudioSpec spec;
+        spec.sampleRate = m_sampleRate;
+        spec.numChannel = m_numChannel;
+        return spec;
+    }
+    AudioCodecID getAudioCodecID() override { return AUDIO_CODEC_ID_NONE; }
+
+private:
+    int m_sampleRate;
+    int m_numChannel;
+    sdk_utils::status_t m_initStatus;
+};
 
 long long elapsedMs(std::chrono::steady_clock::time_point begin)
 {
@@ -825,6 +862,137 @@ TEST_SUITE("BadInput")
 
         ExtractorOutcome outcome = openExtractor(badPath, ".aac");
         CHECK(rejected(outcome));
+    }
+
+    // ---- 以下用例来自 #38（头坏：拒绝的唯一出口）----
+
+    // 规格 B2 / 10.#14：工厂出口是唯一的拒绝点。init 成功但 spec 空的替身过去会原样放行。
+    TEST_CASE("factory rejects registered extractor with empty spec")
+    {
+        const std::string extension = ".bad_input_empty_spec_probe";
+        REQUIRE(ExtractorFactory::registerExtractor(
+            extension, [](DataSourceBase *) -> ExtractorHelper * {
+                return new FixedSpecProbeExtractor(0, 0, sdk_utils::OK);
+            }));
+
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(nullptr, extension, false));
+        CHECK(extractor == nullptr);
+    }
+
+    // 规格 B2：initCheck 失败同样在出口处收成 nullptr，调用方只剩一种判据。
+    TEST_CASE("factory rejects registered extractor whose init failed")
+    {
+        const std::string extension = ".bad_input_init_failed_probe";
+        REQUIRE(ExtractorFactory::registerExtractor(
+            extension, [](DataSourceBase *) -> ExtractorHelper * {
+                return new FixedSpecProbeExtractor(44100, 2, sdk_utils::NO_INIT);
+            }));
+
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(nullptr, extension, false));
+        CHECK(extractor == nullptr);
+    }
+
+    // 规格 10.#14 的逃生口：空 spec 是契约违例，只有显式 opt-in 的替身能通过。
+    TEST_CASE("factory allows empty spec only for registrations that opt in")
+    {
+        const std::string extension = ".bad_input_empty_spec_allowed_probe";
+        REQUIRE(ExtractorFactory::registerExtractor(
+            extension,
+            [](DataSourceBase *) -> ExtractorHelper * {
+                return new FixedSpecProbeExtractor(0, 0, sdk_utils::OK);
+            },
+            nullptr, true));
+
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(nullptr, extension, false));
+        REQUIRE(extractor != nullptr);
+        CHECK(extractor->getAudioSpec().sampleRate == 0);
+    }
+
+    // 规格 5.4 H4：判定「扩展名是否注册」必须有查询口，不能靠 catch nullptr 再猜。
+    TEST_CASE("factory reports which extensions are registered")
+    {
+        CHECK(ExtractorFactory::isSupportedExtension(".wav"));
+        CHECK(ExtractorFactory::isSupportedExtension("WAV"));
+        CHECK(ExtractorFactory::isSupportedExtension("flac"));
+        CHECK(!ExtractorFactory::isSupportedExtension(".xyz"));
+        CHECK(!ExtractorFactory::isSupportedExtension(""));
+    }
+
+    // 规格 5.5 扩展名冲突组 / 10.#26：同一份完好 wav，三种扩展名都必须是同一个结论。
+    // 今天是自相矛盾的：.xyz 靠魔数救回来，.mp3 却直接判损坏。
+    TEST_CASE("same wav opens through wav xyz and mp3 extensions with identical spec")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+        TempFileSet tmp("extension_conflict");
+        std::vector<char> data = readWholeFile(fixture.mediaPath("music.wav"));
+        REQUIRE(!data.empty());
+        const std::string path = tmp.make(".wav");
+        REQUIRE(writeWholeFile(path, data));
+
+        ExtractorOutcome baseline = openExtractor(path, ".wav");
+        REQUIRE(baseline.created);
+        REQUIRE(baseline.initOk);
+        CHECK(baseline.sampleRate > 0);
+        CHECK(baseline.numChannel > 0);
+
+        const char *extensions[] = { ".xyz", ".mp3" };
+        for (const char *extension : extensions) {
+            INFO("extension: " << extension);
+            ExtractorOutcome outcome = openExtractor(path, extension);
+            CHECK(outcome.created);
+            CHECK(outcome.initOk);
+            CHECK(outcome.sampleRate == baseline.sampleRate);
+            CHECK(outcome.numChannel == baseline.numChannel);
+            CHECK(outcome.durationMs == baseline.durationMs);
+        }
+    }
+
+    // 规格 5.4 H3 / 8.1：错误码按「扩展名是否注册」分，不按「解析失败」分。
+    // 注册过的扩展名被工厂拒绝 = 头坏（ExtractorInitFailed），不是「格式不支持」。
+    TEST_CASE("rejected registered extension reports extractor init failed")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+        TempFileSet tmp("err_init_failed");
+        std::vector<char> data = readWholeFile(fixture.mediaPath("music.wav"));
+        REQUIRE(!data.empty());
+        zeroRange(data, 0, 512);
+        const std::string path = tmp.make(".wav");
+        REQUIRE(writeWholeFile(path, data));
+
+        RecordingPlayListCallback callback;
+        auto playlist = makePlayList(callback, { path });
+
+        // 拒绝后不产生任何可播内容：不成为当前曲目，也就没有半截音频漏进 ring（H5）
+        CHECK(playlist->getMusicCount() == 0);
+        CHECK(callback.currentBufCount == 0);
+        REQUIRE(callback.errors.size() == 1);
+        CHECK(callback.errors[0].code == sdk::ErrorCode::ExtractorInitFailed);
+    }
+
+    // 未注册的扩展名 + 魔数认不出 = 格式不支持，不许说成文件损坏
+    TEST_CASE("rejected unregistered extension reports extractor unsupported")
+    {
+        TempFileSet tmp("err_unsupported");
+        const std::string path = tmp.make(".xyz");
+        std::vector<char> garbage(32, 0x5A);
+        REQUIRE(writeWholeFile(path, garbage));
+
+        RecordingPlayListCallback callback;
+        auto playlist = makePlayList(callback, { path });
+
+        CHECK(playlist->getMusicCount() == 0);
+        CHECK(callback.currentBufCount == 0);
+        REQUIRE(callback.errors.size() == 1);
+        CHECK(callback.errors[0].code == sdk::ErrorCode::ExtractorUnsupported);
     }
 
     // ---- 以下用例来自 #36（截断：能解多少播多少）----
