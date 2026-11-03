@@ -69,6 +69,11 @@ private:
     void threadFunc();
     RunDecodeResult runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
+    // 按当前的 m_srcSpec / m_devSpec 造一个重采样器；失败返回 nullptr。
+    std::shared_ptr<AudioResample> createResampler();
+    // 设备规格是否带 PCM 格式。缺了它就没有重采样的目标格式（单测会拿提取器 spec
+    // 当设备规格，此时 format 是 Unknown），这种情况下退化成不重采样。
+    bool deviceSpecSupportsResample() const;
     // EOS 汇总：比「解出多少」与「标称多长」，短于 5pp 就报 DataTruncated（规格 T4 / 条目 23）。
     // 唯一出口：调用后状态要么 EOS，要么 ERROR。
     void finishAtEndOfStream();
@@ -87,6 +92,8 @@ private:
     uint64_t m_durationMs;
 
     Optional<Lazy<std::shared_ptr<AudioResample>>> m_lazyResample;
+    // 首帧的实测规格还没覆盖过 m_srcSpec（规格 6.2 S3：无条件覆盖一次）。
+    bool m_firstDecodeFrame;
     std::vector<char> m_interleaveBuf;
     std::vector<char> m_resampleBuf;
 

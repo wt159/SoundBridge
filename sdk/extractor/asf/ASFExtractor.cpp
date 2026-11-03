@@ -338,9 +338,6 @@ status_t ASFExtractor::initWithFFmpegDemux()
     m_audioSpec.bytesPerSample
         = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    if (fmt->duration > 0) {
-        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
-    }
     m_bitRate    = static_cast<int>(par->bit_rate);
     m_blockAlign = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
@@ -357,15 +354,49 @@ status_t ASFExtractor::initWithFFmpegDemux()
         return NO_MEMORY;
     }
 
+    int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
             AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(pkt->size);
             memcpy(packet->data(), pkt->data, pkt->size);
             packetizedAudioData.push_back(packet);
+
+            if (pkt->duration > 0) {
+                totalPktDuration += pkt->duration;
+            }
         }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
+
+    // 时长归属（#39 / 规格 6.2 S1）：包时间轴优先，ASF File Properties 的
+    // playDuration 只兜底。该字段是封装器写的，改写它的工具真实存在；包时长来自
+    // 每个数据包自带的样本数，本就在读包，零额外 IO。
+    uint64_t measuredMs = 0;
+    if (totalPktDuration > 0) {
+        const double scale = av_q2d(audioStream->time_base) * 1000.0;
+        if (scale > 0) {
+            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
+        }
+    }
+    const uint64_t declaredMs
+        = fmt->duration > 0 ? static_cast<uint64_t>(fmt->duration / 1000) : 0;
+    if (measuredMs > 0) {
+        m_audioSpec.durationMs = measuredMs;
+        // S5：只打一条日志，不新增错误码、不进 UI——音频本身是完好的，报错是误伤。
+        const uint64_t diff
+            = declaredMs > measuredMs ? declaredMs - measuredMs : measuredMs - declaredMs;
+        if (declaredMs > 0 && diff * 100 > declaredMs) {
+            LOGW("declared duration %llu ms disagrees with packet timeline %llu ms (using packet "
+                 "timeline)",
+                 static_cast<unsigned long long>(declaredMs),
+                 static_cast<unsigned long long>(measuredMs));
+        }
+    } else if (declaredMs > 0) {
+        m_audioSpec.durationMs = declaredMs;
+        LOGW("no packet timeline, fall back to container duration %llu ms",
+             static_cast<unsigned long long>(declaredMs));
+    }
 
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
