@@ -14,17 +14,47 @@
 
 | 扩展名 | 提取器 | 解码路径 | spec 完整性 | 覆盖度断言 | 备注 |
 |---|---|---|---|---|---|
-| `.wav` | `WAVExtractor` | 项目自实现，PCM 直通 | 完整 | 待补（#16） | 兼容 `.w64` 之前先按不支持处理 |
-| `.aiff` | `AIFFExtractor` | 项目自实现 | 完整 | 待补（#16） | |
-| `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 解码输出为 fltp（4 B/采样），真实格式由首帧回填 |
-| `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | 待补（#16） | |
-| `.flac` | `FLACExtractor` | libFLAC 直解（不经 ffmpeg parser） | 完整 | 待补（#16） | 帧边界与 EOS 由 libFLAC 给出，不受分包策略影响 |
-| `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | `durationMs` 由末页 granule 推导（#15） |
-| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | ALAC（无 parser）路径尚未验证 |
-| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 另有自研解析兜底路径，同样按数据包切片 |
-| `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 完整 | 待补（#16） | |
-| `.ape` | `APEExtractor` | ffmpeg demux + 分包 | 完整 | **已有**：`APE decode covers advertised duration` | 2026-11 修复只解首帧的问题（`50b538f0c`） |
-| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），**故意保留**作为「不轻信容器声明」的回归样本 |
+| `.wav` | `WAVExtractor` | 项目自实现，PCM 直通 | 完整 | **有** | 兼容 `.w64` 之前先按不支持处理 |
+| `.aiff` | `AIFFExtractor` | 项目自实现 | 完整 | **有** | |
+| `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | **部分未知**：`format`/`bytesPerSample`=0 | **有** | 解码输出为 fltp（4 B/采样），真实格式由首帧回填 |
+| `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | **有** | |
+| `.flac` | `FLACExtractor` | libFLAC 直解（不经 ffmpeg parser） | 完整 | **有** | 帧边界与 EOS 由 libFLAC 给出，不受分包策略影响 |
+| `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | **有** | `durationMs` 由末页 granule 推导（#15） |
+| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | **有** | ALAC（无 parser）路径尚未验证 |
+| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | **有** | 另有自研解析兜底路径，同样按数据包切片 |
+| `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 完整 | **有** | |
+| `.ape` | `APEExtractor` | ffmpeg demux + 分包 | 完整 | **有**（含流式路径） | 2026-11 修复只解首帧的问题（`50b538f0c`） |
+| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 完整 | **有** | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），**故意保留**作为「不轻信容器声明」的回归样本 |
+
+## 覆盖度基线（来源 [#16](https://github.com/wt159/SoundBridge/issues/16)）
+
+用例在 `sdk/test/unit/test_media_coverage.cpp` 的 `MediaCoverage` 套件里：14 份素材覆盖上表 11 个
+扩展名，随 `ctest -R sdk_unit_tests` 运行，净耗时约 2.5 秒。
+
+**判据是双向的**——只有下界会漏报「重复解码」（#13 普查里 FLAC 重复 35× 仍判 PASS）：
+
+```text
+measuredMs = 解码 PCM 字节数 / (声道数 × 每采样字节) × 1000 / 采样率
+tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
+下界：防截断（APE 只解首帧 = 18%）
+上界：防重复（35× 这类）
+```
+
+- 1% 是相对量；150ms 是绝对下限，覆盖帧/页量化误差（ogg 一页最多约 93ms、AAC 一帧 21ms）；
+  25% 上限防止极短素材上的断言退化成「怎么都过」。
+- 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 13 份为 0.00%，1% 留了 5× 余量。
+
+**实测侧必须取「解码后的 spec」**（`AudioDecodeProcess::getDecodeSpec()`），不能取提取器 spec：
+mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/m4a/mp3/wma 的解码输出是 fltp
+（4 B/采样），按 2 B 换算会得到虚假的 2 倍——#19 的「mp3 2.03 倍」正是这么来的。
+
+**没有白名单**。`durationMs == 0` 在受支持格式上是硬失败而不是跳过（#15 已让 11 个扩展名都能推导
+时长）；缺素材同样计入失败，并在输出里打 `[SKIP]` 便于定位。新增格式时，
+`every supported extension has a real-media coverage case` 会强制要求同时补一行素材——
+「受支持」的定义就是「有覆盖度断言」，不接受登记了却没人测。
+
+**测量路径**：矩阵走 `AudioDecodeProcess`（同步整段，唯一能给出解码后 spec 的路径）；生产流式路径
+（`start()` → `threadFunc()`）由 `APE decode covers advertised duration` 用同一套容差守一条端到端。
 
 ## 不支持（明确摘除，别再注册回去）
 
@@ -42,6 +72,6 @@
 
 ## 维护规则
 
-1. 新增格式 = 新提取器 + 注册 + 本表加行 + 更新一致性用例里的期望列表，四件事一起做。
+1. 新增格式 = 新提取器 + 注册 + 本表加行 + 更新一致性用例里的期望列表 + 覆盖度矩阵加一行素材，五件事一起做。
 2. 摘除格式 = 删注册 + 删映射/枚举 + 本表移到「不支持」+ 同步用例。
 3. `FileSearch` 以 `defaultExtractorMap` 作为扫描白名单，所以本表的增删会直接改变播放列表能看到什么。

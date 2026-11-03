@@ -148,7 +148,7 @@ set(UNIT_TEST_SOURCES
     unit/test_player_integration.cpp
     unit/test_error.cpp
     unit/test_resample_formats.cpp
-    unit/test_media_smoke.cpp
+    unit/test_media_coverage.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})

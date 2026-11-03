@@ -2,6 +2,8 @@
 
 #include <ExtractorFactory.h>
 #include <FileSource.h>
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -73,6 +75,23 @@ struct RealMediaFixture {
 
         std::printf("[SKIP] %s (file not found)\n", skipName.c_str());
         return false;
+    }
+
+    // 覆盖度断言的双向容差（决策来源 #16）：max(声明时长 × 1%, 150ms)，上限为声明时长的 25%。
+    //   1%   ：相对量，随素材时长放大；实测最大偏差是 asf 的 +0.20%，留 5× 余量
+    //   150ms：绝对下限，覆盖帧/页量化误差（ogg 一页最多约 93ms、AAC 一帧 21ms）
+    //   25%  ：上限，避免极短素材上的断言退化成「怎么都过」
+    static uint64_t coverageToleranceMs(uint64_t declaredMs)
+    {
+        const uint64_t relative = declaredMs / 100;
+        const uint64_t floorMs  = 150;
+        const uint64_t cap      = declaredMs / 4;
+
+        uint64_t tolerance = std::max(relative, floorMs);
+        if (cap > 0 && tolerance > cap) {
+            tolerance = cap;
+        }
+        return tolerance;
     }
 
 private:

@@ -10,6 +10,7 @@ sdk/test/unit/
 ├── test_audio*.cpp           # AudioResample / AudioDevice / AudioFormat 工具
 ├── test_decode.cpp           # AudioDecodeProcess / FLAC / Vorbis / AudioStreamDecoder
 ├── test_extractor.cpp        # ExtractorFactory 与真实媒体 extractor 行为
+├── test_media_coverage.cpp   # 全格式解码覆盖度与时长基线（判据见 doc/format-support.md）
 ├── test_playlist.cpp         # MusicPlayList / FileProperties
 ├── test_utils.cpp            # AudioRingBuffer / ByteUtils / AudioBuffer
 └── test_cosmos.cpp           # Optional / Lazy / ScopeGuard / Range / Timer
@@ -22,6 +23,7 @@ sdk/test/unit/
 | 音频设备/格式工具 | `test_audio_device.cpp`, `test_audio.cpp` | SDL 行为 + AudioFormat/Resample |
 | 解码状态机 | `test_decode.cpp` | wait/poll 辅助函数、真实媒体 decode |
 | 提取器单测 | `test_extractor.cpp` | factory、sniff、真实媒体样本 |
+| 解码覆盖度基线 | `test_media_coverage.cpp` | 双向容差判据、必备素材清单；理由见 `doc/format-support.md` |
 | 播放列表行为 | `test_playlist.cpp` | `WorkQueue` + `promise/future` 协调异步添加 |
 | 基础工具/容器 | `test_utils.cpp`, `test_cosmos.cpp` | 纯单元级，无媒体依赖 |
 
@@ -30,6 +32,7 @@ sdk/test/unit/
 - 这个子目录里的真实媒体依赖统一经 `RealMediaFixture` 获取；不要手写 `../../music/...` 路径。
 - `UnitTestsMain.cpp` 已负责日志初始化；不要在单个用例里重复初始化 `LogWrapper`。
 - 异步接口测试沿用现有模式：`std::promise/std::future` 等待回调完成，或用轮询辅助函数验证状态迁移，而不是裸 `sleep` 兜底；`test_audio_device.cpp` 是少数例外，因为它在等 SDL callback。
+- 时长/覆盖度断言用 `RealMediaFixture::coverageToleranceMs()`，不要自己写一个百分比；实测侧必须取解码后的 spec，取提取器 spec 会在 fltp 格式上算出 2 倍（见 `doc/format-support.md`）。
 
 ## ANTI-PATTERNS
 - 不要新增 `unit/*.cpp` 却忘了同步 `sdk/test/CMakeLists.txt` 的 `UNIT_TEST_SOURCES`。

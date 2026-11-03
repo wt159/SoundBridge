@@ -178,7 +178,7 @@ cmake --build build --target coverage
 | Chunked Decode | 3 | AAC/MP3/M4A 分块解码一致性 |
 | MusicPlayList | ~27 | 播放列表操作 |
 | Player API | ~15 | MusicPlayer、Public Player |
-| MediaSmoke | ~12 | 媒体格式冒烟测试 |
+| MediaCoverage | 2 | 全格式解码覆盖度与时长基线（见 `doc/format-support.md`） |
 | **总计** | **~280** | 统一框架 |
 
 ### 5.1 本次新增测试

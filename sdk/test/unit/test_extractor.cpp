@@ -1013,6 +1013,12 @@ TEST_SUITE("ExtractorRealMedia")
         const unsigned long long decodedMs
             = decodedBytes / frameBytes * 1000ULL
               / static_cast<unsigned long long>(spec.sampleRate);
-        CHECK(decodedMs * 100ULL >= spec.durationMs * 95ULL);
+
+        // 双向判据（#16）：这个格式的解码输出就是 s16，直接用提取器 spec 换算才成立；
+        // 全格式矩阵统一改取「解码后 spec」，见 test_media_coverage.cpp。
+        const uint64_t tolerance = RealMediaFixture::coverageToleranceMs(spec.durationMs);
+        const uint64_t lower = spec.durationMs > tolerance ? spec.durationMs - tolerance : 0;
+        CHECK(decodedMs >= lower);
+        CHECK(decodedMs <= spec.durationMs + tolerance);
     }
 }
