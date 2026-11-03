@@ -25,6 +25,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_codecID(AUDIO_CODEC_ID_NONE)
     , m_durationMs(0)
     , m_lazyResample()
+    , m_firstDecodeFrame(true)
     , m_interleaveBuf()
     , m_resampleBuf()
     , m_state(StreamDecoderState::IDLE)
@@ -70,6 +71,26 @@ AudioStreamDecoder::~AudioStreamDecoder()
     stop();
 }
 
+std::shared_ptr<AudioResample> AudioStreamDecoder::createResampler()
+{
+    AudioSpec inSpec  = m_srcSpec;
+    AudioSpec outSpec = m_devSpec;
+    inSpec.samples    = 1024;
+    auto r            = std::make_shared<AudioResample>(inSpec, outSpec);
+    if (!r || r->initCheck() != sdk_utils::OK) {
+        LOGE("lazy resample init failed");
+        return nullptr;
+    }
+    LOGI("lazy resample init ok, format=%d", m_srcSpec.format);
+    return r;
+}
+
+bool AudioStreamDecoder::deviceSpecSupportsResample() const
+{
+    return m_devSpec.sampleRate > 0 && m_devSpec.numChannel > 0 && m_devSpec.bytesPerSample > 0
+        && m_devSpec.format != AudioFormatUnknown;
+}
+
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
@@ -98,28 +119,25 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
 
     m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
-    if (!(m_srcSpec == m_devSpec)) {
-        auto factory = [this]() -> std::shared_ptr<AudioResample> {
-            AudioSpec inSpec  = m_srcSpec;
-            AudioSpec outSpec = m_devSpec;
-            inSpec.samples    = 1024;
-            auto r            = std::make_shared<AudioResample>(inSpec, outSpec);
-            if (!r || r->initCheck() != sdk_utils::OK) {
-                LOGE("lazy resample init failed");
-                return nullptr;
+    m_firstDecodeFrame = true;
+    // 规格 6.2 S3：工厂无条件建。声明值恰好等于 device spec 时也要建——首帧的实测值
+    // 可能还要覆盖它（修好前只在 `m_srcSpec != m_devSpec` 时建，那门一关首帧就永远覆盖不上）。
+    // 设备规格没有 PCM 格式时不建：没有重采样目标格式，建了也只会 init 失败。
+    if (!deviceSpecSupportsResample()) {
+        LOGW("device spec has no pcm format, resampling disabled");
+    } else {
+        m_lazyResample.emplace(
+            [this]() -> std::shared_ptr<AudioResample> { return createResampler(); });
+        if (!(m_srcSpec == m_devSpec)) {
+            if (m_srcSpec.format != AudioFormatUnknown) {
+                auto r = m_lazyResample->Value();
+                if (r == nullptr) {
+                    setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
+                    return sdk_utils::INVALID_OPERATION;
+                }
+            } else {
+                LOGI("srcSpec format unknown, defer resample init to first decode callback");
             }
-            LOGI("lazy resample init ok, format=%d", m_srcSpec.format);
-            return r;
-        };
-        m_lazyResample.emplace(factory);
-        if (m_srcSpec.format != AudioFormatUnknown) {
-            auto r = m_lazyResample->Value();
-            if (r == nullptr) {
-                setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
-                return sdk_utils::INVALID_OPERATION;
-            }
-        } else {
-            LOGI("srcSpec format unknown, defer resample init to first decode callback");
         }
     }
 
@@ -520,22 +538,42 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
         return;
     }
 
-    // 懒初始化：format 未知时在首帧回调处触发 Lazy 工厂
-    if (m_lazyResample.isInit() && !m_lazyResample->IsValueCreated()
-        && out.spec.format != AudioFormatUnknown) {
-        m_srcSpec.sampleRate     = out.spec.sampleRate;
-        m_srcSpec.numChannel     = out.spec.numChannel;
-        m_srcSpec.format         = out.spec.format;
-        m_srcSpec.bytesPerSample = out.spec.bytesPerSample;
-        m_srcSpec.bitsPerSample  = out.spec.bitsPerSample;
-        m_bytesPerMs             = static_cast<uint64_t>(m_srcSpec.sampleRate)
-            * static_cast<uint64_t>(m_srcSpec.numChannel)
-            * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
+    // 规格 6.2 S3：采样率/声道以解码首帧实测为准，且必须**无条件**覆盖。
+    // 修好前这一整块被 `m_lazyResample.isInit() && !IsValueCreated()` 挡着，
+    // 而工厂只在 `m_srcSpec != m_devSpec` 时才建——声明值恰好等于设备规格时，
+    // 首帧实测到的就成了头里那个错值（44100 的码流被当 48000 播，快 8.8%）。
+    if (m_firstDecodeFrame && out.spec.sampleRate > 0 && out.spec.numChannel > 0
+        && out.spec.bytesPerSample > 0 && out.spec.format != AudioFormatUnknown) {
+        m_firstDecodeFrame = false;
 
-        if (m_srcSpec == m_devSpec) {
+        AudioSpec frameSpec;
+        frameSpec.sampleRate     = out.spec.sampleRate;
+        frameSpec.numChannel     = out.spec.numChannel;
+        frameSpec.format         = out.spec.format;
+        frameSpec.bytesPerSample = out.spec.bytesPerSample;
+        frameSpec.bitsPerSample  = out.spec.bitsPerSample;
+
+        if (!(m_srcSpec == frameSpec) || m_srcSpec.bytesPerSample != frameSpec.bytesPerSample) {
+            m_srcSpec.sampleRate     = frameSpec.sampleRate;
+            m_srcSpec.numChannel     = frameSpec.numChannel;
+            m_srcSpec.format         = frameSpec.format;
+            m_srcSpec.bytesPerSample = frameSpec.bytesPerSample;
+            m_srcSpec.bitsPerSample  = frameSpec.bitsPerSample;
+            m_bytesPerMs             = static_cast<uint64_t>(m_srcSpec.sampleRate)
+                * static_cast<uint64_t>(m_srcSpec.numChannel)
+                * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
+
+            // 覆盖后按新规格重建：原先可能已按声明值建过，留着就是拿错参数做重采样。
+            // 与设备规格相等就把工厂丢掉（不需要重采样）。
             m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
-        } else {
-            m_lazyResample->Value(); // 触发工厂函数，此时 m_srcSpec 已更新为真实解码格式
+            if (!(m_srcSpec == m_devSpec) && deviceSpecSupportsResample()) {
+                m_lazyResample.emplace(
+                    [this]() -> std::shared_ptr<AudioResample> { return createResampler(); });
+                if (m_lazyResample->Value() == nullptr) {
+                    setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
+                    return;
+                }
+            }
         }
     }
 

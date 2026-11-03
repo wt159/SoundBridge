@@ -404,22 +404,18 @@ struct StreamMeasurement {
     std::string detail;
 };
 
-StreamMeasurement measureStream(const std::string &path, const char *extension, int timeoutMs)
+// 直接喂一个现成的提取器：用例要控制 device spec 或替换声明层时走这里。
+StreamMeasurement measureStreamWithExtractor(const std::shared_ptr<ExtractorHelper> &extractor,
+                                             const AudioSpec &devSpec, int timeoutMs)
 {
     StreamMeasurement measurement;
-    FileSource source(path.c_str());
-    if (source.initCheck() != sdk_utils::OK) {
-        return measurement;
-    }
-    std::shared_ptr<ExtractorHelper> extractor(
-        ExtractorFactory::createExtractor(&source, extension, true));
     if (!extractor || extractor->initCheck() != sdk_utils::OK) {
         return measurement;
     }
     measurement.opened = true;
 
     AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
-    AudioStreamDecoder decoder(&ring, makeDevSpec());
+    AudioStreamDecoder decoder(&ring, devSpec);
     if (decoder.start(extractor.get()) != sdk_utils::OK) {
         measurement.state = decoder.state();
         measurement.code  = decoder.errorCode();
@@ -432,6 +428,18 @@ StreamMeasurement measureStream(const std::string &path, const char *extension, 
     measurement.code   = decoder.errorCode();
     measurement.detail = decoder.errorDetail();
     return measurement;
+}
+
+StreamMeasurement measureStream(const std::string &path, const char *extension, int timeoutMs)
+{
+    FileSource source(path.c_str());
+    if (source.initCheck() != sdk_utils::OK) {
+        return StreamMeasurement();
+    }
+    // source 的生命周期覆盖整个解码过程：提取器只持它的裸指针。
+    std::shared_ptr<ExtractorHelper> extractor(
+        ExtractorFactory::createExtractor(&source, extension, true));
+    return measureStreamWithExtractor(extractor, makeDevSpec(), timeoutMs);
 }
 
 // ring 里是设备格式（makeDevSpec）的字节，换算成毫秒。
@@ -527,6 +535,250 @@ BadFrameMeasurement measureMidFrameCorruption(const std::string &goodPath, const
     result.state         = bad.state;
     result.code          = bad.code;
     result.detail        = bad.detail;
+    return result;
+}
+
+// ---- 以下 helper 来自 #39（时长来源前移）----
+
+// 素材手术只碰固定偏移，所以只留最小的一组定宽读写。
+uint32_t readU32BE(const std::vector<char> &data, size_t offset)
+{
+    return (static_cast<uint32_t>(static_cast<unsigned char>(data[offset])) << 24)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 1])) << 16)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 2])) << 8)
+        | static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 3]));
+}
+
+uint64_t readU64BE(const std::vector<char> &data, size_t offset)
+{
+    return (static_cast<uint64_t>(readU32BE(data, offset)) << 32)
+        | readU32BE(data, offset + 4);
+}
+
+void writeU32BE(std::vector<char> &data, size_t offset, uint32_t value)
+{
+    data[offset]     = static_cast<char>((value >> 24) & 0xFF);
+    data[offset + 1] = static_cast<char>((value >> 16) & 0xFF);
+    data[offset + 2] = static_cast<char>((value >> 8) & 0xFF);
+    data[offset + 3] = static_cast<char>(value & 0xFF);
+}
+
+void writeU64BE(std::vector<char> &data, size_t offset, uint64_t value)
+{
+    writeU32BE(data, offset, static_cast<uint32_t>(value >> 32));
+    writeU32BE(data, offset + 4, static_cast<uint32_t>(value & 0xFFFFFFFFull));
+}
+
+uint32_t readU32LE(const std::vector<char> &data, size_t offset)
+{
+    return static_cast<uint32_t>(static_cast<unsigned char>(data[offset]))
+        | (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 1])) << 8)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 2])) << 16)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 3])) << 24);
+}
+
+uint64_t readU64LE(const std::vector<char> &data, size_t offset)
+{
+    return static_cast<uint64_t>(readU32LE(data, offset))
+        | (static_cast<uint64_t>(readU32LE(data, offset + 4)) << 32);
+}
+
+void writeU32LE(std::vector<char> &data, size_t offset, uint32_t value)
+{
+    data[offset]     = static_cast<char>(value & 0xFF);
+    data[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
+    data[offset + 2] = static_cast<char>((value >> 16) & 0xFF);
+    data[offset + 3] = static_cast<char>((value >> 24) & 0xFF);
+}
+
+void writeU64LE(std::vector<char> &data, size_t offset, uint64_t value)
+{
+    writeU32LE(data, offset, static_cast<uint32_t>(value & 0xFFFFFFFFull));
+    writeU32LE(data, offset + 4, static_cast<uint32_t>(value >> 32));
+}
+
+// 在 mp4 的容器层级里找 mvhd / mdhd，把 duration ×2（长度不变）。
+// 只递归 moov/trak/mdia，mdat 里的随机字节不会被误伤。
+bool patchMp4DurationIn(std::vector<char> &data, size_t start, size_t end, const char *type)
+{
+    size_t offset = start;
+    while (offset + 8 <= end) {
+        uint64_t size   = readU32BE(data, offset);
+        const char *tag = data.data() + offset + 4;
+        size_t header   = 8;
+        if (size == 1) {
+            if (offset + 16 > end) {
+                return false;
+            }
+            size   = readU64BE(data, offset + 8);
+            header = 16;
+        } else if (size == 0) {
+            size = end - offset;
+        }
+        if (size < header || size > end - offset) {
+            return false;
+        }
+        if (std::memcmp(tag, type, 4) == 0) {
+            const size_t body    = offset + header;
+            const unsigned char version = static_cast<unsigned char>(data[body]);
+            // version 0：timescale@12 duration@16（32 位）；version 1：duration@24（64 位）。
+            if (version == 0 && body + 20 <= offset + size) {
+                writeU32BE(data, body + 16, readU32BE(data, body + 16) * 2);
+                return true;
+            }
+            if (version == 1 && body + 32 <= offset + size) {
+                writeU64BE(data, body + 24, readU64BE(data, body + 24) * 2);
+                return true;
+            }
+            return false;
+        }
+        if (std::memcmp(tag, "moov", 4) == 0 || std::memcmp(tag, "trak", 4) == 0
+            || std::memcmp(tag, "mdia", 4) == 0) {
+            if (patchMp4DurationIn(data, offset + header, offset + static_cast<size_t>(size), type)) {
+                return true;
+            }
+        }
+        offset += static_cast<size_t>(size);
+    }
+    return false;
+}
+
+bool patchMp4Durations(std::vector<char> &data)
+{
+    return patchMp4DurationIn(data, 0, data.size(), "mvhd")
+        && patchMp4DurationIn(data, 0, data.size(), "mdhd");
+}
+
+// ASF File Properties 对象的 playDuration ×2（100ns 单位，偏移 40 在对象体里）。
+bool patchAsfPlayDuration(std::vector<char> &data)
+{
+    static const unsigned char kFilePropertiesGuid[16] = { 0xA1, 0xDC, 0xAB, 0x8C, 0x47, 0xA9,
+                                                           0xCF, 0x11, 0x8E, 0xE4, 0x00, 0xC0,
+                                                           0x0C, 0x20, 0x53, 0x65 };
+    for (size_t offset = 0; offset + 16 <= data.size(); ++offset) {
+        if (std::memcmp(data.data() + offset, kFilePropertiesGuid, 16) != 0) {
+            continue;
+        }
+        const size_t playDuration = offset + 24 + 40;
+        if (playDuration + 8 > data.size()) {
+            return false;
+        }
+        writeU64LE(data, playDuration, readU64LE(data, playDuration) * 2);
+        return true;
+    }
+    return false;
+}
+
+// FLAC 的 STREAMINFO：sr(20) ch(3) bps(5) totalSamples(36) 挤在字节 10..17，
+// totalSamples 是这 64 位的低 36 位。×2（长度不变）。
+bool patchFlacTotalSamples(std::vector<char> &data)
+{
+    if (data.size() < 26 || std::memcmp(data.data(), "fLaC", 4) != 0) {
+        return false;
+    }
+    const size_t field      = 8 + 10; // "fLaC" + 4 字节块头，首块必是 STREAMINFO
+    const uint64_t kLow36   = 0xFFFFFFFFFull;
+    uint64_t packed         = readU64BE(data, field);
+    const uint64_t samples  = packed & kLow36;
+    if (samples == 0) {
+        return false;
+    }
+    writeU64BE(data, field, (packed & ~kLow36) | ((samples * 2) & kLow36));
+    return true;
+}
+
+// wav 的 fmt 块：sampleRate 在块体 +4，byteRate 在 +8（声道×位宽×采样率，同步改）。
+bool patchWavSampleRate(std::vector<char> &data, uint32_t sampleRate)
+{
+    if (data.size() < 44 || std::memcmp(data.data(), "RIFF", 4) != 0) {
+        return false;
+    }
+    size_t offset = 12;
+    while (offset + 8 <= data.size()) {
+        const uint32_t chunkSize = readU32LE(data, offset + 4);
+        if (std::memcmp(data.data() + offset, "fmt ", 4) == 0) {
+            const size_t body = offset + 8;
+            if (body + 12 > data.size()) {
+                return false;
+            }
+            const uint32_t oldRate  = readU32LE(data, body + 4);
+            const uint32_t byteRate = readU32LE(data, body + 8);
+            if (oldRate == 0) {
+                return false;
+            }
+            writeU32LE(data, body + 4, sampleRate);
+            writeU32LE(data, body + 8, byteRate / oldRate * sampleRate);
+            return true;
+        }
+        offset += 8 + static_cast<size_t>(chunkSize) + (chunkSize & 1);
+    }
+    return false;
+}
+
+// 声明层的替身：所有数据接口都转发给真实提取器，只把 AudioSpec 换成谎报值。
+// 用来精确造出「声明值恰好等于 device spec」这一种状态——真实素材里
+// 提取器和码流同源，造不出来。
+class LyingSpecExtractor : public ExtractorHelper {
+public:
+    LyingSpecExtractor(const std::shared_ptr<ExtractorHelper> &inner, const AudioSpec &lie)
+        : m_inner(inner)
+        , m_lie(lie)
+    {
+    }
+
+    sdk_utils::status_t initCheck() override { return m_inner->initCheck(); }
+    AudioSpec getAudioSpec() override { return m_lie; }
+    AudioCodecID getAudioCodecID() override { return m_inner->getAudioCodecID(); }
+    std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const override
+    {
+        return m_inner->getPacketizedMetaData();
+    }
+    AudioBuffer::AudioBufferPtr getMetaData() override { return m_inner->getMetaData(); }
+    AudioBuffer::AudioBufferPtr getCodecExtraData() override
+    {
+        return m_inner->getCodecExtraData();
+    }
+    int getBitRate() override { return m_inner->getBitRate(); }
+    int getBlockAlign() override { return m_inner->getBlockAlign(); }
+    DataSourceBase *getDataSource() override { return m_inner->getDataSource(); }
+    off64_t getDataSize() override { return m_inner->getDataSize(); }
+    off64_t getAudioDataOffset() override { return m_inner->getAudioDataOffset(); }
+
+private:
+    std::shared_ptr<ExtractorHelper> m_inner;
+    AudioSpec m_lie;
+};
+
+// 一次「改声明字段前 / 后」的对照观测。
+struct DurationLieMeasurement {
+    bool opened          = false;
+    uint64_t declaredMs  = 0;
+    uint64_t decodedMs   = 0;
+    size_t decodedBytes  = 0;
+    StreamDecoderState state = StreamDecoderState::IDLE;
+    sdk::ErrorCode code      = sdk::ErrorCode::Ok;
+};
+
+DurationLieMeasurement measureDuration(const std::string &path, const char *extension,
+                                       int timeoutMs)
+{
+    DurationLieMeasurement result;
+    ExtractorOutcome outcome = openExtractor(path, extension);
+    if (!outcome.created || !outcome.initOk) {
+        return result;
+    }
+    result.opened     = true;
+    result.declaredMs = outcome.durationMs;
+
+    StreamMeasurement run = measureStream(path, extension, timeoutMs);
+    if (!run.opened) {
+        result.opened = false;
+        return result;
+    }
+    result.decodedBytes = run.bytes;
+    result.decodedMs    = devBytesToMs(run.bytes);
+    result.state        = run.state;
+    result.code         = run.code;
     return result;
 }
 
@@ -1598,5 +1850,186 @@ TEST_SUITE("BadInput")
         CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
         CHECK(run.state == StreamDecoderState::EOS);
         CHECK(run.code == sdk::ErrorCode::Ok);
+    }
+
+    // ---- 规格 6.2 / 条目 16、17：时长来源前移 ----
+    //
+    // 判据是差分（规格 S2）：篡改那个声明字段，同一份文件改前改后两次运行的
+    // durationMs 与解出字节必须逐位不变。零容差——比的是同一份文件的两次运行，
+    // 不存在量化误差，所以这里没有「差多少算撒谎」的阈值。
+
+    TEST_CASE("m4a duration follows the packet timeline instead of the declared field")
+    {
+        RealMediaFixture fixture;
+        const char *name = "摇滚乐_Freesound.m4a";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        std::vector<char> lie = good;
+        REQUIRE(patchMp4Durations(lie));
+        TempFileSet tmp("m4a_dur");
+        std::string liePath = tmp.make(".m4a");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        DurationLieMeasurement before = measureDuration(goodPath, ".m4a", 120000);
+        DurationLieMeasurement after  = measureDuration(liePath, ".m4a", 120000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.decodedBytes > 0);
+
+        // 改的是声明，不是数据：报出的时长与解出的字节都逐位不变。
+        CHECK(after.declaredMs == before.declaredMs);
+        CHECK(after.decodedBytes == before.decodedBytes);
+        CHECK(after.code == before.code);
+    }
+
+    TEST_CASE("asf duration follows the packet timeline instead of the declared field")
+    {
+        RealMediaFixture fixture;
+        const char *name = "萨克斯机.asf";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        std::vector<char> lie = good;
+        REQUIRE(patchAsfPlayDuration(lie));
+        TempFileSet tmp("asf_dur");
+        std::string liePath = tmp.make(".asf");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        DurationLieMeasurement before = measureDuration(goodPath, ".asf", 120000);
+        DurationLieMeasurement after  = measureDuration(liePath, ".asf", 120000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.decodedBytes > 0);
+
+        CHECK(after.declaredMs == before.declaredMs);
+        CHECK(after.decodedBytes == before.decodedBytes);
+        CHECK(after.code == before.code);
+    }
+
+    // APE 没有可用的差分用例：ffmpeg 4.4.4 的 ape 解复用器给的 pkt->duration 恒为 0，
+    // 连包内的 4 字节帧头都由 APE 头的 blocksperframe / finalframeblocks 重写
+    //（实测：改 blocksperframe ×2 → 包内帧头从 0x12000 变成 0x24000）。
+    // 也就是说这条路径上没有任何独立于声明字段的时间轴，逐包累加无从下手。
+    // 提取器仍按 S1 写了累加 + 兜底日志，但 APE 的时长撒谎因此**仍未吸收**。
+    // 证据与复现命令见 build/_agent/badinput/findings-39.md。
+
+    // 规格 6.2 表里 flac 是「半可判」：total_samples 是唯一来源，init 期拿不到第二份，
+    // 所以这里只锁「改它不影响解出多少」。EOS 汇总按 5pp 规则报 DataTruncated——
+    // 那是 S4 记录在案的已知误报（「少了尾巴」与「字段写大」在数据上无法区分）。
+    TEST_CASE("flac total samples lie does not change how much audio is decoded")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.flac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        std::vector<char> lie = good;
+        REQUIRE(patchFlacTotalSamples(lie));
+        TempFileSet tmp("flac_dur");
+        std::string liePath = tmp.make(".flac");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        DurationLieMeasurement before = measureDuration(goodPath, ".flac", 240000);
+        DurationLieMeasurement after  = measureDuration(liePath, ".flac", 240000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.decodedBytes > 0);
+
+        CHECK(after.decodedBytes == before.decodedBytes);
+        CHECK(before.code == sdk::ErrorCode::Ok);
+        CHECK(after.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 规格 6.2 S3：采样率/声道以解码首帧实测为准，且必须**无条件**覆盖。
+    // 声明值恰好等于 device spec 时，惰性重采样器曾整块被跳过（:100 的 `!=`），
+    // 首帧的实测值就永远覆盖不上去——于是 44100 的码流被当成 48000 播，快 8.8%。
+    TEST_CASE("decoder takes the first frame spec even when the extractor matches the device")
+    {
+        RealMediaFixture fixture;
+        const char *name = "Ringtones-耳聆网.ogg";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::vector<char> data = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(!data.empty());
+        TempFileSet tmp("first_frame_spec");
+        std::string path = tmp.make(".ogg");
+        REQUIRE(writeWholeFile(path, data));
+
+        FileSource source(path.c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+        std::shared_ptr<ExtractorHelper> inner(
+            ExtractorFactory::createExtractor(&source, ".ogg", true));
+        REQUIRE(inner != nullptr);
+        REQUIRE(inner->initCheck() == sdk_utils::OK);
+
+        const AudioSpec honest = inner->getAudioSpec();
+        if (honest.sampleRate != 44100 || honest.numChannel != 2) {
+            std::printf("[SKIP] %s is not 44100/2ch anymore\n", name);
+            return;
+        }
+
+        // device spec / 谎报值都取 48000/2ch/S16：声明恰好等于设备，正是惰性门被关上的
+        // 那个条件（operator== 只看 sampleRate / format / numChannel）。真实码流是 44100。
+        AudioSpec dev = makeDevSpec();
+        dev.sampleRate = 48000;
+
+        StreamMeasurement reference = measureStreamWithExtractor(inner, dev, 30000);
+        REQUIRE(reference.opened);
+        REQUIRE(reference.bytes > 0);
+
+        std::shared_ptr<ExtractorHelper> liar(new LyingSpecExtractor(inner, dev));
+        StreamMeasurement actual = measureStreamWithExtractor(liar, dev, 30000);
+        REQUIRE(actual.opened);
+
+        // 首帧覆盖后两条路径的重采样参数相同（44100 → 48000），输出同量。
+        // 修好前这里短 8.8%（44100 的样本被当 48000 直接写出）。
+        CHECK(actual.bytes == reference.bytes);
+    }
+
+    // 规格 6.3 #8 / 第 9 节：PCM 类的采样率撒谎**不可检测**——头是唯一自述，
+    // 改头之后 declared 与 decoded 依旧自洽，用户听到的是 2× 慢放降调。
+    // 这条不给「应该检测出来」的期望值：将来谁给 PCM 加一个假检测，它就会红。
+    TEST_CASE("wav sample rate lie stays undetectable")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        std::vector<char> lie = good;
+        REQUIRE(patchWavSampleRate(lie, 8000));
+        TempFileSet tmp("wav_sr_lie");
+        std::string liePath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        DurationLieMeasurement before = measureDuration(goodPath, ".wav", 120000);
+        DurationLieMeasurement after  = measureDuration(liePath, ".wav", 120000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.decodedBytes > 0);
+
+        // 声明跟着头一起变、实测跟着头一起变，两者仍然一致 → 没有任何可判定信号。
+        CHECK(after.code == sdk::ErrorCode::Ok);
+        CHECK(withinTruncationBand(after.decodedMs, after.declaredMs, after.declaredMs));
+        // 同一个文件被当成半速播放：听起来长了一倍（不是「检测出来」，是慢放）。
+        CHECK(after.decodedMs + after.decodedMs / 10 >= before.decodedMs * 2);
     }
 }

@@ -90,7 +90,11 @@ TEST_SUITE("AudioStreamDecoder format trust policy")
         CHECK(decoder.m_srcSpec.format == guessed.format);
         CHECK(decoder.m_srcSpec.bytesPerSample == guessed.bytesPerSample);
         CHECK(decoder.m_srcSpec.bitsPerSample == guessed.bitsPerSample);
-        CHECK(decoder.m_lazyResample.isInit() == false);
+        // 规格 6.2 S3：工厂**无条件**建（#39 之前这里是 `isInit() == false`）。
+        // 声明值恰好等于设备规格时也要建，否则首帧实测值永远覆盖不上去；
+        // 只是不提前 Value()——规格相同就用不到重采样器。
+        CHECK(decoder.m_lazyResample.isInit() == true);
+        CHECK(decoder.m_lazyResample->IsValueCreated() == false);
     }
 
     TEST_CASE("first decode callback promotes actual pcm format for generic ffmpeg codec")

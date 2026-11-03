@@ -297,6 +297,9 @@ status_t M4AExtractor::initWithFFmpegDemux()
         useAdts = false;
     }
 
+    // 逐包累加时长（#39 / 规格 6.2 S1）：包时长来自 stts 解出的时间轴，不受
+    // mdhd/mvhd 里那个声明值污染；本就在遍历全部包，零额外 IO。抄 MKV 的既有做法。
+    int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
             // 每个解复用包当一个 payload：ADTS 包装也按包做，边界天然对齐（#17）。
@@ -318,13 +321,39 @@ status_t M4AExtractor::initWithFFmpegDemux()
             }
             memcpy(packet->data() + fill, pkt->data, static_cast<size_t>(pkt->size));
             m_packetizedMetaBuf.push_back(packet);
+
+            if (pkt->duration > 0) {
+                totalPktDuration += pkt->duration;
+            }
         }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
 
-    if (fmt->duration > 0) {
-        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
+    uint64_t measuredMs = 0;
+    if (totalPktDuration > 0) {
+        const double scale = av_q2d(audioStream->time_base) * 1000.0;
+        if (scale > 0) {
+            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
+        }
+    }
+    const uint64_t declaredMs
+        = fmt->duration > 0 ? static_cast<uint64_t>(fmt->duration / 1000) : 0;
+    if (measuredMs > 0) {
+        m_audioSpec.durationMs = measuredMs;
+        // S5：只打一条日志，不新增错误码、不进 UI——音频本身是完好的，报错是误伤。
+        const uint64_t diff
+            = declaredMs > measuredMs ? declaredMs - measuredMs : measuredMs - declaredMs;
+        if (declaredMs > 0 && diff * 100 > declaredMs) {
+            LOGW("declared duration %llu ms disagrees with packet timeline %llu ms (using packet "
+                 "timeline)",
+                 static_cast<unsigned long long>(declaredMs),
+                 static_cast<unsigned long long>(measuredMs));
+        }
+    } else if (declaredMs > 0) {
+        m_audioSpec.durationMs = declaredMs;
+        LOGW("no packet timeline, fall back to container duration %llu ms",
+             static_cast<unsigned long long>(declaredMs));
     }
 
     avformat_close_input(&fmt);
