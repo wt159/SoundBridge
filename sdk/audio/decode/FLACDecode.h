@@ -16,6 +16,8 @@ private:
     AudioDecodeSpec m_decSpec;
     size_t m_decOffset;
     std::atomic<bool> *m_abortFlag;
+    // finish() 里的整段 MD5 比对结果：-1 未做，0 相符，1 不符
+    int m_md5CheckResult;
 
 public:
     FLACDecode(AudioDecodeCallback *callback);
@@ -26,6 +28,9 @@ public:
     void setInputBuffer(const AudioBufferPtr &inBuf);
     int processOne();
     bool seekToSample(FLAC__uint64 sample);
+    // EOS 处调用：返回 true 表示整段 PCM 与 STREAMINFO 声明的 MD5 不符（规格 4.3 / 条目 10）。
+    // 只问 MD5，不看 error_callback 的调用次数——后者分不清「跳了帧」还是「解了垃圾」。
+    bool md5MismatchAtEndOfStream();
     void setAbortFlag(std::atomic<bool> *flag);
 
 protected:

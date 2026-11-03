@@ -14,12 +14,17 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
     , m_decSpec()
     , m_decOffset(0)
     , m_abortFlag(nullptr)
+    , m_md5CheckResult(-1)
 {
+    // 必须在 init() 之前打开：libFLAC 的 FLAC__stream_decoder_set_md5_checking()
+    // 在非 UNINITIALIZED 状态直接返回 false，init() 之后调用是一次静默空操作
+    // （init 里 do_md5_checking 已按 protected_->md5_checking 定死）。这就是 #10 的
+    // 「CRC 只进日志」的第二层原因：MD5 根本没开过。
+    this->set_md5_checking(true);
     ::FLAC__StreamDecoderInitStatus init_status = this->init();
     if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
         LOGE("initializing decoder: %s", FLAC__StreamDecoderInitStatusString[init_status]);
     }
-    this->set_md5_checking(true);
 }
 
 FLACDecode::~FLACDecode()
@@ -94,6 +99,26 @@ bool FLACDecode::seekToSample(FLAC__uint64 sample)
         return false;
     }
     return this->seek_absolute(sample);
+}
+
+bool FLACDecode::md5MismatchAtEndOfStream()
+{
+    // 整段校验的唯一出口：libFLAC 把 STREAMINFO 里声明的 MD5 与实际解出的 PCM
+    // 的比对放在 finish() 里（process_single() 的返回值只说明「这一帧解出来了」，
+    // LOST_SYNC 之后它照样 resync 继续，样本数可以一个不差）。
+    // 因此帧级信号分不清「跳了帧」还是「解了垃圾」，这里必须问 MD5。
+    if (m_md5CheckResult < 0) {
+        if (!is_valid()) {
+            m_md5CheckResult = 0;
+        } else {
+            // finish() 返回 false 当且仅当 MD5 不符（其它失败在 process 阶段就已返回 false）
+            m_md5CheckResult = finish() ? 0 : 1;
+            if (m_md5CheckResult != 0) {
+                LOGE("stream md5 mismatch");
+            }
+        }
+    }
+    return m_md5CheckResult == 1;
 }
 
 void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
@@ -221,27 +246,46 @@ bool FLACDecode::eof_callback()
     }
 
     ::FLAC__StreamDecoderWriteStatus status = ::FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
-    if (frame->header.number.sample_number == 0) {
-        m_decSpec.spec.numChannel     = this->get_channels();
-        m_decSpec.spec.bitsPerSample  = this->get_bits_per_sample();
+    // 首个被写出的帧不一定是 sample_number == 0：喂整段流（为了 STREAMINFO/MD5）之后，
+    // 丢帧/插空帧都可能让第一个 write_callback 从中间开始。所以初始化条件看缓冲是否就绪，
+    // 而不是看帧序号——旧写法在这里会解引用空指针。
+    if (m_decSpec.lineData == nullptr
+        || m_decSpec.spec.numChannel != static_cast<int>(this->get_channels())
+        || m_decSpec.spec.bitsPerSample != static_cast<int>(this->get_bits_per_sample())) {
+        if (m_decSpec.lineData != nullptr) {
+            for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
+                delete[] m_decSpec.lineData[ch];
+            }
+            delete[] m_decSpec.lineData;
+            m_decSpec.lineData = nullptr;
+        }
+        if (m_decSpec.lineSize != nullptr) {
+            delete[] m_decSpec.lineSize;
+            m_decSpec.lineSize = nullptr;
+        }
+        m_decSpec.spec.numChannel     = static_cast<int>(this->get_channels());
+        m_decSpec.spec.bitsPerSample  = static_cast<int>(this->get_bits_per_sample());
         m_decSpec.spec.bytesPerSample = m_decSpec.spec.bitsPerSample >> 3;
         m_decSpec.spec.format         = getAudioFormatByBitPreSample(m_decSpec.spec.bitsPerSample);
-        m_decSpec.spec.sampleRate     = this->get_sample_rate();
+        m_decSpec.spec.sampleRate     = static_cast<int>(this->get_sample_rate());
+        m_decSpec.spec.samples        = 0;
         m_decSpec.lineData            = new uint8_t *[m_decSpec.spec.numChannel];
         m_decSpec.lineSize            = new int[m_decSpec.spec.numChannel];
         for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
             m_decSpec.lineData[ch] = nullptr;
+            m_decSpec.lineSize[ch] = 0;
         }
-        LOGI("numChannel: %d, bitsPerSample: %d, bytesPerSample: %d, sampleRate: %d, samples: %llu",
+        LOGI("numChannel: %d, bitsPerSample: %d, bytesPerSample: %d, sampleRate: %d",
              m_decSpec.spec.numChannel, m_decSpec.spec.bitsPerSample, m_decSpec.spec.bytesPerSample,
-             m_decSpec.spec.sampleRate, m_decSpec.spec.samples);
+             m_decSpec.spec.sampleRate);
     }
-    if (m_decSpec.spec.samples != frame->header.blocksize) {
+    if (m_decSpec.spec.samples != frame->header.blocksize
+        || m_decSpec.lineData[0] == nullptr) {
         m_decSpec.spec.samples = frame->header.blocksize;
         for (int ch = 0; ch < m_decSpec.spec.numChannel; ch++) {
-            if (m_decSpec.lineData[ch] != nullptr)
-                delete[] m_decSpec.lineData[ch];
-            m_decSpec.lineSize[ch] = m_decSpec.spec.samples * m_decSpec.spec.bytesPerSample;
+            delete[] m_decSpec.lineData[ch];
+            m_decSpec.lineSize[ch] = static_cast<int>(m_decSpec.spec.samples)
+                * m_decSpec.spec.bytesPerSample;
             m_decSpec.lineData[ch] = new uint8_t[m_decSpec.lineSize[ch]];
         }
     }
