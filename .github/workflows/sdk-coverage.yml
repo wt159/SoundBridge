@@ -61,3 +61,13 @@ jobs:
         with:
           name: sdk-coverage-html
           path: build/coverage/html
+
+      # 覆盖度矩阵的 14 行「declared / measured」只在断言失败时才由 doctest 打印，
+      # 通过时数值不可见。这里用 -s 打开成功断言输出，把 Linux 侧的实测毫秒数留在日志里，
+      # 供与 Windows 侧核对（两侧必须落在同一容差内，见 doc/format-support.md）。
+      - name: Report coverage matrix numbers
+        run: |
+          set -o pipefail
+          LD_LIBRARY_PATH="${{ github.workspace }}/sdk/3rdparty/dist/linux_x86_64_gcc_debug/lib" \
+            ./build/sdk/test/UnitTests -ts=MediaCoverage -s \
+            | grep -E "declared |coverage matrix covered"
