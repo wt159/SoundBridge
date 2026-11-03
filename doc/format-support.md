@@ -52,8 +52,11 @@ tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
   实测 12000ms 说明边界确实按包给全了。素材由 `小镇姑娘-陶喆.flac` 截 12s 无损转码而来。
 
 **实测侧必须取「解码后的 spec」**（`AudioDecodeProcess::getDecodeSpec()`），不能取提取器 spec：
-mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/m4a/mp3/wma 的解码输出是 fltp
+mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/mp3/wma 的解码输出是 fltp
 （4 B/采样），按 2 B 换算会得到虚假的 2 倍——#19 的「mp3 2.03 倍」正是这么来的。
+
+采样格式**取决于 codec，不取决于扩展名**：`.m4a` 下 AAC 解出 fltp（4 B/采样），ALAC 解出 s16
+（2 B/采样）。所以任何按扩展名套字节数的换算都是错的，只能读解码后的 spec。
 
 **没有白名单**。`durationMs == 0` 在受支持格式上是硬失败而不是跳过（#15 已让 11 个扩展名都能推导
 时长）；缺素材同样计入失败，并在输出里打 `[SKIP]` 便于定位。新增格式时，
