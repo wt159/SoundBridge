@@ -434,6 +434,65 @@ std::vector<char> dropTailBytes(const std::vector<char> &data, size_t dropBytes)
     return std::vector<char>(data.begin(), data.end() - static_cast<long>(dropBytes));
 }
 
+// ---- 以下 helper 来自 #37（坏帧：跳过继续）----
+
+// 只数「跳过」通知的极小 callback：护栏用例直接驱动 AudioDecode，不需要 PCM。
+struct SkipCountingCallback : public AudioDecodeCallback {
+    int skips = 0;
+    void onAudioDecodeCallback(AudioDecodeSpec &) override { }
+    void onAudioDecodeSkip() override { ++skips; }
+};
+
+struct BadFrameMeasurement {
+    bool opened              = false;
+    uint64_t goodMs          = 0;
+    uint64_t measuredMs      = 0;
+    size_t measuredBytes     = 0;
+    StreamDecoderState state = StreamDecoderState::IDLE;
+    sdk::ErrorCode code      = sdk::ErrorCode::Ok;
+    std::string detail;
+};
+
+// 规格 4.2 的实测方法：在文件 50% 处零化一段**等长**区间（长度不变），
+// 所以「文件变短了」不可能成为旁证；再走同一条流式路径测「完好」与「坏帧」两次。
+// 判据只看 `measuredMs ≈ goodMs`（规格 4.1 的「坏帧之后还有数据」）与报了什么码。
+BadFrameMeasurement measureMidFrameCorruption(const std::string &goodPath, const char *extension,
+                                             size_t zeroBytes, int timeoutMs, const char *tag)
+{
+    BadFrameMeasurement result;
+    std::vector<char> good = readWholeFile(goodPath);
+    if (good.size() <= zeroBytes * 2) {
+        return result;
+    }
+
+    StreamMeasurement goodRun = measureStream(goodPath, extension, timeoutMs);
+    if (!goodRun.opened || goodRun.bytes == 0) {
+        return result;
+    }
+    result.goodMs = devBytesToMs(goodRun.bytes);
+    if (result.goodMs == 0) {
+        return result;
+    }
+
+    std::vector<char> broken = good;
+    zeroRange(broken, broken.size() / 2, zeroBytes);
+
+    TempFileSet tmp(tag);
+    std::string badPath = tmp.make(extension);
+    if (!writeWholeFile(badPath, broken)) {
+        return result;
+    }
+
+    StreamMeasurement bad = measureStream(badPath, extension, timeoutMs);
+    result.opened        = true;
+    result.measuredMs    = devBytesToMs(bad.bytes);
+    result.measuredBytes = bad.bytes;
+    result.state         = bad.state;
+    result.code          = bad.code;
+    result.detail        = bad.detail;
+    return result;
+}
+
 
 } // namespace
 
@@ -476,17 +535,19 @@ TEST_SUITE("BadInput")
     TEST_CASE("player reports decode error instead of stalling silently")
     {
         RealMediaFixture fixture;
-        if (!fixture.exists("像我这样的人-毛不易.128.mp3")) {
+        // #37 之后单包坏帧是「跳过继续」，错误要等 EOS 才汇总，所以素材必须短到能在
+        // 用例超时内播完：3.7 s 的 ogg，坏页在 50% 处，播到 2.7 s 就 EOS 并汇总。
+        if (!fixture.exists("Ringtones-耳聆网.ogg")) {
             return;
         }
         TempFileSet tmp("player");
         std::string dir = tmp.makeDir();
         REQUIRE(!dir.empty());
-        std::vector<char> data = readWholeFile(fixture.mediaPath("像我这样的人-毛不易.128.mp3"));
+        std::vector<char> data = readWholeFile(fixture.mediaPath("Ringtones-耳聆网.ogg"));
         REQUIRE(!data.empty());
-        zeroRange(data, data.size() * 2 / 100, 4096);
+        zeroRange(data, data.size() / 2, 100);
         // 单曲目录：autoSkip 因「没有下一首」关闭，停下来的位置是确定的
-        REQUIRE(writeWholeFile(dir + "/broken.mp3", data));
+        REQUIRE(writeWholeFile(dir + "/broken.ogg", data));
 
         RecordingPlayerListener listener;
         std::string logDir = "./log";
@@ -1142,5 +1203,232 @@ TEST_SUITE("BadInput")
         CHECK(rejected(openExtractor(badPath, ".m4a")));
         StreamMeasurement bad = measureStream(badPath, ".m4a", 10000);
         CHECK(bad.bytes == 0);
+    }
+
+    // ---- 以下用例来自 #37（坏帧：跳过继续）----
+    //
+    // 规格 4.1 的判别原则：坏帧之后还有数据，截断之后没有。所以判据只有两条——
+    // `measured ≈ good`（证明没有因为坏帧提前结束）与「一条汇总 DataCorrupted，
+    // 且不是 DataTruncated」。跳帧数、PCM 内容一概不断言（规格 F3）。
+
+    // 规格 4.3 / 条目 10：libFLAC 只把 LOST_SYNC 交给 error_callback，自行 resync 到下一帧，
+    // 所以帧级计数分不清「跳了帧」还是「解了垃圾」——唯一可靠的信号是 STREAMINFO 的 MD5。
+    TEST_CASE("flac bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.flac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".flac", 400, 120000, "flac_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.state == StreamDecoderState::ERROR);
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+        CHECK(!run.detail.empty());
+    }
+
+    // 规格 4.3 / 条目 11：单包解不出要跳过并计数，不能整段停。
+    TEST_CASE("mp3 bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "像我这样的人-毛不易.128.mp3";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".mp3", 400, 60000, "mp3_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    TEST_CASE("aac bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "WavinFlag.aac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".aac", 200, 60000, "aac_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    // APE 的包粒度是 73728 样本（≈1.67 s，实测 12 个包解完这首 24.9 s 的曲子），
+    // 一个包坏掉就按整包丢弃，代价是 6.7pp——超过 T6 的 5pp 带宽。所以这一档的
+    // 「没有提前结束」用「播过了损坏点（50%）并一路到 EOS」来判，而不是 5pp。
+    TEST_CASE("ape bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-ape.ape";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".ape", 200, 60000, "ape_bf");
+        REQUIRE(run.opened);
+        // 损坏点在文件 50% 处（≈12.4 s），解出 88% 说明确实跳过了坏包继续播
+        CHECK(run.measuredMs * 10 >= run.goodMs * 8);
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    TEST_CASE("m4a bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "摇滚乐_Freesound.m4a";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".m4a", 400, 60000, "m4a_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    TEST_CASE("asf bad frame plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "萨克斯机.asf";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".asf", 400, 60000, "asf_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    // 规格 4.3 / 条目 12：`OV_HOLE(-3)` 是「跳页」，不是 `-1` 的整段失败。
+    // 素材只有 3.7 s / 10.6 KB，一页就装走了 ≈1 s 音频（26%），整页 CRC 失败后
+    // 这页的音频必然丢掉——5pp 带宽在这种页粒度上不可能成立（见 findings-37）。
+    // 这一档判「播过了损坏点（50% 处的页）并继续到结尾」，不判 5pp。
+    TEST_CASE("ogg bad page plays to the end and reports corruption")
+    {
+        RealMediaFixture fixture;
+        const char *name = "Ringtones-耳聆网.ogg";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".ogg", 100, 60000, "ogg_bf");
+        REQUIRE(run.opened);
+        // 损坏页在 50% 处（≈1.85 s）；解出 73% 说明跳到下一页后一直播到结尾
+        CHECK(run.measuredMs * 10 >= run.goodMs * 6);
+        CHECK(run.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    // 规格 4.3 护栏：连续失败 ≥32 帧就放弃，不在垃圾区里空转。
+    // 直接驱动 AudioDecode 才判得准：走 mp3 那种带 parser 的编解码器时，parser 自己会把
+    // 找不到同步字的垃圾静默吃掉，根本形不成「单包解不出」；而逐包路径上「32 次后放弃」
+    // 与「无限跳下去」在播放时长上分不出来（两者都停在坏处附近）。
+    // 这里用 wavpack：它没有 parser，包会直接丢给解码器，垃圾包稳定返回 AVERROR_INVALIDDATA。
+    TEST_CASE("ffmpeg path gives up after 32 consecutive undecodable packets")
+    {
+        SkipCountingCallback callback;
+        AudioDecode decode(AUDIO_CODEC_ID_WAVPACK, &callback);
+        REQUIRE(decode.initCheck() == sdk_utils::OK);
+
+        std::vector<char> garbage(1024, static_cast<char>(0xFF));
+        std::vector<AudioBuffer::AudioBufferPtr> packets;
+        for (int i = 0; i < 40; ++i) {
+            AudioBuffer::AudioBufferPtr buf = std::make_shared<AudioBuffer>(garbage.size());
+            std::memcpy(buf->data(), garbage.data(), garbage.size());
+            packets.push_back(buf);
+        }
+
+        int ret = decode.decodePackets(packets);
+
+        // 放弃：40 个包只吃到阈值就停，没把整段垃圾扫完
+        CHECK(ret < 0);
+        CHECK(decode.skippedPacketCount() == 32);
+        // 跳过通知按发生顺序发，第 32 次当场放弃，所以只发到 31 次
+        CHECK(callback.skips == 31);
+    }
+
+    TEST_CASE("a long run of undecodable packets is abandoned instead of scanned")
+    {
+        RealMediaFixture fixture;
+        const char *name = "摇滚乐_Freesound.m4a";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".m4a", 60000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("m4a_garbage");
+        std::vector<char> broken = good;
+        zeroRange(broken, broken.size() / 2, broken.size() * 40 / 100);
+        std::string badPath = tmp.make(".m4a");
+        REQUIRE(writeWholeFile(badPath, broken));
+
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        StreamMeasurement bad                       = measureStream(badPath, ".m4a", 60000);
+        long long cost                              = elapsedMs(begin);
+
+        REQUIRE(bad.opened);
+        CHECK(cost < 20000);
+        // 停在垃圾区里（≈50%），而不是一路扫到文件尾（那样会是 ≈90%）
+        CHECK(devBytesToMs(bad.bytes) * 10 <= goodMs * 7);
+        CHECK(bad.code == sdk::ErrorCode::DataCorrupted);
+    }
+
+    // 规格 F4 / 第 9 节：wav、aiff、mkv 的坏帧**不可检测**——坏字节直接变成错误样本，
+    // 长度不变、内容变了，没有任何帧级校验。这三条是反向用例：将来谁加了假信号，它们就红。
+    TEST_CASE("wav bad frame stays silent because it is undetectable")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".wav", 400, 20000, "wav_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.state == StreamDecoderState::EOS);
+        CHECK(run.code == sdk::ErrorCode::Ok);
+    }
+
+    TEST_CASE("aiff bad frame stays silent because it is undetectable")
+    {
+        RealMediaFixture fixture;
+        const char *name = "俱乐部音乐循环-Freesound.aiff";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".aiff", 400, 60000, "aiff_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.state == StreamDecoderState::EOS);
+        CHECK(run.code == sdk::ErrorCode::Ok);
+    }
+
+    TEST_CASE("mkv bad frame stays silent because it is undetectable")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-mkv.mkv";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        BadFrameMeasurement run
+            = measureMidFrameCorruption(fixture.mediaPath(name), ".mkv", 400, 60000, "mkv_bf");
+        REQUIRE(run.opened);
+        CHECK(withinTruncationBand(run.measuredMs, run.goodMs, run.goodMs));
+        CHECK(run.state == StreamDecoderState::EOS);
+        CHECK(run.code == sdk::ErrorCode::Ok);
     }
 }

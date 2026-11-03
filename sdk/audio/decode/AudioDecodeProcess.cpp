@@ -73,8 +73,8 @@ status_t AudioDecodeProcess::init()
         FLACDecode flacDecode(this);
         DataSourceBase *dataSource = m_extractor->getDataSource();
         if (dataSource != nullptr) {
-            if (!flacDecode.initFromDataSource(dataSource, m_extractor->getAudioDataOffset(),
-                                               m_extractor->getDataSize())) {
+            // 与流式路径一致：从文件起点喂，libFLAC 需要 STREAMINFO 才能做整段 MD5 校验。
+            if (!flacDecode.initFromDataSource(dataSource, 0, m_extractor->getDataSize())) {
                 LOG_ERROR(LOG_TAG, "initFromDataSource failed");
                 return INVALID_OPERATION;
             }

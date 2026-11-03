@@ -42,6 +42,10 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_decodedRate(0)
     , m_pcmFrameBytes(0)
     , m_seekBaseMs(0)
+    , m_skippedFrames(0)
+    , m_pendingFrameSkip(false)
+    , m_frameSkipWithDataAfter(false)
+    , m_md5Mismatch(false)
     , m_thread()
 {
 }
@@ -127,6 +131,10 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_consumedBytes.store(0);
     m_decodedFrames = 0;
     m_seekBaseMs    = 0;
+    m_skippedFrames = 0;
+    m_pendingFrameSkip      = false;
+    m_frameSkipWithDataAfter = false;
+    m_md5Mismatch           = false;
     // 解出量的计量：源格式每帧字节数与采样率。format 未知的容器（mp3 等）在首帧回调里回填。
     m_decodedRate   = static_cast<uint32_t>(m_srcSpec.sampleRate);
     m_pcmFrameBytes = static_cast<size_t>(m_srcSpec.numChannel)
@@ -194,25 +202,58 @@ void AudioStreamDecoder::finishAtEndOfStream()
     //   2. 否则解出时长短于标称 5 个百分点以上才报。5pp 的来源是正常文件的量化误差
     //      （编码器 padding、seek 偏移、asf 的 +0.20%）都在它以内。
     // D 类（mp3/aac/mkv）不受影响：它们的标称时长跟着文件一起缩水，measured ≈ declared。
+
+    // 规格 F1 / F2：坏帧的汇总是「跳过继续」的最后一步，优先级高于截断。
+    // 只有「跳帧之后还有数据」才算坏帧——失败发生在数据末尾属于截断（4.1）。
+    if (m_frameSkipWithDataAfter) {
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "skipped %llu undecodable frame(s)",
+                      static_cast<unsigned long long>(m_skippedFrames));
+        setError(sdk::ErrorCode::DataCorrupted, detail);
+        return;
+    }
+
     if (m_extractor != nullptr && m_extractor->isDataTruncated()) {
         setError(sdk::ErrorCode::DataTruncated, "declared payload length exceeds the file size");
         return;
     }
 
-    if (m_durationMs > 0 && m_decodedRate > 0) {
-        const uint64_t measuredMs
-            = m_seekBaseMs + m_decodedFrames * 1000 / static_cast<uint64_t>(m_decodedRate);
-        if (measuredMs < m_durationMs && (m_durationMs - measuredMs) * 20 > m_durationMs) {
-            char detail[128];
-            std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
-                          static_cast<unsigned long long>(measuredMs),
-                          static_cast<unsigned long long>(m_durationMs));
-            setError(sdk::ErrorCode::DataTruncated, detail);
-            return;
-        }
+    const bool haveNominal = m_durationMs > 0 && m_decodedRate > 0;
+    const uint64_t measuredMs = haveNominal
+        ? m_seekBaseMs + m_decodedFrames * 1000 / static_cast<uint64_t>(m_decodedRate)
+        : 0;
+    // 正常 EOS 时短于标称超过 5 个百分点（T4）
+    const bool shortOfNominal = haveNominal && measuredMs < m_durationMs
+        && (m_durationMs - measuredMs) * 20 > m_durationMs;
+
+    // flac 的整段 MD5：截断会让 MD5 同样不符，所以「解不到标称长度」时按截断处理，
+    // 只有「解到了标称长度却对不上」才是流内坏帧（4.1：坏帧之后还有数据）。
+    if (m_md5Mismatch && !shortOfNominal) {
+        setError(sdk::ErrorCode::DataCorrupted, "flac stream md5 mismatch");
+        return;
+    }
+
+    if (shortOfNominal) {
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
+                      static_cast<unsigned long long>(measuredMs),
+                      static_cast<unsigned long long>(m_durationMs));
+        setError(sdk::ErrorCode::DataTruncated, detail);
+        return;
     }
 
     m_state.store(StreamDecoderState::EOS);
+}
+
+void AudioStreamDecoder::noteSkippedFrame(uint64_t count)
+{
+    m_skippedFrames += count;
+    m_pendingFrameSkip = true;
+}
+
+void AudioStreamDecoder::onAudioDecodeSkip()
+{
+    noteSkippedFrame();
 }
 
 void AudioStreamDecoder::setError(sdk::ErrorCode code, const char *detail)
@@ -275,8 +316,10 @@ void AudioStreamDecoder::threadFunc()
         flac.setAbortFlag(&m_abortDecode);
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
-            if (!flac.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
-                                         m_extractor->getDataSize())) {
+            // 从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
+            // libFLAC 只在读到 STREAMINFO 之后才会做整段 MD5 校验（没有 STREAMINFO 时它
+            // 直接 do_md5_checking=false），所以只喂纯帧数据等于把 #10 的检测手段关掉。
+            if (!flac.initFromDataSource(ds, 0, m_extractor->getDataSize())) {
                 setError(sdk::ErrorCode::DecodeInitFailed, "flac stream init failed");
                 return;
             }
@@ -313,6 +356,9 @@ void AudioStreamDecoder::threadFunc()
 
             int ret = flac.processOne();
             if (ret == 0) {
+                // 帧级信号（error_callback 的 LOST_SYNC）分不清「跳了帧」还是「解了垃圾」，
+                // 整段校验只能靠 STREAMINFO 的 MD5，而 libFLAC 只在 finish() 里比它。
+                m_md5Mismatch = flac.md5MismatchAtEndOfStream();
                 finishAtEndOfStream();
                 break;
             }
@@ -391,6 +437,10 @@ void AudioStreamDecoder::threadFunc()
                 }
                 setError(sdk::ErrorCode::DataCorrupted, "vorbis decode failed");
                 break;
+            }
+            if (ret == kVorbisHoleSkipped) {
+                // 坏页：记账后继续读下一页（规格 4.3 / 条目 12），EOS 处汇总成一条错误。
+                noteSkippedFrame();
             }
         }
 
@@ -514,6 +564,12 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
     }
 
     writeDecodedBytes(m_interleaveBuf.data(), frameBytes);
+
+    // 跳帧之后又解出了数据 → 这一次是「坏帧」而不是「截断」（规格 4.1）。
+    if (m_pendingFrameSkip) {
+        m_pendingFrameSkip      = false;
+        m_frameSkipWithDataAfter = true;
+    }
 }
 
 bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
@@ -616,8 +672,7 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         DataSourceBase *ds = m_extractor->getDataSource();
         int ret            = -1;
         if (ds != nullptr) {
-            flacDecode.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
-                                          m_extractor->getDataSize());
+            flacDecode.initFromDataSource(ds, 0, m_extractor->getDataSize());
             ret = flacDecode.process_until_end_of_stream() ? 0 : -1;
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
@@ -691,6 +746,8 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         }
         ret = decode.decode(extPtr->data(), extPtr->size());
     }
+    // 跳过的包已经在发生顺序上经 onAudioDecodeSkip() 记过账，上报留给 EOS 汇总
+    // （规格 F1：一次坏文件只挂一条错误）；这里只区分「放弃」与「正常跑完」。
     if (ret < 0) {
         return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
     }

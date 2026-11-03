@@ -5,6 +5,12 @@
 
 #define LOG_TAG "VorbisDecode"
 
+namespace {
+// 全是垃圾时的护栏：连续跳页到这个数就放弃，不在一个坏页链里无限空转
+// （与 ffmpeg 侧的 32 包同义，规格 4.3）。
+constexpr int kMaxConsecutiveHoles = 32;
+} // namespace
+
 VorbisDecode::VorbisDecode(AudioDecodeCallback *callback)
     : m_callback(callback)
     , m_decSpec()
@@ -16,6 +22,11 @@ VorbisDecode::VorbisDecode(AudioDecodeCallback *callback)
     , m_vf()
     , m_vfOpened(false)
     , m_interleavedBuf()
+    , m_consecutiveHoles(0)
+    , m_holeCount(0)
+    , m_streamingFallbackTried(false)
+    , m_streamingMode(false)
+    , m_producedAudio(false)
 {
 }
 
@@ -168,6 +179,53 @@ bool VorbisDecode::ensureDecodeSpec(int channels, int sampleRate, uint64_t sampl
     return true;
 }
 
+bool VorbisDecode::open(bool seekable)
+{
+    if (m_vfOpened) {
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+    }
+
+    m_pos              = 0;
+    m_consecutiveHoles = 0;
+    m_producedAudio    = false;
+    m_streamingMode    = !seekable;
+    m_streamingFallbackTried = false;
+
+    ov_callbacks callbacks;
+    callbacks.read_func  = &VorbisDecode::readCallback;
+    callbacks.seek_func  = seekable ? &VorbisDecode::seekCallback : nullptr;
+    callbacks.close_func = &VorbisDecode::closeCallback;
+    callbacks.tell_func  = seekable ? &VorbisDecode::tellCallback : nullptr;
+
+    int ret = ov_open_callbacks(this, &m_vf, nullptr, 0, callbacks);
+    if (ret != 0) {
+        LOGE("ov_open_callbacks failed: %d (seekable=%d)", ret, seekable ? 1 : 0);
+        return false;
+    }
+    m_vfOpened = true;
+
+    vorbis_info *vi = ov_info(&m_vf, -1);
+    if (vi == nullptr || vi->channels <= 0 || vi->rate <= 0) {
+        LOGE("ov_info failed after open");
+        ov_clear(&m_vf);
+        m_vfOpened = false;
+        return false;
+    }
+
+    LOGI("Bitstream is %d channel, %ldHz (seekable=%d)", vi->channels, vi->rate, seekable ? 1 : 0);
+    return true;
+}
+
+bool VorbisDecode::reopenAsStreaming()
+{
+    // 只在数据源模式下有意义：内存模式（initVF）本来就是整块缓冲，没有预热路径。
+    if (m_dataSourcePtr == nullptr) {
+        return false;
+    }
+    return open(false);
+}
+
 bool VorbisDecode::initVF(const char *data, size_t size)
 {
     if (data == nullptr || size == 0) {
@@ -175,40 +233,10 @@ bool VorbisDecode::initVF(const char *data, size_t size)
         return false;
     }
 
-    if (m_vfOpened) {
-        ov_clear(&m_vf);
-        m_vfOpened = false;
-    }
-
     m_data          = reinterpret_cast<const uint8_t *>(data);
     m_size          = size;
-    m_pos           = 0;
     m_dataSourcePtr = nullptr;
-
-    ov_callbacks callbacks;
-    callbacks.read_func  = &VorbisDecode::readCallback;
-    callbacks.seek_func  = &VorbisDecode::seekCallback;
-    callbacks.close_func = &VorbisDecode::closeCallback;
-    callbacks.tell_func  = &VorbisDecode::tellCallback;
-
-    int ret = ov_open_callbacks(this, &m_vf, nullptr, 0, callbacks);
-    if (ret != 0) {
-        LOGE("ov_open_callbacks failed: %d", ret);
-        return false;
-    }
-
-    m_vfOpened = true;
-
-    vorbis_info *vi = ov_info(&m_vf, -1);
-    if (vi == nullptr) {
-        LOGE("ov_info failed after open");
-        ov_clear(&m_vf);
-        m_vfOpened = false;
-        return false;
-    }
-
-    LOGI("Bitstream is %d channel, %ldHz", vi->channels, vi->rate);
-    return true;
+    return open(true);
 }
 
 bool VorbisDecode::initVFFromSource(DataSourceBase *src, off64_t size)
@@ -217,25 +245,10 @@ bool VorbisDecode::initVFFromSource(DataSourceBase *src, off64_t size)
         return false;
     }
 
-    if (m_vfOpened) {
-        ov_clear(&m_vf);
-        m_vfOpened = false;
-    }
     m_dataSourcePtr = src;
     m_data          = nullptr;
     m_size          = static_cast<size_t>(size);
-    m_pos           = 0;
-    ov_callbacks cb;
-    cb.read_func  = &VorbisDecode::readCallback;
-    cb.seek_func  = &VorbisDecode::seekCallback;
-    cb.close_func = &VorbisDecode::closeCallback;
-    cb.tell_func  = &VorbisDecode::tellCallback;
-    int ret       = ov_open_callbacks(this, &m_vf, nullptr, 0, cb);
-    if (ret < 0) {
-        return false;
-    }
-    m_vfOpened = true;
-    return true;
+    return open(true);
 }
 
 int VorbisDecode::decodeOne()
@@ -258,13 +271,41 @@ int VorbisDecode::decodeOne()
                          1, &bitstream);
 
     if (bytes == 0) {
+        // 条目 13 的成因：可 seek 打开时 libvorbisfile 会走到 _open_seekable2() 的
+        // ov_raw_seek() 预热。预热循环里 `_get_next_page() < 0`（首个音频页是空洞时
+        // 就是这种情形）被当成「到文件尾」，它把 pcm_offset 置成 total 后直接 break，
+        // 结果一个包都没进 vf->os，函数仍返回 0。于是 init 成功、ov_read 立刻 0(OV_EOF)，
+        // 「0 字节且不报错」。这里退化成不可 seek 的流式打开：从第一页起逐页读，
+        // 空洞按 OV_HOLE 跳过，代价是该文件不能再 ov_time_seek。
+        if (!m_streamingFallbackTried && !m_streamingMode && !m_producedAudio) {
+            m_streamingFallbackTried = true;
+            LOGW("seekable open buffered no audio page (hole on the first audio page); "
+                 "reopening as a non-seekable stream");
+            if (reopenAsStreaming()) {
+                return decodeOne();
+            }
+        }
         return 0;
+    }
+
+    if (bytes == OV_HOLE) {
+        // `OV_HOLE(-3)` 是「这一页坏了，后面还有数据」，不是 `-1` 的整段失败
+        // （规格 4.1：坏帧之后还有数据）。
+        ++m_holeCount;
+        if (++m_consecutiveHoles >= kMaxConsecutiveHoles) {
+            LOGE("giving up after %d consecutive ogg holes", m_consecutiveHoles);
+            return -1;
+        }
+        LOGW("ogg hole #%d: skipping the damaged page", m_holeCount);
+        return kVorbisHoleSkipped;
     }
 
     if (bytes < 0) {
         LOGE("ov_read failed: %ld", bytes);
         return -1;
     }
+    m_consecutiveHoles = 0;
+    m_producedAudio    = true;
 
     vorbis_info *vi = ov_info(&m_vf, bitstream);
     if (vi == nullptr || vi->channels <= 0 || vi->rate <= 0) {
@@ -303,6 +344,11 @@ int VorbisDecode::decodeOne()
 bool VorbisDecode::seekToMs(uint64_t targetMs)
 {
     if (!m_vfOpened) {
+        return false;
+    }
+    if (m_streamingMode && m_streamingFallbackTried) {
+        // 退化打开的流没有 seek_func，ov_time_seek 必然 OV_ENOSEEK
+        LOGE("seek unavailable on a stream reopened after a hole");
         return false;
     }
 

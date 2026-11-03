@@ -56,6 +56,8 @@ public:
 
 protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
+    // 单包解不出、已被 ffmpeg 路径跳过：只记账，EOS 时汇总成一条 DataCorrupted。
+    void onAudioDecodeSkip() override;
 
 private:
     size_t calculateMinWriteSpace(AudioCodecID codecId) const;
@@ -70,6 +72,9 @@ private:
     // EOS 汇总：比「解出多少」与「标称多长」，短于 5pp 就报 DataTruncated（规格 T4 / 条目 23）。
     // 唯一出口：调用后状态要么 EOS，要么 ERROR。
     void finishAtEndOfStream();
+    // 记一次「这一帧/这一包解不出，跳过继续」（规格 4.1 / F1）。
+    // 不立即置 ERROR：坏帧的处置是播到结尾再汇总一条 DataCorrupted。
+    void noteSkippedFrame(uint64_t count = 1);
     // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
     void setError(sdk::ErrorCode code, const char *detail);
 
@@ -104,6 +109,17 @@ private:
     size_t m_pcmFrameBytes;
     // seek 之后 measured 从 seek 目标算起，否则会被判成「短于标称」
     uint64_t m_seekBaseMs;
+
+    // 坏帧（规格 4.1 / F1）：跳过的帧/页/包数只进日志与 detail，不做机器可读字段。
+    uint64_t m_skippedFrames;
+    // 有一次跳帧还没遇到「后续成功解出」——失败若发生在数据末尾（后面没有数据了），
+    // 那是截断而不是坏帧（4.1 的判别原则）。
+    bool m_pendingFrameSkip;
+    // 跳帧之后确实还有数据 → 坏帧。F2：与「短于标称」同时成立时报 DataCorrupted。
+    bool m_frameSkipWithDataAfter;
+    // flac 的 STREAMINFO MD5 不符（条目 10）。截断同样会让 MD5 不符，所以只在
+    // 「解到标称长度」时才当作坏帧，解不到长度的交给 DataTruncated（4.1）。
+    bool m_md5Mismatch;
 
     std::thread m_thread;
 };
