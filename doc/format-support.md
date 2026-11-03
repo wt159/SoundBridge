@@ -20,7 +20,7 @@
 | `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | **有** | |
 | `.flac` | `FLACExtractor` | libFLAC 直解（不经 ffmpeg parser） | 完整 | **有** | 帧边界与 EOS 由 libFLAC 给出，不受分包策略影响 |
 | `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | **有** | `durationMs` 由末页 granule 推导（#15） |
-| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | **有** | ALAC（无 parser）路径尚未验证 |
+| `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | **有** | 两份素材：AAC 与 ALAC。ALAC 无 parser，边界只能由提取器给，已实测（`music-alac.m4a`） |
 | `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | **有** | 另有自研解析兜底路径，同样按数据包切片 |
 | `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 完整 | **有** | |
 | `.ape` | `APEExtractor` | ffmpeg demux + 分包 | 完整 | **有**（含流式路径） | 2026-11 修复只解首帧的问题（`50b538f0c`） |
@@ -28,7 +28,7 @@
 
 ## 覆盖度基线（来源 [#16](https://github.com/wt159/SoundBridge/issues/16)）
 
-用例在 `sdk/test/unit/test_media_coverage.cpp` 的 `MediaCoverage` 套件里：14 份素材覆盖上表 11 个
+用例在 `sdk/test/unit/test_media_coverage.cpp` 的 `MediaCoverage` 套件里：15 份素材覆盖上表 11 个
 扩展名，随 `ctest -R sdk_unit_tests` 运行，净耗时约 2.5 秒。
 
 **判据是双向的**——只有下界会漏报「重复解码」（#13 普查里 FLAC 重复 35× 仍判 PASS）：
@@ -42,10 +42,14 @@ tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
 
 - 1% 是相对量；150ms 是绝对下限，覆盖帧/页量化误差（ogg 一页最多约 93ms、AAC 一帧 21ms）；
   25% 上限防止极短素材上的断言退化成「怎么都过」。
-- 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 13 份为 0.00%，1% 留了 5× 余量。
-- **两侧数值一致**（2026-11-03 核对）：Linux runner 与 Windows 本地跑出的 14 行 `declared/measured`
+- 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 14 份为 0.00%，1% 留了 5× 余量。
+- **两侧数值一致**（2026-11-03 核对）：Linux runner 与 Windows 本地跑出的 15 行 `declared/measured`
   逐项相同，偏差仍是 asf 的 +71ms。CI 的 `Report coverage matrix numbers` 步骤每次都用
   `-ts=MediaCoverage -s` 把这张表打进日志——换 runner、升 ffmpeg 后直接比日志，不必本地复现。
+- **ALAC 分支已实测**（2026-11-03，`music-alac.m4a`，44.1kHz 立体声 12s）：`declared 12000ms /
+  measured 12000ms`，零偏差。这条路径是 #17 决策里唯一没被素材打到的分支——ALAC 在 ffmpeg 里
+  没有 parser，切包只能靠解复用边界；只解首包的话会得到约 93ms（ALAC 一帧 4096 采样），
+  实测 12000ms 说明边界确实按包给全了。素材由 `小镇姑娘-陶喆.flac` 截 12s 无损转码而来。
 
 **实测侧必须取「解码后的 spec」**（`AudioDecodeProcess::getDecodeSpec()`），不能取提取器 spec：
 mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/m4a/mp3/wma 的解码输出是 fltp

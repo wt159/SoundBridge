@@ -29,7 +29,9 @@ TEST_SUITE("MediaCoverage")
             const char *extension;
         };
 
-        // 每个受支持扩展名至少一份素材；wav/aac/mp3 各两份，顺带覆盖不同采样率与码率档位。
+        // 每个受支持扩展名至少一份素材；wav/aac/mp3/m4a 各两份，顺带覆盖不同采样率、码率档位
+        // 与同前缀下的两种 codec。m4a 的第二份是 ALAC：它没有 ffmpeg parser（#17），
+        // 边界只能由提取器给，这条路径原先没有任何素材打到过。
         const MediaCase kMediaCases[] = {
             { "music.wav", ".wav" },
             { "ring.wav", ".wav" },
@@ -43,6 +45,7 @@ TEST_SUITE("MediaCoverage")
             { "消愁-毛不易.320.mp3", ".mp3" },
             { "Ringtones-耳聆网.ogg", ".ogg" },
             { "摇滚乐_Freesound.m4a", ".m4a" },
+            { "music-alac.m4a", ".m4a" },
             { "萨克斯机.asf", ".asf" },
             { "十七岁-陶喆.96.wma", ".wma" },
         };
