@@ -43,6 +43,9 @@ tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
 - 1% 是相对量；150ms 是绝对下限，覆盖帧/页量化误差（ogg 一页最多约 93ms、AAC 一帧 21ms）；
   25% 上限防止极短素材上的断言退化成「怎么都过」。
 - 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 13 份为 0.00%，1% 留了 5× 余量。
+- **两侧数值一致**（2026-11-03 核对）：Linux runner 与 Windows 本地跑出的 14 行 `declared/measured`
+  逐项相同，偏差仍是 asf 的 +71ms。CI 的 `Report coverage matrix numbers` 步骤每次都用
+  `-ts=MediaCoverage -s` 把这张表打进日志——换 runner、升 ffmpeg 后直接比日志，不必本地复现。
 
 **实测侧必须取「解码后的 spec」**（`AudioDecodeProcess::getDecodeSpec()`），不能取提取器 spec：
 mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/m4a/mp3/wma 的解码输出是 fltp
