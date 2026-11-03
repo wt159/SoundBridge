@@ -264,17 +264,19 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         return;
     }
     processProperties.source = source;
+    // 规格 5.4 H3：拒绝的唯一出口是 createExtractor 返回空，错误码按「扩展名是否注册」分，
+    // 不按「解析失败」分——注册过却被拒说明头坏了，没注册且魔数认不出才是格式不支持。
+    const bool extensionRegistered
+        = ExtractorFactory::isSupportedExtension(fileProperties.extensionName);
     std::shared_ptr<ExtractorHelper> extractor(
         ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName, true));
     if (extractor == nullptr) {
-        recordScanRejection(ErrorCode::ExtractorUnsupported);
-        reportError(ErrorCode::ExtractorUnsupported, "createExtractor returned nullptr",
-                    musicProperties);
-        return;
-    }
-    if (extractor->initCheck() != OK) {
-        recordScanRejection(ErrorCode::ExtractorInitFailed);
-        reportError(ErrorCode::ExtractorInitFailed, "extractor initCheck failed", musicProperties);
+        const ErrorCode code = extensionRegistered ? ErrorCode::ExtractorInitFailed
+                                                   : ErrorCode::ExtractorUnsupported;
+        const char *detail   = extensionRegistered ? "extractor rejected the file header"
+                                                   : "createExtractor returned nullptr";
+        recordScanRejection(code);
+        reportError(code, detail, musicProperties);
         return;
     }
     auto openEnd = std::chrono::steady_clock::now();
