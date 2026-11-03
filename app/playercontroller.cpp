@@ -12,6 +12,49 @@ QString formatTime(qulonglong timeMs)
     formatted += (second >= 10 ? ":" : ":0") + QString::number(second, 10);
     return formatted;
 }
+
+// 文件级错误的原因文案：措辞归 app 层（规格 8.3 只规定「必须分档、必须不同」）。
+// 每个错误码一句，禁止共用——「可能不完整」与「已损坏」必须是两句不同的话。
+QString errorReason(soundbridge::ErrorCode code)
+{
+    switch (code) {
+    case soundbridge::ErrorCode::ExtractorUnsupported:
+        return "FORMAT NOT SUPPORTED";
+    case soundbridge::ErrorCode::ExtractorInitFailed:
+        return "FILE IS DAMAGED - CANNOT PLAY";
+    case soundbridge::ErrorCode::FileOpenFailed:
+        return "FILE CANNOT BE OPENED";
+    case soundbridge::ErrorCode::DecodeInitFailed:
+        return "FILE CANNOT BE DECODED";
+    case soundbridge::ErrorCode::DataCorrupted:
+        return "FILE IS CORRUPTED";
+    case soundbridge::ErrorCode::DataTruncated:
+        return "FILE MAY BE INCOMPLETE";
+    default:
+        return QString::fromUtf8(soundbridge::GetErrorInfo(code).message).toUpper();
+    }
+}
+
+// 提示文案按「原因 + 位置 + 处置」拼：处置来自 ErrorInfo.action / autoSkip（ADR 0001），
+// 位置来自已播到的 curPositionMs（规格 8.3：必须带已播到的位置）。
+QString errorSubtitle(soundbridge::ErrorCode code, bool autoSkip, qulonglong positionMs,
+                      int trackIndex, const QString &detail)
+{
+    // 批量扫描汇总（不绑定曲目）：detail 就是「N 个文件无法播放」，直接显示计数
+    if (trackIndex < 0 && !detail.isEmpty()) {
+        return detail.toUpper();
+    }
+
+    const soundbridge::ErrorInfo &info = soundbridge::GetErrorInfo(code);
+    QString subtitle                   = errorReason(code);
+    if (info.recoverable && positionMs > 0) {
+        subtitle += " AT " + formatTime(positionMs);
+    }
+    if (info.action == soundbridge::ErrorAction::SkipTrack) {
+        subtitle += autoSkip ? " - SKIPPED" : " - STOPPED";
+    }
+    return subtitle;
+}
 }
 
 PlayerController::PlayerController(const soundbridge::PlayerConfig &config, QObject *parent)
@@ -125,6 +168,11 @@ const PlayerViewState &PlayerController::viewState() const
 void PlayerController::onStateChanged(soundbridge::PlayerState state)
 {
     m_viewState.playerState = static_cast<int>(state);
+    if (m_errorSubtitleActive) {
+        // 错误提示要留到用户下一次操作或换曲，别被随后的 Playing/Paused 立刻覆盖
+        publishViewState();
+        return;
+    }
     switch (state) {
     case soundbridge::PlayerState::Stopped:
         m_viewState.subtitle = "IDLE";
@@ -139,7 +187,8 @@ void PlayerController::onStateChanged(soundbridge::PlayerState state)
 
 void PlayerController::onTrackChanged(int index)
 {
-    m_currentTrackIndex = index;
+    m_currentTrackIndex    = index;
+    m_errorSubtitleActive  = false;
     publishViewState();
 }
 
@@ -168,9 +217,12 @@ void PlayerController::onPlaylistChanged(const std::list<soundbridge::TrackInfo>
 void PlayerController::onError(soundbridge::ErrorCode code, const std::string &detail,
                                int trackIndex, const std::string &path, const std::string &traceId)
 {
-    m_viewState.subtitle = m_autoSkipOnError ? "SKIPPING ERROR" : "PLAYBACK ERROR";
+    const QString detailText = QString::fromUtf8(detail.c_str());
+    m_viewState.subtitle
+        = errorSubtitle(code, m_autoSkipOnError, m_viewState.positionMs, trackIndex, detailText);
+    m_errorSubtitleActive = true;
     publishViewState();
-    emit errorOccurred(static_cast<int>(code), QString::fromUtf8(detail.c_str()), trackIndex,
+    emit errorOccurred(static_cast<int>(code), detailText, trackIndex,
                        QString::fromUtf8(path.c_str()), QString::fromUtf8(traceId.c_str()),
                        m_autoSkipOnError);
 }

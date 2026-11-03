@@ -12,9 +12,11 @@
 #include "WorkQueue.hpp"
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -116,6 +118,16 @@ public:
     bool advanceToNextTrack();
     bool skipToNextPlayable();
 
+    // 本次播放会话内因坏数据失败过的曲目：自动跳过不再回头重试（同一曲不重试第二次）。
+    // 用户按播放（MusicPlayer::play）时清空，视为新会话。
+    void markTrackFailed(size_t index);
+    bool isTrackFailed(size_t index) const;
+    void clearFailedTracks();
+
+    // 批量扫描汇总：被拒文件不进播放列表，永远不会成为「当前曲目」，
+    // 只能靠这份按错误码分桶的汇总把它们报给 UI（规格 5.4 H6）。
+    void reportScanSummary();
+
 protected:
     void _addMusic(const std::string &musicPath);
     void _next();
@@ -129,10 +141,15 @@ private:
     void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
     void reportError(ErrorCode code, const std::string &detail,
                      const MusicPropertiesPtr &musicProperties);
+    void recordScanRejection(ErrorCode code);
     std::string currentTraceId() const;
 
 private:
     std::atomic<MusicPlaybackMode> m_playbackMode;
     std::mt19937 m_randomEngine;
+    mutable std::mutex m_failedMutex;
+    std::set<size_t> m_failedIndices;
+    mutable std::mutex m_rejectMutex;
+    std::map<ErrorCode, int> m_scanRejects;
 };
 }
