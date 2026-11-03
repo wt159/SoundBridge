@@ -18,7 +18,7 @@
 | `.aiff` | `AIFFExtractor` | 项目自实现 | 完整 | 待补（#16） | |
 | `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 解码输出为 fltp（4 B/采样），真实格式由首帧回填 |
 | `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | 待补（#16） | |
-| `.flac` | `FLACExtractor` | libFLAC 直解 | 完整 | 待补（#16） | 无 parser，边界由 libFLAC 逐帧给出 |
+| `.flac` | `FLACExtractor` | libFLAC 直解（不经 ffmpeg parser） | 完整 | 待补（#16） | 帧边界与 EOS 由 libFLAC 给出，不受分包策略影响 |
 | `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | `durationMs` 由末页 granule 推导（#15） |
 | `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | ALAC（无 parser）路径尚未验证 |
 | `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 另有自研解析兜底路径，同样按数据包切片 |
