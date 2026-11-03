@@ -119,8 +119,23 @@ status_t AACExtractor::init()
             = ((data[3] & 0x03) << 11) | ((data[4] & 0xff) << 3) | ((data[5] & 0xe0) >> 5);
         m_header.adts.bufferFullness   = ((data[5] & 0x1F) << 6) | ((data[6] & 0xfc) >> 2);
         m_header.adts.numRawDataBlocks = data[6] & 0x03;
+        // ADTS 头必须自洽（规格 10.#4）：syncWord 固定 0xFFF，channelConfiguration 为 0 表示
+        // 「声道配置在带内」，ADTS 流里拿不到，等于没有声道数。旧代码两项都不校验，一份全零头
+        // 会被解析成 sr=96000 ch=0 并且 return NO_ERROR，垃圾文件就这样进了播放列表。
+        if (m_header.adts.syncWord != 0x0FFF) {
+            LOGE("invalid ADTS syncWord: %#x", m_header.adts.syncWord);
+            return NO_INIT;
+        }
+        if (m_header.adts.channelConfiguration == 0) {
+            LOGE("invalid ADTS channelConfiguration: 0");
+            return NO_INIT;
+        }
         m_spec.sampleRate              = getSampleRate(m_header.adts.samplingFrequencyIndex);
         m_spec.numChannel              = m_header.adts.channelConfiguration;
+        if (m_spec.sampleRate == 0) {
+            LOGE("invalid ADTS samplingFrequencyIndex: %d", m_header.adts.samplingFrequencyIndex);
+            return NO_INIT;
+        }
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
 
