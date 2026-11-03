@@ -4,6 +4,7 @@
 #include "VorbisDecode.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 
 #define LOG_TAG "AudioStreamDecoder"
@@ -37,6 +38,10 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_consumedBytes(0)
     , m_bytesPerMs(0)
     , m_abortDecode(false)
+    , m_decodedFrames(0)
+    , m_decodedRate(0)
+    , m_pcmFrameBytes(0)
+    , m_seekBaseMs(0)
     , m_thread()
 {
 }
@@ -120,6 +125,12 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_seekDiscardBytes = 0;
     m_processedBytes   = 0;
     m_consumedBytes.store(0);
+    m_decodedFrames = 0;
+    m_seekBaseMs    = 0;
+    // 解出量的计量：源格式每帧字节数与采样率。format 未知的容器（mp3 等）在首帧回调里回填。
+    m_decodedRate   = static_cast<uint32_t>(m_srcSpec.sampleRate);
+    m_pcmFrameBytes = static_cast<size_t>(m_srcSpec.numChannel)
+        * static_cast<size_t>(m_srcSpec.bytesPerSample);
     m_ring->reset();
     if (startThread) {
         m_state.store(StreamDecoderState::DECODING);
@@ -170,6 +181,38 @@ std::string AudioStreamDecoder::errorDetail() const
 {
     std::lock_guard<std::mutex> lock(m_errorMutex);
     return m_errorDetail;
+}
+
+void AudioStreamDecoder::finishAtEndOfStream()
+{
+    // 规格 T4 / 条目 23：EOS 汇总处比「解出多少」与「标称多长」。
+    // 修好前 flac 截到 60% 一路走到 EOS，用户看到进度条走到 177 秒就结束、界面还写着
+    // 297 秒——「播到坏处」必须说出来，只有 P0（切在音频之后）才静默。
+    //
+    // 两道判据，都是「事实上报 + 单一阈值」：
+    //   1. 提取器能确定短读（wav/aiff 声明长度 > 文件剩余）→ 与百分比无关地报；
+    //   2. 否则解出时长短于标称 5 个百分点以上才报。5pp 的来源是正常文件的量化误差
+    //      （编码器 padding、seek 偏移、asf 的 +0.20%）都在它以内。
+    // D 类（mp3/aac/mkv）不受影响：它们的标称时长跟着文件一起缩水，measured ≈ declared。
+    if (m_extractor != nullptr && m_extractor->isDataTruncated()) {
+        setError(sdk::ErrorCode::DataTruncated, "declared payload length exceeds the file size");
+        return;
+    }
+
+    if (m_durationMs > 0 && m_decodedRate > 0) {
+        const uint64_t measuredMs
+            = m_seekBaseMs + m_decodedFrames * 1000 / static_cast<uint64_t>(m_decodedRate);
+        if (measuredMs < m_durationMs && (m_durationMs - measuredMs) * 20 > m_durationMs) {
+            char detail[128];
+            std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
+                          static_cast<unsigned long long>(measuredMs),
+                          static_cast<unsigned long long>(m_durationMs));
+            setError(sdk::ErrorCode::DataTruncated, detail);
+            return;
+        }
+    }
+
+    m_state.store(StreamDecoderState::EOS);
 }
 
 void AudioStreamDecoder::setError(sdk::ErrorCode code, const char *detail)
@@ -256,6 +299,8 @@ void AudioStreamDecoder::threadFunc()
                 m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
                 m_processedBytes   = m_consumedBytes.load();
                 m_seekDiscardBytes = 0;
+                m_decodedFrames    = 0;
+                m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
                 if (!flac.seekToSample(targetSample)) {
@@ -268,7 +313,7 @@ void AudioStreamDecoder::threadFunc()
 
             int ret = flac.processOne();
             if (ret == 0) {
-                m_state.store(StreamDecoderState::EOS);
+                finishAtEndOfStream();
                 break;
             }
             if (ret < 0) {
@@ -321,6 +366,8 @@ void AudioStreamDecoder::threadFunc()
                 m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
                 m_processedBytes   = m_consumedBytes.load();
                 m_seekDiscardBytes = 0;
+                m_decodedFrames    = 0;
+                m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
                     setError(sdk::ErrorCode::DataCorrupted, "vorbis seek failed");
                     break;
@@ -331,7 +378,7 @@ void AudioStreamDecoder::threadFunc()
 
             int ret = vorbis.decodeOne();
             if (ret == 0) {
-                m_state.store(StreamDecoderState::EOS);
+                finishAtEndOfStream();
                 break;
             }
             if (ret < 0) {
@@ -363,6 +410,8 @@ void AudioStreamDecoder::threadFunc()
             m_processedBytes = 0;
             m_seekDiscardBytes
                 = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
+            m_decodedFrames = 0;
+            m_seekBaseMs    = static_cast<uint64_t>(seekMs);
             m_seekRequestMs.store(-1);
             m_abortDecode.store(false);
             m_state.store(StreamDecoderState::DECODING);
@@ -378,7 +427,7 @@ void AudioStreamDecoder::threadFunc()
             if (m_seekRequestMs.load() >= 0) {
                 continue;
             }
-            m_state.store(StreamDecoderState::EOS);
+            finishAtEndOfStream();
             break;
         }
 
@@ -400,7 +449,7 @@ void AudioStreamDecoder::threadFunc()
         } else if (ret == RunDecodeResult::Abort && m_seekRequestMs.load() >= 0) {
             continue;
         } else if (!m_stopRequest.load()) {
-            m_state.store(StreamDecoderState::EOS);
+            finishAtEndOfStream();
         }
         break;
     }
@@ -446,6 +495,13 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
         return;
     }
 
+    // 首帧的真实规格：解码器说了算，EOS 汇总的换算基准跟着它走（mp3 等容器头里没有）
+    if (out.spec.sampleRate > 0 && out.spec.numChannel > 0 && out.spec.bytesPerSample > 0) {
+        m_decodedRate   = static_cast<uint32_t>(out.spec.sampleRate);
+        m_pcmFrameBytes = static_cast<size_t>(out.spec.numChannel)
+            * static_cast<size_t>(out.spec.bytesPerSample);
+    }
+
     m_interleaveBuf.resize(frameBytes);
     size_t offset = 0;
     for (size_t i = 0; i < static_cast<size_t>(out.spec.samples); ++i) {
@@ -479,6 +535,10 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
 
     const char *writePtr = pcm + skipped;
     size_t writeLen      = pcmSize - skipped;
+
+    if (m_pcmFrameBytes > 0) {
+        m_decodedFrames += static_cast<uint64_t>(writeLen / m_pcmFrameBytes);
+    }
 
     const char *outData = writePtr;
     size_t outLen       = writeLen;
