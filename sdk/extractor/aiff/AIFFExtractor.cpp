@@ -1,6 +1,7 @@
 #include "AIFFExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
+#include <algorithm>
 #include <cstring>
 
 #define LOG_TAG "AIFFExtractor"
@@ -31,6 +32,10 @@ AIFFExtractor::AIFFExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
+    , m_dataTruncated(false)
+    , m_audioSpec()
+    , m_audioCodecID(AUDIO_CODEC_ID_NONE)
+    , m_metaBuf()
 {
     m_initCheck = init();
 }
@@ -127,8 +132,24 @@ status_t AIFFExtractor::init()
             m_formChunk.chunkVec.push_back(sdChunk);
             LOGI("offset=%u", sdChunk->offset);
             LOGI("blockSize=%u", sdChunk->blockSize);
-            size_t soundDataSize = ck.chunkSize - sizeof(temp);
-            sdChunk->soundData   = std::make_shared<AudioBuffer>(soundDataSize);
+
+            // 规格 T2 / 条目 6：与 wav 同一条规则——按 min(声明长度, 文件剩余) 读。
+            // durationMs 仍由 COMM 的 numSampleFrames 得出（标称值不变）。
+            uint64_t declaredSize
+                = (ck.chunkSize > sizeof(temp)) ? ck.chunkSize - sizeof(temp) : 0;
+            uint64_t available
+                = (static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(offset))
+                ? static_cast<uint64_t>(fileSize) - static_cast<uint64_t>(offset)
+                : 0;
+            m_dataTruncated      = declaredSize > available;
+            size_t soundDataSize = static_cast<size_t>(std::min(declaredSize, available));
+            LOGI("soundDataSize=%u (declared %llu%s)", (unsigned)soundDataSize,
+                 (unsigned long long)declaredSize, m_dataTruncated ? ", truncated" : "");
+            if (soundDataSize == 0) {
+                m_validFormat = false;
+                break;
+            }
+            sdChunk->soundData = std::make_shared<AudioBuffer>(soundDataSize);
             if (m_dataSource->readAt(offset, sdChunk->soundData->data(), soundDataSize)
                 < (ssize_t)soundDataSize) {
                 m_validFormat = false;
@@ -136,6 +157,14 @@ status_t AIFFExtractor::init()
             }
             offset    += soundDataSize;
             m_metaBuf  = sdChunk->soundData;
+            // 可播样本按实际读到的算（规格 T2），标称时长留在 durationMs 里
+            if (m_audioSpec.numChannel > 0 && m_audioSpec.bytesPerSample > 0) {
+                size_t frames
+                    = soundDataSize / (m_audioSpec.numChannel * m_audioSpec.bytesPerSample);
+                if (frames < m_audioSpec.samples) {
+                    m_audioSpec.samples = frames;
+                }
+            }
             AudioBuffer2HostEndian(m_metaBuf, m_audioSpec);
         } else {
             if (invalidChunkCount++ > 15) {

@@ -67,6 +67,9 @@ private:
     void threadFunc();
     RunDecodeResult runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
+    // EOS 汇总：比「解出多少」与「标称多长」，短于 5pp 就报 DataTruncated（规格 T4 / 条目 23）。
+    // 唯一出口：调用后状态要么 EOS，要么 ERROR。
+    void finishAtEndOfStream();
     // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
     void setError(sdk::ErrorCode code, const char *detail);
 
@@ -93,6 +96,14 @@ private:
     std::atomic<uint64_t> m_consumedBytes;
     uint64_t m_bytesPerMs;
     std::atomic<bool> m_abortDecode;
+
+    // EOS 汇总的计量：解码产出的**源格式**帧数与采样率。
+    // 刻意复用 positionMs()/m_consumedBytes 之外的计数器——那两处只在 seek 路径被赋值（#34 findings 1）。
+    uint64_t m_decodedFrames;
+    uint32_t m_decodedRate;
+    size_t m_pcmFrameBytes;
+    // seek 之后 measured 从 seek 目标算起，否则会被判成「短于标称」
+    uint64_t m_seekBaseMs;
 
     std::thread m_thread;
 };
