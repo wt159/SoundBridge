@@ -9,10 +9,6 @@
 #define LOG_TAG "AudioStreamDecoder"
 
 namespace {
-static const int kDecodeOk    = 0;
-static const int kDecodeAbort = 1;
-static const int kDecodeError = -1;
-
 static bool shouldTrustExtractorPcmFormat(AudioCodecID codecId)
 {
     return codecId == AUDIO_CODEC_ID_NONE || codecId == AUDIO_CODEC_ID_FLAC
@@ -39,7 +35,6 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_bytesPerMs(0)
     , m_abortDecode(false)
     , m_thread()
-    , m_options()
 {
 }
 
@@ -129,20 +124,7 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
 
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
 {
-    DecodeOptions defaultOpts;
-    m_options = defaultOpts;
     return start(extractor, true);
-}
-
-sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, const DecodeOptions &opts)
-{
-    if (opts.autoDecode) {
-        m_options = opts;
-        return start(extractor);
-    }
-
-    m_options = opts;
-    return start(extractor, false);
 }
 
 void AudioStreamDecoder::stop()
@@ -200,114 +182,13 @@ bool AudioStreamDecoder::canDecode() const
     }
 
     // ring 无空间
-    size_t minSpace
-        = m_options.minWriteSpace > 0 ? m_options.minWriteSpace : calculateMinWriteSpace(m_codecID);
+    const size_t minSpace = calculateMinWriteSpace(m_codecID);
 
     if (m_ring->availableWrite() < minSpace) {
         return false;
     }
 
     return true;
-}
-
-DecodeResult AudioStreamDecoder::decodeNext(const DecodeOptions &opts)
-{
-    // 使用传入的选项或成员选项
-    DecodeOptions effectiveOpts = opts;
-    if (opts.minWriteSpace == 0 && m_options.minWriteSpace > 0) {
-        effectiveOpts = m_options;
-    }
-    if (effectiveOpts.minWriteSpace == 0) {
-        effectiveOpts.minWriteSpace = calculateMinWriteSpace(m_codecID);
-    }
-
-    // 1. 状态检查
-    StreamDecoderState currentState = m_state.load();
-
-    if (currentState == StreamDecoderState::IDLE) {
-        m_state.store(StreamDecoderState::DECODING);
-        currentState = StreamDecoderState::DECODING;
-    }
-
-    if (currentState == StreamDecoderState::EOS) {
-        return DecodeResult::EOS;
-    }
-
-    if (currentState == StreamDecoderState::ERROR) {
-        LOGE("decodeNext called but in ERROR state");
-        return DecodeResult::ERROR;
-    }
-
-    if (m_stopRequest.load() || m_abortDecode.load()) {
-        return DecodeResult::ABORT;
-    }
-
-    // 2. 背压检查
-    size_t minSpace = effectiveOpts.minWriteSpace;
-    size_t avail    = m_ring->availableWrite();
-    if (avail < minSpace) {
-        return DecodeResult::WAIT;
-    }
-
-    // 3. 根据 codec 使用逐帧/逐块解码
-    DecodeResult result = DecodeResult::ERROR;
-
-    if (m_codecID == AUDIO_CODEC_ID_FLAC) {
-        FLACDecode flacDecode(this);
-        flacDecode.setAbortFlag(&m_abortDecode);
-        DataSourceBase *ds = m_extractor->getDataSource();
-        if (ds != nullptr) {
-            flacDecode.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
-                                          m_extractor->getDataSize());
-            int ret = flacDecode.processOne();
-            if (ret == 0) {
-                result = DecodeResult::EOS;
-            } else if (ret > 0) {
-                result = DecodeResult::OK;
-            } else {
-                result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
-            }
-        }
-    } else if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
-        VorbisDecode vorbisDecode(this);
-        vorbisDecode.setAbortFlag(&m_abortDecode);
-        DataSourceBase *ds = m_extractor->getDataSource();
-        if (ds != nullptr) {
-            vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize());
-            int ret = vorbisDecode.decodeOne();
-            if (ret == 0) {
-                result = DecodeResult::EOS;
-            } else if (ret > 0) {
-                result = DecodeResult::OK;
-            } else {
-                result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
-            }
-        }
-    } else {
-        int ret = runDecode();
-        if (ret == 0) {
-            result = DecodeResult::EOS;
-        } else if (ret > 0) {
-            result = DecodeResult::OK;
-        } else {
-            result = m_abortDecode.load() ? DecodeResult::ABORT : DecodeResult::ERROR;
-        }
-    }
-
-    // 4. 处理结果
-    switch (result) {
-    case DecodeResult::OK:
-        m_state.store(StreamDecoderState::DECODING);
-        return DecodeResult::OK;
-    case DecodeResult::EOS:
-        m_state.store(StreamDecoderState::EOS);
-        return DecodeResult::EOS;
-    case DecodeResult::ERROR:
-        m_state.store(StreamDecoderState::ERROR);
-        return DecodeResult::ERROR;
-    default:
-        return result;
-    }
 }
 
 void AudioStreamDecoder::threadFunc()
@@ -457,8 +338,8 @@ void AudioStreamDecoder::threadFunc()
             m_abortDecode.store(false);
             m_state.store(StreamDecoderState::DECODING);
 
-            int ret = runDecode();
-            if (ret == kDecodeError) {
+            RunDecodeResult ret = runDecode();
+            if (ret == RunDecodeResult::Error) {
                 m_state.store(StreamDecoderState::ERROR);
                 break;
             }
@@ -477,18 +358,17 @@ void AudioStreamDecoder::threadFunc()
         }
 
         // 在解码前添加背压检查
-        size_t minSpace = m_options.minWriteSpace > 0 ? m_options.minWriteSpace
-                                                      : calculateMinWriteSpace(m_codecID);
+        const size_t minSpace = calculateMinWriteSpace(m_codecID);
 
         if (m_ring->availableWrite() < minSpace) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
-        int ret = runDecode();
-        if (ret == kDecodeError) {
+        RunDecodeResult ret = runDecode();
+        if (ret == RunDecodeResult::Error) {
             m_state.store(StreamDecoderState::ERROR);
-        } else if (ret == kDecodeAbort && m_seekRequestMs.load() >= 0) {
+        } else if (ret == RunDecodeResult::Abort && m_seekRequestMs.load() >= 0) {
             continue;
         } else if (!m_stopRequest.load()) {
             m_state.store(StreamDecoderState::EOS);
@@ -623,22 +503,22 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
     return true;
 }
 
-int AudioStreamDecoder::runDecode()
+AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
 {
     if (m_extractor == nullptr) {
-        return kDecodeError;
+        return RunDecodeResult::Error;
     }
 
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
         if (extPtr == nullptr || extPtr->size() == 0) {
             LOGE("extractor getMetaData failed");
-            return kDecodeError;
+            return RunDecodeResult::Error;
         }
         if (!writeDecodedBytes(extPtr->data(), extPtr->size())) {
-            return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
+        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
@@ -654,14 +534,14 @@ int AudioStreamDecoder::runDecode()
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                return kDecodeError;
+                return RunDecodeResult::Error;
             }
             ret = flacDecode.decode(extPtr);
         }
         if (ret < 0) {
-            return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
+        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
@@ -671,7 +551,7 @@ int AudioStreamDecoder::runDecode()
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
             if (!vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize())) {
-                return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+                return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
             }
             while (true) {
                 ret = vorbisDecode.decodeOne();
@@ -686,14 +566,14 @@ int AudioStreamDecoder::runDecode()
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                return kDecodeError;
+                return RunDecodeResult::Error;
             }
             ret = vorbisDecode.decode(extPtr);
         }
         if (ret < 0) {
-            return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
+        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     AudioCodecConfig config;
@@ -707,7 +587,7 @@ int AudioStreamDecoder::runDecode()
     AudioDecode decode(m_codecID, this, config);
     if (decode.initCheck() != sdk_utils::OK) {
         LOGE("AudioDecode init failed, codec=%#x", m_codecID);
-        return kDecodeError;
+        return RunDecodeResult::Error;
     }
     std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData
         = m_extractor->getPacketizedMetaData();
@@ -718,12 +598,12 @@ int AudioStreamDecoder::runDecode()
         AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
         if (extPtr == nullptr || extPtr->size() == 0) {
             LOGE("extractor getMetaData failed");
-            return kDecodeError;
+            return RunDecodeResult::Error;
         }
         ret = decode.decode(extPtr->data(), extPtr->size());
     }
     if (ret < 0) {
-        return m_abortDecode.load() ? kDecodeAbort : kDecodeError;
+        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
     }
-    return m_abortDecode.load() ? kDecodeAbort : kDecodeOk;
+    return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
 }

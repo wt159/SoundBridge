@@ -20,20 +20,7 @@
 class FLACDecode;
 class VorbisDecode;
 
-enum class DecodeResult {
-    OK    = 0,
-    WAIT  = 1, // 需等待 (ring 满 / 数据不足)
-    EOS   = 2,
-    ERROR = -1,
-    ABORT = -2
-};
-
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
-
-struct DecodeOptions {
-    size_t minWriteSpace = 0; // 0 = 自动计算
-    bool autoDecode      = true; // 默认开启自动解码
-};
 
 class AudioStreamDecoder : public NonCopyable, public AudioDecodeCallback {
 public:
@@ -41,8 +28,9 @@ public:
     ~AudioStreamDecoder();
 
     sdk_utils::status_t start(ExtractorHelper *extractor);
+    // startThread=false 只做初始化（供只检查状态/生命周期的场合），不会产出任何数据：
+    // 同步解码入口已按 #18 删除，解码只能由 threadFunc 驱动。
     sdk_utils::status_t start(ExtractorHelper *extractor, bool startThread);
-    sdk_utils::status_t start(ExtractorHelper *extractor, const DecodeOptions &opts);
     void stop();
     void seekToMs(uint64_t targetMs);
 
@@ -50,7 +38,13 @@ public:
     uint64_t positionMs() const;
     uint64_t durationMs() const;
     bool canDecode() const;
-    DecodeResult decodeNext(const DecodeOptions &opts = DecodeOptions());
+
+    // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
+    // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
+    // 通用路径又一次性解完整段。结果是 `while (ret != EOS)` 在 FLAC/OGG 上永不终止。
+    // 要让它真流式，必须让解码器实例跨调用常驻，并新增「线程运行期间禁止调用」的约束——
+    // 为一个零生产调用方的接口引入第三套生命周期并不划算。需要同步整段解码时用
+    // AudioDecodeProcess（整段解成 AudioBuffer），需要流式时用 start() + 消费 ring。
 
 protected:
     void onAudioDecodeCallback(AudioDecodeSpec &out) override;
@@ -58,8 +52,12 @@ protected:
 private:
     size_t calculateMinWriteSpace(AudioCodecID codecId) const;
 
+    // runDecode() 一次性解完整个 payload，成功即「流已耗尽」，不存在「还有数据」的中间态。
+    // 用枚举而不是 0/-1，避免再把「成功」映射成「还有进度」而看不出矛盾。
+    enum class RunDecodeResult { Completed, Error, Abort };
+
     void threadFunc();
-    int runDecode();
+    RunDecodeResult runDecode();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
 
 private:
@@ -84,6 +82,4 @@ private:
     std::atomic<bool> m_abortDecode;
 
     std::thread m_thread;
-
-    DecodeOptions m_options;
 };

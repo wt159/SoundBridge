@@ -18,13 +18,13 @@
 | `.aiff` | `AIFFExtractor` | 项目自实现 | 完整 | 待补（#16） | |
 | `.mp3` | `MP3Extractor` | ffmpeg + mp3 parser | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 解码输出为 fltp（4 B/采样），真实格式由首帧回填 |
 | `.aac` | `AACExtractor` | ffmpeg + adts parser | 完整 | 待补（#16） | |
-| `.flac` | `FLACExtractor` | libFLAC 直解 | 完整 | 待补（#16） | 同步 `decodeNext()` 路径有缺陷，见 #18 |
-| `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | 同步路径同 #18；`durationMs` 目前为 0 |
+| `.flac` | `FLACExtractor` | libFLAC 直解 | 完整 | 待补（#16） | 无 parser，边界由 libFLAC 逐帧给出 |
+| `.ogg` | `OGGExtractor` | libvorbis 直解 | **部分未知**：`format`/`bytesPerSample`=0 | 待补（#16） | `durationMs` 由末页 granule 推导（#15） |
 | `.m4a` | `M4AExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | ALAC（无 parser）路径尚未验证 |
-| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 唯一实现了 `getPacketizedMetaData()` 的提取器 |
+| `.asf` | `ASFExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 另有自研解析兜底路径，同样按数据包切片 |
 | `.wma` | `ASFExtractor` | 同上（无嗅探注册） | 完整 | 待补（#16） | |
 | `.ape` | `APEExtractor` | ffmpeg demux + 分包 | 完整 | **已有**：`APE decode covers advertised duration` | 2026-11 修复只解首帧的问题（`50b538f0c`） |
-| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），断言需容错 |
+| `.mkv` | `MKVExtractor` | ffmpeg demux + 分包 | 完整 | 待补（#16） | 仓库内 `music-mkv.mkv` 的容器时长字段是错的（把采样数当毫秒），**故意保留**作为「不轻信容器声明」的回归样本 |
 
 ## 不支持（明确摘除，别再注册回去）
 

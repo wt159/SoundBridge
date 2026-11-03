@@ -13,6 +13,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 TEST_SUITE("DataSourceBase interface")
@@ -974,26 +975,39 @@ TEST_SUITE("ExtractorRealMedia")
         REQUIRE(spec.numChannel > 0);
         REQUIRE(spec.bytesPerSample > 0);
 
-        AudioRingBuffer ring(4 * 1024 * 1024);
-        AudioStreamDecoder decoder(&ring, spec);
-        REQUIRE(decoder.start(extractor.get(), false) == sdk_utils::OK);
-
-        unsigned long long decodedBytes = 0;
+        // 走生产路径（start() → threadFunc）而不是已删除的同步 decodeNext()（#18），
+        // 这样测到的就是播放器实际会产出的字节数，而不是另一条解码驱动的行为。
         const size_t frameBytes = static_cast<size_t>(spec.numChannel * spec.bytesPerSample);
-        bool reachedEos         = false;
-        for (int i = 0; i < 200000 && !reachedEos; ++i) {
-            const DecodeResult result = decoder.decodeNext();
-            const size_t avail        = ring.availableRead();
-            if (avail > 0) {
-                std::vector<char> sink(avail);
-                decodedBytes += ring.read(sink.data(), avail);
+        AudioRingBuffer ring(1 << 20);
+        AudioStreamDecoder decoder(&ring, spec);
+        REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
+
+        std::vector<char> sink(64 * 1024);
+        unsigned long long decodedBytes = 0;
+        const auto drainRing = [&ring, &sink, &decodedBytes]() {
+            while (ring.availableRead() > 0) {
+                const size_t once = std::min(sink.size(), ring.availableRead());
+                const size_t got  = ring.read(sink.data(), once);
+                if (got == 0) {
+                    break;
+                }
+                decodedBytes += got;
             }
-            if (result == DecodeResult::EOS) {
+        };
+
+        bool reachedEos = false;
+        for (int i = 0; i < 15000 && !reachedEos; ++i) { // 15000 × 2ms = 30s 上限
+            drainRing();
+            const StreamDecoderState state = decoder.state();
+            if (state == StreamDecoderState::EOS) {
                 reachedEos = true;
             } else {
-                REQUIRE(result != DecodeResult::ERROR);
+                REQUIRE(state != StreamDecoderState::ERROR);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         }
+        drainRing(); // EOS 可能落在「刚读完 ring」与「读状态」之间，补收尾
+        decoder.stop();
         REQUIRE(reachedEos);
 
         const unsigned long long decodedMs

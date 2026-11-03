@@ -329,7 +329,10 @@ TEST_CASE("canDecode returns true when started")
     decoder.stop();
 }
 
-TEST_CASE("start with autoDecode false does not start thread")
+// startThread=false 只做初始化，不产出数据：同步入口已删除（#18），
+// 所以这个状态下的解码器只能被观察/拆掉，不会推进。用例把这一点显式锁住，
+// 免得以后有人以为「不启线程也能自己喂」。
+TEST_CASE("start with startThread false initializes without decoding")
 {
     RealMediaFixture fixture;
     if (!fixture.exists("music.wav")) {
@@ -344,67 +347,20 @@ TEST_CASE("start with autoDecode false does not start thread")
     AudioSpec devSpec = extractor->getAudioSpec();
     AudioStreamDecoder decoder(&ring, devSpec);
 
-    DecodeOptions opts;
-    opts.autoDecode = false;
-    REQUIRE(decoder.start(extractor.get(), opts) == sdk_utils::OK);
+    REQUIRE(decoder.start(extractor.get(), false) == sdk_utils::OK);
 
     CHECK(decoder.canDecode() == false);
     CHECK(decoder.state() == StreamDecoderState::IDLE);
 
-    decoder.stop();
-}
-
-TEST_CASE("decodeNext returns OK when manually started with FLAC")
-{
-    RealMediaFixture fixture;
-    if (!fixture.exists("小镇姑娘-陶喆.flac")) {
-        return;
-    }
-
-    std::shared_ptr<FileSource> source;
-    auto extractor = fixture.create("小镇姑娘-陶喆.flac", ".flac", source);
-    REQUIRE(extractor != nullptr);
-
-    AudioRingBuffer ring(1 << 20);
-    AudioSpec devSpec = extractor->getAudioSpec();
-    AudioStreamDecoder decoder(&ring, devSpec);
-
-    DecodeOptions opts;
-    opts.autoDecode = false;
-    REQUIRE(decoder.start(extractor.get(), opts) == sdk_utils::OK);
-    REQUIRE(decoder.state() == StreamDecoderState::IDLE);
-
-    DecodeResult ret = decoder.decodeNext();
-    REQUIRE((ret == DecodeResult::OK || ret == DecodeResult::WAIT));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    CHECK(ring.availableRead() == 0); // 没有线程驱动，就没有数据
 
     decoder.stop();
 }
 
-TEST_CASE("decodeNext returns OK or WAIT when decoding")
-{
-    RealMediaFixture fixture;
-    if (!fixture.exists("小镇姑娘-陶喆.flac")) {
-        return;
-    }
-
-    std::shared_ptr<FileSource> source;
-    auto extractor = fixture.create("小镇姑娘-陶喆.flac", ".flac", source);
-    REQUIRE(extractor != nullptr);
-
-    AudioRingBuffer ring(1 << 20);
-    AudioSpec devSpec = extractor->getAudioSpec();
-    AudioStreamDecoder decoder(&ring, devSpec);
-
-    REQUIRE(decoder.start(extractor.get()) == sdk_utils::OK);
-
-    // Wait for some data
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    DecodeResult ret = decoder.decodeNext();
-    CHECK((ret == DecodeResult::OK || ret == DecodeResult::WAIT));
-
-    decoder.stop();
-}
+// 这里原本有两条 decodeNext() 用例（#18）。同步路径已删除：它对 FLAC/Vorbis
+// 每轮新建解码器、只解首帧，实测每轮字节数与 FNV 指纹完全相同，却返回「有进度」，
+// 于是 `while (ret != EOS)` 永不终止。同步整段解码请用 AudioDecodeProcess。
 
 TEST_SUITE("AudioStreamDecoder Lifecycle")
 {

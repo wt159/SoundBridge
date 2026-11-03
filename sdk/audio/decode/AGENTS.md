@@ -1,7 +1,7 @@
 # AUDIO DECODE KNOWLEDGE BASE
 
 ## OVERVIEW
-`sdk/audio/decode/` 负责把 extractor 暴露的 codec/spec/数据源变成可消费 PCM，覆盖同步解码、整段解码和流式解码三条路径。
+`sdk/audio/decode/` 负责把 extractor 暴露的 codec/spec/数据源变成可消费 PCM，有两条路径：**整段解码**（`AudioDecodeProcess`，解成完整 AudioBuffer）与**流式解码**（`AudioStreamDecoder`，起线程边解边写 ring + 管理状态机）。
 
 ## STRUCTURE
 ```text
@@ -29,6 +29,8 @@ sdk/audio/decode/
 - codec 问题排查要先确认 extractor 给出的 `AudioCodecID`、`AudioSpec`、`extraData`、`blockAlign` 是否合理，再看 FFmpeg 报错。
 
 ## ANTI-PATTERNS
+- 不要再给 `AudioStreamDecoder` 加同步的单步解码入口（曾经的 `decodeNext()`，见 #18）。它天生要对三类 codec 维护三套语义，而 FLAC/Vorbis 的实例化开销使“每轮新建 + 只解一帧”成为最自然的写法，实测每轮产出的 FNV 指纹完全相同却返回「有进度」——`while (ret != EOS)` 永不终止。需要同步拿 PCM 就用 `AudioDecodeProcess`。
+- `runDecode()` 的返回值是 `RunDecodeResult::{Completed,Error,Abort}`，`Completed` 的含义是「整个 payload 已解完」，不是「还有进度」；不要把它映射回 OK。
 - 不要忽略 `av_parser_init()` 失败后的 fallback 路径；当前实现允许 parser 不可用时直接 packet decode。
 - 不要把 `AudioDecodeProcess` 用在超大流媒体场景里假装它是流式解码器；它会累计 `m_decBufVec` 再 merge。
 - 不要直接假设 `start()` 后很快到 `EOS`；现有测试都用 `waitForDecoderState()` / `waitForDecoderStateWithDrain()` 轮询。
