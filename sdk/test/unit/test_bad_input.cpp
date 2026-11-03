@@ -355,6 +355,85 @@ long long logDirBytes(const std::string &dir)
 // unit 测试把日志写在 cwd 下的 ./log（见 UnitTestsMain.cpp）。
 const char *kLogDir = "./log";
 
+// ---- 以下 helper 来自 #36（截断票）----
+
+// 一次流式播放的观测结果。判据只看这里的 bytes（= 用户听得到的字节），
+// 不读坏文件自报的任何时长（规格 3.1：D 类的声明会跟着文件一起缩水）。
+struct StreamMeasurement {
+    bool opened              = false;
+    size_t bytes             = 0;
+    StreamDecoderState state = StreamDecoderState::IDLE;
+    sdk::ErrorCode code      = sdk::ErrorCode::Ok;
+    std::string detail;
+};
+
+StreamMeasurement measureStream(const std::string &path, const char *extension, int timeoutMs)
+{
+    StreamMeasurement measurement;
+    FileSource source(path.c_str());
+    if (source.initCheck() != sdk_utils::OK) {
+        return measurement;
+    }
+    std::shared_ptr<ExtractorHelper> extractor(
+        ExtractorFactory::createExtractor(&source, extension, true));
+    if (!extractor || extractor->initCheck() != sdk_utils::OK) {
+        return measurement;
+    }
+    measurement.opened = true;
+
+    AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
+    AudioStreamDecoder decoder(&ring, makeDevSpec());
+    if (decoder.start(extractor.get()) != sdk_utils::OK) {
+        measurement.state = decoder.state();
+        measurement.code  = decoder.errorCode();
+        return measurement;
+    }
+    DrainResult drained = drainUntilSettled(decoder, ring, timeoutMs);
+    decoder.stop();
+    measurement.bytes  = drained.bytes;
+    measurement.state  = drained.endState;
+    measurement.code   = decoder.errorCode();
+    measurement.detail = decoder.errorDetail();
+    return measurement;
+}
+
+// ring 里是设备格式（makeDevSpec）的字节，换算成毫秒。
+uint64_t devBytesToMs(size_t bytes)
+{
+    AudioSpec spec       = makeDevSpec();
+    const uint64_t denom = static_cast<uint64_t>(spec.sampleRate) * spec.numChannel
+        * spec.bytesPerSample;
+    return (denom == 0) ? 0 : static_cast<uint64_t>(bytes) * 1000 / denom;
+}
+
+// 规格 T6：带宽 ±max(5% × good, 150ms)。1% 会假红——实测「字节比例 → 时长比例」
+// 最大偏 2.07pp（flac r=0.90）。
+uint64_t truncationBandMs(uint64_t goodMs)
+{
+    const uint64_t relative = goodMs * 5 / 100;
+    return relative > 150 ? relative : 150;
+}
+
+bool withinTruncationBand(uint64_t measuredMs, uint64_t expectMs, uint64_t goodMs)
+{
+    const uint64_t band = truncationBandMs(goodMs);
+    return measuredMs + band >= expectMs && measuredMs <= expectMs + band;
+}
+
+// 保留头部、砍掉尾部：r 用百分比，避免浮点累积误差进了容差。
+std::vector<char> keepPercent(const std::vector<char> &data, int percent)
+{
+    return std::vector<char>(data.begin(), data.begin() + data.size() * percent / 100);
+}
+
+std::vector<char> dropTailBytes(const std::vector<char> &data, size_t dropBytes)
+{
+    if (dropBytes >= data.size()) {
+        return std::vector<char>();
+    }
+    return std::vector<char>(data.begin(), data.end() - static_cast<long>(dropBytes));
+}
+
 
 } // namespace
 
@@ -685,5 +764,383 @@ TEST_SUITE("BadInput")
 
         ExtractorOutcome outcome = openExtractor(badPath, ".aac");
         CHECK(rejected(outcome));
+    }
+
+    // ---- 以下用例来自 #36（截断：能解多少播多少）----
+    //
+    // 判据一律自校准相对式：expect = r × good，good 是同一次运行内完好文件在这条
+    // 流式路径上的实测值，坏文件自报的时长一个都不读（规格 1、3.4、8.3）。
+
+    // 规格 3.4 #4 / T2：wav 的 data 声明长度大于实际可读字节。修好前这一档是
+    // initCheck 失败、0 字节（A 类，缺口1）；修好后按 min(声明, 剩余) 读，播 60%。
+    TEST_CASE("wav truncated in the middle of audio plays what it can and reports truncation")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".wav", 20000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        // 完好文件必须静默 EOS，否则下面的「报码」失去意义
+        CHECK(goodRun.state == StreamDecoderState::EOS);
+        CHECK(goodRun.code == sdk::ErrorCode::Ok);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("wav60");
+        std::string badPath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
+
+        StreamMeasurement bad = measureStream(badPath, ".wav", 20000);
+        REQUIRE(bad.opened);
+        const uint64_t measuredMs = devBytesToMs(bad.bytes);
+        CHECK(measuredMs > 0);
+        CHECK(withinTruncationBand(measuredMs, goodMs * 6 / 10, goodMs));
+        CHECK(bad.state == StreamDecoderState::ERROR);
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+        CHECK(!bad.detail.empty());
+    }
+
+    // 同一条自校准判据换一个 r：相邻用例 r 差 0.2（规格 T6），
+    // 断言随 r 线性缩放，锁住「期望值锚在 good 上」而不是写死某个时长。
+    TEST_CASE("wav truncated at a different ratio scales with the intact file")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".wav", 20000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("wav40");
+        std::string badPath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 40)));
+
+        StreamMeasurement bad = measureStream(badPath, ".wav", 20000);
+        REQUIRE(bad.opened);
+        const uint64_t measuredMs = devBytesToMs(bad.bytes);
+        CHECK(measuredMs > 0);
+        CHECK(withinTruncationBand(measuredMs, goodMs * 4 / 10, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 票 #36 验收项 2：丢掉尾部 128 字节（0.016%）时「解出时长 ≥ 完好文件的 95%，
+    // 且上报 DataTruncated」。5pp 阈值吸收不了这么大的偏差，所以 wav/aiff 必须靠
+    // 「声明长度 > 文件剩余」这个**确定事实**报码（规格 3.2 的「能判定短读时」）。
+    TEST_CASE("wav missing only its last 128 bytes still reports truncation")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(good.size() > 128);
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".wav", 20000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("wav128");
+        std::string badPath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(badPath, dropTailBytes(good, 128)));
+
+        StreamMeasurement bad = measureStream(badPath, ".wav", 20000);
+        REQUIRE(bad.opened);
+        const uint64_t measuredMs = devBytesToMs(bad.bytes);
+        // 一帧都没丢：长度只少了 4ms 左右，仍然必须「能解多少播多少」
+        CHECK(measuredMs * 100 >= goodMs * 95);
+        CHECK(withinTruncationBand(measuredMs, goodMs, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 规格 7.2 表里与第 3 节共用的一行：data 声明 2GB、文件 0.8MB。
+    // 修好前这一行按声明分配，进程要么 OOM 要么崩；修好后 clamp 到实际剩余。
+    TEST_CASE("wav declaring a giant data chunk does not allocate it")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        TempFileSet tmp("wav_giant");
+        std::vector<char> data = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(data.size() > 44);
+
+        // 定位 "data" 块的长度字段（RIFF: 12 字节头 + 若干 chunk）
+        size_t sizeOffset = 0;
+        for (size_t off = 12; off + 8 <= data.size();) {
+            uint32_t chunkSize = static_cast<uint32_t>(
+                (static_cast<unsigned char>(data[off + 4]))
+                | (static_cast<unsigned char>(data[off + 5]) << 8)
+                | (static_cast<unsigned char>(data[off + 6]) << 16)
+                | (static_cast<unsigned char>(data[off + 7]) << 24));
+            if (std::memcmp(&data[off], "data", 4) == 0) {
+                sizeOffset = off + 4;
+                break;
+            }
+            off += 8 + static_cast<size_t>(chunkSize) + (chunkSize & 1u);
+        }
+        REQUIRE(sizeOffset != 0);
+
+        const unsigned char huge[4] = { 0x00, 0x00, 0xF0, 0x7F }; // 2,146,435,072 字节
+        const unsigned char riff[4] = { 0xFF, 0xFF, 0xFF, 0x7F };
+        for (int i = 0; i < 4; ++i) {
+            // RIFF 的 totalSize 也要一起改大：否则解析循环在「chunkSize > remainingSize」
+            // 就提前退出了，碰不到「按声明分配」那一行
+            data[4 + static_cast<size_t>(i)]          = static_cast<char>(riff[i]);
+            data[sizeOffset + static_cast<size_t>(i)] = static_cast<char>(huge[i]);
+        }
+        std::string badPath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(badPath, data));
+
+        StreamMeasurement goodRun = measureStream(fixture.mediaPath(name), ".wav", 20000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        StreamMeasurement bad                       = measureStream(badPath, ".wav", 20000);
+        long long cost                              = elapsedMs(begin);
+
+        REQUIRE(bad.opened);
+        CHECK(cost < 5000);
+        // 真实音频一个字节都没少，全部播出来；报码针对的是「声明」而不是「数据」
+        CHECK(withinTruncationBand(devBytesToMs(bad.bytes), goodMs, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 规格 3.4 #5：aiff 与 wav 同一档（缺口1 的另一半）。
+    TEST_CASE("aiff truncated in the middle of audio plays what it can and reports truncation")
+    {
+        RealMediaFixture fixture;
+        const char *name = "俱乐部音乐循环-Freesound.aiff";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".aiff", 60000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        CHECK(goodRun.code == sdk::ErrorCode::Ok);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("aiff60");
+        std::string badPath = tmp.make(".aiff");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
+
+        StreamMeasurement bad = measureStream(badPath, ".aiff", 60000);
+        REQUIRE(bad.opened);
+        const uint64_t measuredMs = devBytesToMs(bad.bytes);
+        CHECK(measuredMs > 0);
+        CHECK(withinTruncationBand(measuredMs, goodMs * 6 / 10, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 规格 3.4 #3 / T4：修好前 flac 截到 60% 是静默 Completed（用户看到进度条走到
+    // 177 秒就结束、界面还写着 297 秒）。EOS 汇总处比对标称时长是唯一修法（条目 23）。
+    TEST_CASE("flac truncated at 60 percent reports truncation instead of silent end")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.flac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".flac", 120000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        CHECK(goodRun.state == StreamDecoderState::EOS);
+        CHECK(goodRun.code == sdk::ErrorCode::Ok);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("flac60");
+        std::string badPath = tmp.make(".flac");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
+
+        StreamMeasurement bad = measureStream(badPath, ".flac", 120000);
+        REQUIRE(bad.opened);
+        const uint64_t measuredMs = devBytesToMs(bad.bytes);
+        CHECK(measuredMs > 0);
+        CHECK(withinTruncationBand(measuredMs, goodMs * 6 / 10, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::DataTruncated);
+    }
+
+    // 规格 3.2 P0 / 3.4 #1：切在音频之后（ID3v1 尾标）→ measured == good 且完全静默。
+    TEST_CASE("mp3 cut inside the trailing tag stays silent")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.128.mp3";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(good.size() > 128);
+        // P0 的前提：尾部 128 字节正好是 ID3v1 尾标，即砍掉的不是音频（规格 3.2 末段）。
+        // 规格写的是「末 3 字节为 TAG」，那是 ID3v1 的**块首**位置——尾标占最后 128 字节，
+        // 末 3 字节是 genre/comment。所以判据落在 size-128 上。
+        // 不满足就 SKIP 而不是 FAIL——素材换了也不该让用例变成假红。
+        const size_t tagStart = good.size() - 128;
+        if (good[tagStart] != 'T' || good[tagStart + 1] != 'A' || good[tagStart + 2] != 'G') {
+            std::printf("[SKIP] %s has no 128-byte ID3v1 tail\n", name);
+            return;
+        }
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".mp3", 60000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("mp3_p0");
+        std::string badPath = tmp.make(".mp3");
+        REQUIRE(writeWholeFile(badPath, dropTailBytes(good, 128)));
+
+        StreamMeasurement bad = measureStream(badPath, ".mp3", 60000);
+        REQUIRE(bad.opened);
+        CHECK(withinTruncationBand(devBytesToMs(bad.bytes), goodMs, goodMs));
+        // P0 不报错：只有「切在音频中间」（P1）才要求 DataTruncated（规格 3.2）
+        CHECK(bad.state == StreamDecoderState::EOS);
+        CHECK(bad.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格 3.2 P0 / 3.4 #2：mkv 尾部是非音频区（索引/附件），砍 128 字节同样静默。
+    TEST_CASE("mkv cut at the tail stays silent")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-mkv.mkv";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath   = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(good.size() > 128);
+
+        StreamMeasurement goodRun = measureStream(goodPath, ".mkv", 60000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("mkv_p0");
+        std::string badPath = tmp.make(".mkv");
+        REQUIRE(writeWholeFile(badPath, dropTailBytes(good, 128)));
+
+        StreamMeasurement bad = measureStream(badPath, ".mkv", 60000);
+        REQUIRE(bad.opened);
+        CHECK(withinTruncationBand(devBytesToMs(bad.bytes), goodMs, goodMs));
+        CHECK(bad.state == StreamDecoderState::EOS);
+        CHECK(bad.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格 3.4 #11 / 3.2 P2：切在必需结构中间（头之后不足一帧）→ 拒绝，ring 0 字节。
+    TEST_CASE("wav cut below one frame is rejected and plays nothing")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        TempFileSet tmp("wav20");
+        std::vector<char> good = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(good.size() > 20);
+        std::vector<char> tiny(good.begin(), good.begin() + 20);
+        std::string badPath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(badPath, tiny));
+
+        CHECK(rejected(openExtractor(badPath, ".wav")));
+        StreamMeasurement bad = measureStream(badPath, ".wav", 5000);
+        CHECK(!bad.opened);
+        CHECK(bad.bytes == 0);
+    }
+
+    // 规格 3.2 P2 / T3：ogg 的截断一律拒绝（第三方 demux 的页链校验，自有代码没有
+    // clamp 的着力点，写成已知例外）。ring 累计 0 字节且报错。
+    TEST_CASE("ogg truncation is rejected and plays nothing")
+    {
+        RealMediaFixture fixture;
+        const char *name = "Ringtones-耳聆网.ogg";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        TempFileSet tmp("ogg60");
+        std::vector<char> good = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(!good.empty());
+        std::string badPath = tmp.make(".ogg");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
+
+        CHECK(rejected(openExtractor(badPath, ".ogg")));
+        StreamMeasurement bad = measureStream(badPath, ".ogg", 10000);
+        CHECK(bad.bytes == 0);
+        CHECK(bad.state != StreamDecoderState::EOS);
+    }
+
+    // 规格 3.4 #10 / 3.2 P2：m4a 的 moov 在尾部，砍 1KB 把它切断 → 拒绝。
+    // 素材换成 music-alac.m4a：规格点名的 摇滚乐_Freesound.m4a 其实是 faststart 布局
+    // （moov 在前、mdat 在后），砍尾巴砍到的是音频，见 findings-36。
+    TEST_CASE("m4a with its trailing moov cut off is rejected")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-alac.m4a";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        TempFileSet tmp("m4a_moov");
+        std::vector<char> good = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(good.size() > 1024);
+
+        // P2 的前提：末端确实是一个 moov（顶层 box 链走一遍）。不满足就 SKIP。
+        bool tailIsMoov = false;
+        size_t off      = 0;
+        while (off + 8 <= good.size()) {
+            uint32_t boxSize = static_cast<uint32_t>(
+                (static_cast<unsigned char>(good[off]) << 24)
+                | (static_cast<unsigned char>(good[off + 1]) << 16)
+                | (static_cast<unsigned char>(good[off + 2]) << 8)
+                | static_cast<unsigned char>(good[off + 3]));
+            if (boxSize < 8) {
+                break;
+            }
+            tailIsMoov = std::memcmp(&good[off + 4], "moov", 4) == 0
+                && off + boxSize == good.size();
+            off += boxSize;
+        }
+        if (!tailIsMoov) {
+            std::printf("[SKIP] %s is faststart (moov is not in the tail)\n", name);
+            return;
+        }
+
+        std::string badPath = tmp.make(".m4a");
+        REQUIRE(writeWholeFile(badPath, dropTailBytes(good, 1024)));
+
+        CHECK(rejected(openExtractor(badPath, ".m4a")));
+        StreamMeasurement bad = measureStream(badPath, ".m4a", 10000);
+        CHECK(bad.bytes == 0);
     }
 }
