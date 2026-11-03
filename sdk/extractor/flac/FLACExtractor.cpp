@@ -78,8 +78,17 @@ status_t FLACExtractor::init()
             int size = block.header.blockSize;
             if (block.header.type == STREAMINFO) {
                 LOGD("block header type is STREAMINFO");
-                uint8_t data[size];
-                if (m_dataSource->readAt(offset, data, size) < size) {
+                // STREAMINFO 恒为 34 字节（规格 10.#2）。这里不按声明长度开栈上变长数组：
+                // blockSize 上限 0xFFFFFF = 16MB，超过默认栈就是栈溢出；声明长度不等于 34
+                // 本身也说明块头已经坏了，直接判失败。
+                const size_t kStreamInfoSize = 34;
+                if (size != static_cast<int>(kStreamInfoSize)) {
+                    LOGE("invalid STREAMINFO block size: %d", size);
+                    return NO_INIT;
+                }
+                std::vector<uint8_t> data(kStreamInfoSize);
+                if (m_dataSource->readAt(offset, data.data(), data.size())
+                    < static_cast<ssize_t>(data.size())) {
                     return NO_INIT;
                 }
                 block.data.streamInfo.minBlockSize = ((data[0] & 0xff) << 8) | (data[1] & 0xff);
@@ -110,7 +119,15 @@ status_t FLACExtractor::init()
                 m_spec.bytesPerSample = m_spec.bitsPerSample >> 3;
                 m_spec.format         = getAudioFormatByBitPreSample(m_spec.bitsPerSample);
                 m_spec.samples        = block.data.streamInfo.totalSamples;
-                m_spec.durationMs     = ((uint64_t)m_spec.samples * 1000) / m_spec.sampleRate;
+                // sampleRate > 0 是硬不变量（规格 5.4 H2）：只有它成立才做除法，
+                // 否则 durationMs 保持 0 并且这份头判为坏，不许把 sr=0 带出去。
+                m_spec.durationMs = 0;
+                if (m_spec.sampleRate > 0) {
+                    m_spec.durationMs = ((uint64_t)m_spec.samples * 1000) / m_spec.sampleRate;
+                } else {
+                    LOGE("invalid sampleRate 0 in STREAMINFO");
+                    return NO_INIT;
+                }
             } else if (block.header.type == PADDING) {
                 LOGD("block header type is PADDING");
             } else if (block.header.type == APPLICATION) {

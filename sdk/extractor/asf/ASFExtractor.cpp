@@ -128,17 +128,36 @@ status_t ASFExtractor::init()
     status_t ret   = NO_INIT;
     off64_t offset = 0, fileSize = 0;
     m_dataSource->getSize(&fileSize);
+    // 兜底解析必须自己保证终止（规格 10.#3）：正常 ASF 的顶层对象只有个位数，
+    // 走到上限说明这不是一份能解析的文件，再转下去只会刷日志。
+    const size_t kMaxObjectCount = 1024;
+    size_t objectCount           = 0;
     while (offset <= fileSize) {
+        if (++objectCount > kMaxObjectCount) {
+            LOGW("too many objects (%zu), treat as corrupted", objectCount);
+            m_validFormat = false;
+            break;
+        }
+        const off64_t objectStart = offset;
         uint8_t objectHeader[24];
-        if (m_dataSource->readAt(offset, objectHeader, sizeof(objectHeader))
+        if (m_dataSource->readAt(objectStart, objectHeader, sizeof(objectHeader))
             < (ssize_t)sizeof(objectHeader)) {
             m_validFormat = false;
             break;
         }
-        offset += sizeof(objectHeader);
         Object obj;
         getGuidObjByArray(objectHeader, obj);
         LOGI("id=%#x, size=%llu", obj.id.v1, obj.size);
+        // 对象长度必须至少容纳对象头，且落在文件范围内。否则「下一个对象 = 本对象起点 + 长度」
+        // 不再前进（obj.size == 0 时 0 - 24 回绕会原地打转），直接判损坏退出。
+        if (obj.size < sizeof(objectHeader)
+            || obj.size > static_cast<uint64_t>(fileSize - objectStart)) {
+            LOGW("invalid object size %llu at %lld, treat as corrupted", obj.size,
+                 (long long)objectStart);
+            m_validFormat = false;
+            break;
+        }
+        offset = objectStart + static_cast<off64_t>(sizeof(objectHeader));
         if (obj.id == guidHeader) {
             uint8_t temp[6];
             if (m_dataSource->readAt(offset, temp, sizeof(temp)) < (ssize_t)sizeof(temp)) {
@@ -173,7 +192,8 @@ status_t ASFExtractor::init()
         } else {
             LOGW("Unknown object, skip it");
         }
-        offset += (obj.size - sizeof(objectHeader));
+        // 严格前进：上面的校验已经保证 obj.size >= 24，off64_t 上不会回绕
+        offset = objectStart + static_cast<off64_t>(obj.size);
     }
 
     if (!m_validFormat) {
@@ -389,11 +409,16 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
         Object obj;
         getGuidObjByArray(objectHeader, obj);
         LOGI("id=%#x, size=%llu", obj.id.v1, obj.size);
+        // 与顶层循环同一条规则：长度为 0 或装不下对象头的子对象会让 offset/size 不再推进
+        if (obj.size < sizeof(objectHeader)) {
+            LOGW("invalid child object size %llu, treat as corrupted", obj.size);
+            return NO_INIT;
+        }
         if (obj.id == guidFileProperties) {
             LOGD("File Properties Object");
-            uint8_t temp[obj.size];
-            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp, sizeof(temp))
-                < (ssize_t)sizeof(temp)) {
+            std::vector<uint8_t> temp(static_cast<size_t>(obj.size));
+            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp.data(), temp.size())
+                < (ssize_t)temp.size()) {
                 return NO_INIT;
                 ;
             }
@@ -414,9 +439,9 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
             headerObj.fpObj.dump();
         } else if (obj.id == guidStreamProperties) {
             LOGD("Stream Properties Object");
-            uint8_t temp[obj.size];
-            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp, sizeof(temp))
-                < (ssize_t)sizeof(temp)) {
+            std::vector<uint8_t> temp(static_cast<size_t>(obj.size));
+            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp.data(), temp.size())
+                < (ssize_t)temp.size()) {
                 return NO_INIT;
             }
             StreamPropertiesObject spObj;
