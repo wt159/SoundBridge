@@ -791,6 +791,56 @@ DurationLieMeasurement measureDuration(const std::string &path, const char *exte
     return result;
 }
 
+// ---- 以下 helper 来自 #40（tag 定位 clamp）----
+
+// ID3v2 头固定 10 字节，体长度是 4 个 syncsafe 字节。这里只造头，实体另行决定，
+// 因为「声明长度」与「实体长度」在坏素材里恰好是两件事（规格 7.2 第 2 条）。
+std::vector<char> makeId3Header(size_t bodySize)
+{
+    std::vector<char> header(10, 0);
+    header[0] = 'I';
+    header[1] = 'D';
+    header[2] = '3';
+    header[3] = 3; // ID3v2.3
+    header[4] = 0;
+    header[5] = 0; // 无标志位
+    header[6] = static_cast<char>((bodySize >> 21) & 0x7F);
+    header[7] = static_cast<char>((bodySize >> 14) & 0x7F);
+    header[8] = static_cast<char>((bodySize >> 7) & 0x7F);
+    header[9] = static_cast<char>(bodySize & 0x7F);
+    return header;
+}
+
+// 头 + bodyBytes 个 0 字节 + 原音频。bodyBytes 与头里声明的长度可以不一致，
+// 那正是「声明与文件长度矛盾」这一类的造法。
+std::vector<char> wrapWithId3(const std::vector<char> &audio, const std::vector<char> &header,
+                              size_t bodyBytes)
+{
+    std::vector<char> wrapped = header;
+    wrapped.insert(wrapped.end(), bodyBytes, '\0');
+    wrapped.insert(wrapped.end(), audio.begin(), audio.end());
+    return wrapped;
+}
+
+// 提取器给出的 payload（getMetaData）。规格 7.3 M6：跳过 tag 不得改动它。
+std::vector<char> extractorPayload(const std::string &path, const char *extension)
+{
+    FileSource source(path.c_str());
+    if (source.initCheck() != sdk_utils::OK) {
+        return std::vector<char>();
+    }
+    std::unique_ptr<ExtractorHelper> extractor(
+        ExtractorFactory::createExtractor(&source, extension, true));
+    if (!extractor || extractor->initCheck() != sdk_utils::OK) {
+        return std::vector<char>();
+    }
+    AudioBuffer::AudioBufferPtr payload = extractor->getMetaData();
+    if (!payload || payload->size() == 0) {
+        return std::vector<char>();
+    }
+    return std::vector<char>(payload->data(), payload->data() + payload->size());
+}
+
 
 } // namespace
 
@@ -2040,5 +2090,160 @@ TEST_SUITE("BadInput")
         CHECK(withinTruncationBand(after.decodedMs, after.declaredMs, after.declaredMs));
         // 同一个文件被当成半速播放：听起来长了一倍（不是「检测出来」，是慢放）。
         CHECK(after.decodedMs + after.decodedMs / 10 >= before.decodedMs * 2);
+    }
+
+    // ---- 以下用例来自 #40（tag 定位 clamp）----
+
+    // 规格 7.2 第 2 条 / 7.3 M2：真正坏事的不是「超大」，是「声明与文件长度矛盾」。
+    // 旧实现按声明值推进 offset、越过文件末尾后 Resync 失败，整首解出 0 字节。
+    TEST_CASE("mp3 tag declaring more than the file holds still plays the whole audio")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.128.mp3";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        const std::string goodPath = fixture.mediaPath(name);
+        std::vector<char> good     = readWholeFile(goodPath);
+        REQUIRE(good.size() > 4096);
+
+        // 头声明 0x0FFFFFFF（≈256MB）的 tag 体，实体 0 字节：音频紧跟在 10 字节头之后，
+        // 与实测素材「声明 200MB、文件 4.7MB」同一种矛盾。
+        TempFileSet tmp("mp3_huge_id3");
+        std::vector<char> wrapped
+            = wrapWithId3(good, makeId3Header((static_cast<size_t>(1) << 28) - 1), 0);
+        std::string taggedPath = tmp.make(".mp3");
+        REQUIRE(writeWholeFile(taggedPath, wrapped));
+
+        ExtractorOutcome baseline = openExtractor(goodPath, ".mp3");
+        ExtractorOutcome tagged   = openExtractor(taggedPath, ".mp3");
+        REQUIRE(!rejected(baseline));
+        CHECK(!rejected(tagged));
+        // 判据零容差：同一段音频的两种包装，逐项相同（7.4 #2）
+        CHECK(tagged.sampleRate == baseline.sampleRate);
+        CHECK(tagged.numChannel == baseline.numChannel);
+        CHECK(tagged.durationMs == baseline.durationMs);
+        CHECK(tagged.durationMs > 0);
+
+        // M6：payload 从音频首帧开始，必须逐字节相同
+        std::vector<char> baselinePayload = extractorPayload(goodPath, ".mp3");
+        std::vector<char> taggedPayload   = extractorPayload(taggedPath, ".mp3");
+        REQUIRE(!baselinePayload.empty());
+        CHECK(taggedPayload == baselinePayload);
+
+        StreamMeasurement before = measureStream(goodPath, ".mp3", 60000);
+        StreamMeasurement after  = measureStream(taggedPath, ".mp3", 60000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.bytes > 0);
+        CHECK(after.bytes == before.bytes);
+        CHECK(after.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格 7.2 第 3 条 / 7.3 M3：countAdtsFrames 跳 ID3，init 却从 offset 0 读 ADTS 头，
+    // 200 字节前缀就够把一份合法文件读成 sr=0 ch=4 的「垃圾」。
+    TEST_CASE("aac with an id3 prefix reports the same spec and duration as without it")
+    {
+        RealMediaFixture fixture;
+        const char *name = "WavinFlag.aac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        const std::string goodPath = fixture.mediaPath(name);
+        std::vector<char> good     = readWholeFile(goodPath);
+        REQUIRE(good.size() > 1024);
+        // 素材本身不能已经带 ID3，否则「有前缀 / 无前缀」这一对造不出来
+        REQUIRE(std::memcmp(good.data(), "ID3", 3) != 0);
+
+        // 规格 7.4 #3 的实测尺寸：真实 200 字节标签 = 10 字节头 + 190 字节体
+        const size_t kBodyBytes    = 190;
+        TempFileSet tmp("aac_id3_prefix");
+        std::vector<char> wrapped = wrapWithId3(good, makeId3Header(kBodyBytes), kBodyBytes);
+        std::string taggedPath    = tmp.make(".aac");
+        REQUIRE(writeWholeFile(taggedPath, wrapped));
+
+        ExtractorOutcome baseline = openExtractor(goodPath, ".aac");
+        ExtractorOutcome tagged   = openExtractor(taggedPath, ".aac");
+        REQUIRE(!rejected(baseline));
+        CHECK(!rejected(tagged));
+        CHECK(tagged.sampleRate == baseline.sampleRate);
+        CHECK(tagged.numChannel == baseline.numChannel);
+        CHECK(tagged.durationMs == baseline.durationMs);
+        CHECK(tagged.durationMs > 0);
+
+        // aac 的 payload 是整文件视图（标签也在里面，规格 7.1），音频字节必须原样不动
+        std::vector<char> baselinePayload = extractorPayload(goodPath, ".aac");
+        std::vector<char> taggedPayload   = extractorPayload(taggedPath, ".aac");
+        // 规格 7.3 M6：getMetaData() 是音频 payload 的整块视图，tag 不进 payload。
+        // 旧断言把「payload 里混着 tag」这个缺陷现状当成期望，与规格冲突，
+        // 而且会让解码器把前缀当坏帧、EOS 误报 DataCorrupted。
+        REQUIRE(baselinePayload.size() == good.size());
+        CHECK(taggedPayload == baselinePayload);
+
+        StreamMeasurement before = measureStream(goodPath, ".aac", 60000);
+        StreamMeasurement after  = measureStream(taggedPath, ".aac", 60000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.bytes > 0);
+        CHECK(after.bytes == before.bytes);
+        CHECK(after.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格 10.#20 的后半句：被拒文件必须有汇总（#34 的链路），但 tag 相关路径不许
+    // 误入这份汇总——带 tag 的文件是能播的文件（7.3 M6），被算进「无法播放」就是错的。
+    TEST_CASE("batch scan does not count tag-wrapped files as rejected")
+    {
+        RealMediaFixture fixture;
+        const char *wavName = "music.wav";
+        const char *mp3Name = "小镇姑娘-陶喆.128.mp3";
+        const char *aacName = "WavinFlag.aac";
+        if (!fixture.exists(wavName) || !fixture.exists(mp3Name) || !fixture.exists(aacName)) {
+            return;
+        }
+        TempFileSet tmp("batch_tag");
+        std::string dir = tmp.makeDir();
+        REQUIRE(!dir.empty());
+
+        std::vector<char> wav = readWholeFile(fixture.mediaPath(wavName));
+        REQUIRE(!wav.empty());
+        REQUIRE(writeWholeFile(dir + "/a_good.wav", wav));
+
+        std::vector<char> mp3 = readWholeFile(fixture.mediaPath(mp3Name));
+        REQUIRE(!mp3.empty());
+        REQUIRE(writeWholeFile(dir + "/b_mp3_huge_tag.mp3",
+                               wrapWithId3(mp3, makeId3Header((static_cast<size_t>(1) << 28) - 1),
+                                           0)));
+
+        std::vector<char> aac = readWholeFile(fixture.mediaPath(aacName));
+        REQUIRE(!aac.empty());
+        REQUIRE(writeWholeFile(dir + "/c_aac_id3.aac", wrapWithId3(aac, makeId3Header(190), 190)));
+
+        std::vector<char> broken = wav;
+        zeroRange(broken, 0, 512);
+        REQUIRE(writeWholeFile(dir + "/d_broken.wav", broken));
+
+        RecordingPlayerListener listener;
+        std::string logDir = "./log";
+        sdk::MusicPlayer player(&listener, logDir);
+        player.addMusicDir(dir);
+
+        auto summaryDetail = [&listener]() {
+            for (const RecordingPlayerListener::Report &report : listener.snapshot()) {
+                if (report.index < 0
+                    && report.detail.find("cannot be played") != std::string::npos) {
+                    return report.detail;
+                }
+            }
+            return std::string();
+        };
+        REQUIRE(waitFor([&summaryDetail]() { return !summaryDetail().empty(); }, 20000));
+
+        // 4 个文件里只有 d_broken.wav 该被拒：带 tag 的两个不是「无法播放」
+        CHECK(summaryDetail() == "1 file cannot be played");
+        for (const RecordingPlayerListener::Report &report : listener.snapshot()) {
+            CHECK(report.path.find("b_mp3_huge_tag") == std::string::npos);
+            CHECK(report.path.find("c_aac_id3") == std::string::npos);
+        }
+        player.stop();
     }
 }
