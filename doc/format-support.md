@@ -50,9 +50,14 @@ tolerance  = max(declaredMs × 1%, 150ms)，且不超过 declaredMs × 25%
   换成一个**被截断的文件**，「短」就是正确行为，判据换成
   `expect = 截断字节比例 × 完好文件实测时长`、带宽 `±5pp`（见 `doc/bad-input-spec.md` 第 3 节）。
   两套数值不能互换：实测「字节比例 → 时长比例」最大偏 2.07 个百分点，沿用这里的 1% 会直接假红。
-- 实测最大偏差是 `.asf` 的 +0.20%（34666 → 34737ms），其余 14 份为 0.00%，1% 留了 5× 余量。
-- **两侧数值一致**（2026-11-03 核对）：Linux runner 与 Windows 本地跑出的 15 行 `declared/measured`
-  逐项相同，偏差仍是 asf 的 +71ms。CI 的 `Report coverage matrix numbers` 步骤每次都用
+- 实测最大偏差是 `.wma` 的 +0.96%（259164 → 261642ms，+2478ms / 容差 2591ms，余量仅 113ms），
+  其次是 `.asf` 的 −0.39%（34874 → 34737ms，−137ms / 容差 348ms）；其余 13 份为 0.00%。
+  这是 2026-11-04 的基线：#22 把 `durationMs` 来源单点前移后，asf / wma 的 declared 分别
+  +208ms / −2478ms，而 15 份的 measured 都没变。**1% 容差在 wma 上已用掉 95.6%**，
+  别再按旧记录里的「5× 余量」估计；再动时长推导要盯这一行。
+- **两侧数值一致**（2026-11-04 复核：CI run `41763075682` vs Windows 本地
+  `UnitTests -ts=MediaCoverage -s`）：15 行 `declared/measured` 逐项相同、15/15 全绿，
+  两项非零偏差如上。CI 的 `Report coverage matrix numbers` 步骤每次都用
   `-ts=MediaCoverage -s` 把这张表打进日志——换 runner、升 ffmpeg 后直接比日志，不必本地复现。
 - **ALAC 分支已实测**（2026-11-03，`music-alac.m4a`，44.1kHz 立体声 12s）：`declared 12000ms /
   measured 12000ms`，零偏差。这条路径是 #17 决策里唯一没被素材打到的分支——ALAC 在 ffmpeg 里
