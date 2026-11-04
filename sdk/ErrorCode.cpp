@@ -43,11 +43,16 @@ const ErrorCodeInfo &GetErrorInfo(ErrorCode code)
             = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack,
                        "Decode init failed");
         return kDecodeInit;
-    case ErrorCode::DecodeFailed:
-        static const ErrorCodeInfo kDecodeFailed
-            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, false, ErrorAction::SkipTrack,
-                       "Decode failed");
-        return kDecodeFailed;
+    case ErrorCode::DataTruncated:
+        static const ErrorCodeInfo kDataTruncated
+            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Warning, true, ErrorAction::SkipTrack,
+                       "File may be incomplete");
+        return kDataTruncated;
+    case ErrorCode::DataCorrupted:
+        static const ErrorCodeInfo kDataCorrupted
+            = MakeInfo(ErrorModule::Decode, ErrorSeverity::Error, true, ErrorAction::SkipTrack,
+                       "File is corrupted");
+        return kDataCorrupted;
     case ErrorCode::ResampleInitFailed:
         static const ErrorCodeInfo kResampleInit
             = MakeInfo(ErrorModule::Resample, ErrorSeverity::Error, true, ErrorAction::SkipTrack,

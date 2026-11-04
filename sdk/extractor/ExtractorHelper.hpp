@@ -115,6 +115,12 @@ public:
     virtual off64_t getDataSize() { return 0; }
     virtual off64_t getAudioDataOffset() { return 0; }
 
+    // 提取器**能确定**文件被截断时返回 true，与 AudioSpec 一样是事实上报、不是处置：
+    // 典型是 wav/aiff「声明的数据长度 > 文件实际剩余」，短读在字节层面可判定，
+    // 但这种量级的缺口（128 字节 ≈ 0.016%）低于 T4 的 5pp 阈值，不能靠时长比对发现。
+    // 解码器在 EOS 汇总处据此报 DataTruncated（规格 3.2「能判定短读时」/ 条目 23）。
+    virtual bool isDataTruncated() const { return false; }
+
 protected:
     ExtractorHelper() { }
 

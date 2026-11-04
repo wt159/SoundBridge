@@ -65,6 +65,7 @@ private:
     std::unique_ptr<soundbridge::Player> m_player;
     soundbridge::PlaybackMode m_playbackMode = soundbridge::PlaybackMode::Sequential;
     bool m_autoSkipOnError                   = true;
+    bool m_errorSubtitleActive               = false;
     int m_currentTrackIndex                  = -1;
     PlayerViewState m_viewState;
 };

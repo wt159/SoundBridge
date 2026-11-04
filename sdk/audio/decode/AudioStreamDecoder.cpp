@@ -4,6 +4,7 @@
 #include "VorbisDecode.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 
 #define LOG_TAG "AudioStreamDecoder"
@@ -24,9 +25,13 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_codecID(AUDIO_CODEC_ID_NONE)
     , m_durationMs(0)
     , m_lazyResample()
+    , m_firstDecodeFrame(true)
     , m_interleaveBuf()
     , m_resampleBuf()
     , m_state(StreamDecoderState::IDLE)
+    , m_errorCode(sdk::ErrorCode::Ok)
+    , m_errorMutex()
+    , m_errorDetail()
     , m_stopRequest(false)
     , m_seekRequestMs(-1)
     , m_seekDiscardBytes(0)
@@ -34,6 +39,14 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_consumedBytes(0)
     , m_bytesPerMs(0)
     , m_abortDecode(false)
+    , m_decodedFrames(0)
+    , m_decodedRate(0)
+    , m_pcmFrameBytes(0)
+    , m_seekBaseMs(0)
+    , m_skippedFrames(0)
+    , m_pendingFrameSkip(false)
+    , m_frameSkipWithDataAfter(false)
+    , m_md5Mismatch(false)
     , m_thread()
 {
 }
@@ -58,12 +71,37 @@ AudioStreamDecoder::~AudioStreamDecoder()
     stop();
 }
 
+std::shared_ptr<AudioResample> AudioStreamDecoder::createResampler()
+{
+    AudioSpec inSpec  = m_srcSpec;
+    AudioSpec outSpec = m_devSpec;
+    inSpec.samples    = 1024;
+    auto r            = std::make_shared<AudioResample>(inSpec, outSpec);
+    if (!r || r->initCheck() != sdk_utils::OK) {
+        LOGE("lazy resample init failed");
+        return nullptr;
+    }
+    LOGI("lazy resample init ok, format=%d", m_srcSpec.format);
+    return r;
+}
+
+bool AudioStreamDecoder::deviceSpecSupportsResample() const
+{
+    return m_devSpec.sampleRate > 0 && m_devSpec.numChannel > 0 && m_devSpec.bytesPerSample > 0
+        && m_devSpec.format != AudioFormatUnknown;
+}
+
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
+    m_errorCode.store(sdk::ErrorCode::Ok);
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_errorDetail.clear();
+    }
     m_extractor = extractor;
     if (m_ring == nullptr || m_extractor == nullptr) {
-        m_state.store(StreamDecoderState::ERROR);
+        setError(sdk::ErrorCode::DecodeInitFailed, "decoder start with null ring or extractor");
         return sdk_utils::INVALID_OPERATION;
     }
 
@@ -81,28 +119,25 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
 
     m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
-    if (!(m_srcSpec == m_devSpec)) {
-        auto factory = [this]() -> std::shared_ptr<AudioResample> {
-            AudioSpec inSpec  = m_srcSpec;
-            AudioSpec outSpec = m_devSpec;
-            inSpec.samples    = 1024;
-            auto r            = std::make_shared<AudioResample>(inSpec, outSpec);
-            if (!r || r->initCheck() != sdk_utils::OK) {
-                LOGE("lazy resample init failed");
-                return nullptr;
+    m_firstDecodeFrame = true;
+    // 规格 6.2 S3：工厂无条件建。声明值恰好等于 device spec 时也要建——首帧的实测值
+    // 可能还要覆盖它（修好前只在 `m_srcSpec != m_devSpec` 时建，那门一关首帧就永远覆盖不上）。
+    // 设备规格没有 PCM 格式时不建：没有重采样目标格式，建了也只会 init 失败。
+    if (!deviceSpecSupportsResample()) {
+        LOGW("device spec has no pcm format, resampling disabled");
+    } else {
+        m_lazyResample.emplace(
+            [this]() -> std::shared_ptr<AudioResample> { return createResampler(); });
+        if (!(m_srcSpec == m_devSpec)) {
+            if (m_srcSpec.format != AudioFormatUnknown) {
+                auto r = m_lazyResample->Value();
+                if (r == nullptr) {
+                    setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
+                    return sdk_utils::INVALID_OPERATION;
+                }
+            } else {
+                LOGI("srcSpec format unknown, defer resample init to first decode callback");
             }
-            LOGI("lazy resample init ok, format=%d", m_srcSpec.format);
-            return r;
-        };
-        m_lazyResample.emplace(factory);
-        if (m_srcSpec.format != AudioFormatUnknown) {
-            auto r = m_lazyResample->Value();
-            if (r == nullptr) {
-                m_state.store(StreamDecoderState::ERROR);
-                return sdk_utils::INVALID_OPERATION;
-            }
-        } else {
-            LOGI("srcSpec format unknown, defer resample init to first decode callback");
         }
     }
 
@@ -112,6 +147,16 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_seekDiscardBytes = 0;
     m_processedBytes   = 0;
     m_consumedBytes.store(0);
+    m_decodedFrames = 0;
+    m_seekBaseMs    = 0;
+    m_skippedFrames = 0;
+    m_pendingFrameSkip      = false;
+    m_frameSkipWithDataAfter = false;
+    m_md5Mismatch           = false;
+    // 解出量的计量：源格式每帧字节数与采样率。format 未知的容器（mp3 等）在首帧回调里回填。
+    m_decodedRate   = static_cast<uint32_t>(m_srcSpec.sampleRate);
+    m_pcmFrameBytes = static_cast<size_t>(m_srcSpec.numChannel)
+        * static_cast<size_t>(m_srcSpec.bytesPerSample);
     m_ring->reset();
     if (startThread) {
         m_state.store(StreamDecoderState::DECODING);
@@ -151,6 +196,92 @@ void AudioStreamDecoder::seekToMs(uint64_t targetMs)
 StreamDecoderState AudioStreamDecoder::state() const
 {
     return m_state.load();
+}
+
+sdk::ErrorCode AudioStreamDecoder::errorCode() const
+{
+    return m_errorCode.load();
+}
+
+std::string AudioStreamDecoder::errorDetail() const
+{
+    std::lock_guard<std::mutex> lock(m_errorMutex);
+    return m_errorDetail;
+}
+
+void AudioStreamDecoder::finishAtEndOfStream()
+{
+    // 规格 T4 / 条目 23：EOS 汇总处比「解出多少」与「标称多长」。
+    // 修好前 flac 截到 60% 一路走到 EOS，用户看到进度条走到 177 秒就结束、界面还写着
+    // 297 秒——「播到坏处」必须说出来，只有 P0（切在音频之后）才静默。
+    //
+    // 两道判据，都是「事实上报 + 单一阈值」：
+    //   1. 提取器能确定短读（wav/aiff 声明长度 > 文件剩余）→ 与百分比无关地报；
+    //   2. 否则解出时长短于标称 5 个百分点以上才报。5pp 的来源是正常文件的量化误差
+    //      （编码器 padding、seek 偏移、asf 的 +0.20%）都在它以内。
+    // D 类（mp3/aac/mkv）不受影响：它们的标称时长跟着文件一起缩水，measured ≈ declared。
+
+    // 规格 F1 / F2：坏帧的汇总是「跳过继续」的最后一步，优先级高于截断。
+    // 只有「跳帧之后还有数据」才算坏帧——失败发生在数据末尾属于截断（4.1）。
+    if (m_frameSkipWithDataAfter) {
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "skipped %llu undecodable frame(s)",
+                      static_cast<unsigned long long>(m_skippedFrames));
+        setError(sdk::ErrorCode::DataCorrupted, detail);
+        return;
+    }
+
+    if (m_extractor != nullptr && m_extractor->isDataTruncated()) {
+        setError(sdk::ErrorCode::DataTruncated, "declared payload length exceeds the file size");
+        return;
+    }
+
+    const bool haveNominal = m_durationMs > 0 && m_decodedRate > 0;
+    const uint64_t measuredMs = haveNominal
+        ? m_seekBaseMs + m_decodedFrames * 1000 / static_cast<uint64_t>(m_decodedRate)
+        : 0;
+    // 正常 EOS 时短于标称超过 5 个百分点（T4）
+    const bool shortOfNominal = haveNominal && measuredMs < m_durationMs
+        && (m_durationMs - measuredMs) * 20 > m_durationMs;
+
+    // flac 的整段 MD5：截断会让 MD5 同样不符，所以「解不到标称长度」时按截断处理，
+    // 只有「解到了标称长度却对不上」才是流内坏帧（4.1：坏帧之后还有数据）。
+    if (m_md5Mismatch && !shortOfNominal) {
+        setError(sdk::ErrorCode::DataCorrupted, "flac stream md5 mismatch");
+        return;
+    }
+
+    if (shortOfNominal) {
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
+                      static_cast<unsigned long long>(measuredMs),
+                      static_cast<unsigned long long>(m_durationMs));
+        setError(sdk::ErrorCode::DataTruncated, detail);
+        return;
+    }
+
+    m_state.store(StreamDecoderState::EOS);
+}
+
+void AudioStreamDecoder::noteSkippedFrame(uint64_t count)
+{
+    m_skippedFrames += count;
+    m_pendingFrameSkip = true;
+}
+
+void AudioStreamDecoder::onAudioDecodeSkip()
+{
+    noteSkippedFrame();
+}
+
+void AudioStreamDecoder::setError(sdk::ErrorCode code, const char *detail)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_errorDetail = (detail != nullptr) ? detail : "";
+    }
+    m_errorCode.store(code);
+    m_state.store(StreamDecoderState::ERROR);
 }
 
 uint64_t AudioStreamDecoder::positionMs() const
@@ -194,7 +325,7 @@ bool AudioStreamDecoder::canDecode() const
 void AudioStreamDecoder::threadFunc()
 {
     if (m_ring == nullptr || m_extractor == nullptr) {
-        m_state.store(StreamDecoderState::ERROR);
+        setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;
     }
 
@@ -203,16 +334,18 @@ void AudioStreamDecoder::threadFunc()
         flac.setAbortFlag(&m_abortDecode);
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
-            if (!flac.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
-                                         m_extractor->getDataSize())) {
-                m_state.store(StreamDecoderState::ERROR);
+            // 从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
+            // libFLAC 只在读到 STREAMINFO 之后才会做整段 MD5 校验（没有 STREAMINFO 时它
+            // 直接 do_md5_checking=false），所以只喂纯帧数据等于把 #10 的检测手段关掉。
+            if (!flac.initFromDataSource(ds, 0, m_extractor->getDataSize())) {
+                setError(sdk::ErrorCode::DecodeInitFailed, "flac stream init failed");
                 return;
             }
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
                 return;
             }
             flac.setInputBuffer(extPtr);
@@ -227,10 +360,12 @@ void AudioStreamDecoder::threadFunc()
                 m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
                 m_processedBytes   = m_consumedBytes.load();
                 m_seekDiscardBytes = 0;
+                m_decodedFrames    = 0;
+                m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
                 if (!flac.seekToSample(targetSample)) {
-                    m_state.store(StreamDecoderState::ERROR);
+                    setError(sdk::ErrorCode::DataCorrupted, "flac seek failed");
                     break;
                 }
                 m_abortDecode.store(false);
@@ -239,7 +374,10 @@ void AudioStreamDecoder::threadFunc()
 
             int ret = flac.processOne();
             if (ret == 0) {
-                m_state.store(StreamDecoderState::EOS);
+                // 帧级信号（error_callback 的 LOST_SYNC）分不清「跳了帧」还是「解了垃圾」，
+                // 整段校验只能靠 STREAMINFO 的 MD5，而 libFLAC 只在 finish() 里比它。
+                m_md5Mismatch = flac.md5MismatchAtEndOfStream();
+                finishAtEndOfStream();
                 break;
             }
             if (ret < 0) {
@@ -250,7 +388,7 @@ void AudioStreamDecoder::threadFunc()
                     m_abortDecode.store(false);
                     continue;
                 }
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "flac decode failed");
                 break;
             }
         }
@@ -267,18 +405,18 @@ void AudioStreamDecoder::threadFunc()
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
             if (!vorbis.initVFFromSource(ds, m_extractor->getDataSize())) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "vorbis stream init failed");
                 return;
             }
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
             if (extPtr == nullptr || extPtr->size() == 0) {
                 LOGE("extractor getMetaData failed");
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
                 return;
             }
             if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DecodeInitFailed, "vorbis stream init failed");
                 return;
             }
         }
@@ -292,8 +430,10 @@ void AudioStreamDecoder::threadFunc()
                 m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
                 m_processedBytes   = m_consumedBytes.load();
                 m_seekDiscardBytes = 0;
+                m_decodedFrames    = 0;
+                m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
-                    m_state.store(StreamDecoderState::ERROR);
+                    setError(sdk::ErrorCode::DataCorrupted, "vorbis seek failed");
                     break;
                 }
                 m_abortDecode.store(false);
@@ -302,7 +442,7 @@ void AudioStreamDecoder::threadFunc()
 
             int ret = vorbis.decodeOne();
             if (ret == 0) {
-                m_state.store(StreamDecoderState::EOS);
+                finishAtEndOfStream();
                 break;
             }
             if (ret < 0) {
@@ -313,8 +453,12 @@ void AudioStreamDecoder::threadFunc()
                     m_abortDecode.store(false);
                     continue;
                 }
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "vorbis decode failed");
                 break;
+            }
+            if (ret == kVorbisHoleSkipped) {
+                // 坏页：记账后继续读下一页（规格 4.3 / 条目 12），EOS 处汇总成一条错误。
+                noteSkippedFrame();
             }
         }
 
@@ -334,13 +478,15 @@ void AudioStreamDecoder::threadFunc()
             m_processedBytes = 0;
             m_seekDiscardBytes
                 = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
+            m_decodedFrames = 0;
+            m_seekBaseMs    = static_cast<uint64_t>(seekMs);
             m_seekRequestMs.store(-1);
             m_abortDecode.store(false);
             m_state.store(StreamDecoderState::DECODING);
 
             RunDecodeResult ret = runDecode();
             if (ret == RunDecodeResult::Error) {
-                m_state.store(StreamDecoderState::ERROR);
+                setError(sdk::ErrorCode::DataCorrupted, "decode failed");
                 break;
             }
             if (m_stopRequest.load()) {
@@ -349,7 +495,7 @@ void AudioStreamDecoder::threadFunc()
             if (m_seekRequestMs.load() >= 0) {
                 continue;
             }
-            m_state.store(StreamDecoderState::EOS);
+            finishAtEndOfStream();
             break;
         }
 
@@ -367,11 +513,11 @@ void AudioStreamDecoder::threadFunc()
 
         RunDecodeResult ret = runDecode();
         if (ret == RunDecodeResult::Error) {
-            m_state.store(StreamDecoderState::ERROR);
+            setError(sdk::ErrorCode::DataCorrupted, "decode failed");
         } else if (ret == RunDecodeResult::Abort && m_seekRequestMs.load() >= 0) {
             continue;
         } else if (!m_stopRequest.load()) {
-            m_state.store(StreamDecoderState::EOS);
+            finishAtEndOfStream();
         }
         break;
     }
@@ -392,22 +538,42 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
         return;
     }
 
-    // 懒初始化：format 未知时在首帧回调处触发 Lazy 工厂
-    if (m_lazyResample.isInit() && !m_lazyResample->IsValueCreated()
-        && out.spec.format != AudioFormatUnknown) {
-        m_srcSpec.sampleRate     = out.spec.sampleRate;
-        m_srcSpec.numChannel     = out.spec.numChannel;
-        m_srcSpec.format         = out.spec.format;
-        m_srcSpec.bytesPerSample = out.spec.bytesPerSample;
-        m_srcSpec.bitsPerSample  = out.spec.bitsPerSample;
-        m_bytesPerMs             = static_cast<uint64_t>(m_srcSpec.sampleRate)
-            * static_cast<uint64_t>(m_srcSpec.numChannel)
-            * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
+    // 规格 6.2 S3：采样率/声道以解码首帧实测为准，且必须**无条件**覆盖。
+    // 修好前这一整块被 `m_lazyResample.isInit() && !IsValueCreated()` 挡着，
+    // 而工厂只在 `m_srcSpec != m_devSpec` 时才建——声明值恰好等于设备规格时，
+    // 首帧实测到的就成了头里那个错值（44100 的码流被当 48000 播，快 8.8%）。
+    if (m_firstDecodeFrame && out.spec.sampleRate > 0 && out.spec.numChannel > 0
+        && out.spec.bytesPerSample > 0 && out.spec.format != AudioFormatUnknown) {
+        m_firstDecodeFrame = false;
 
-        if (m_srcSpec == m_devSpec) {
+        AudioSpec frameSpec;
+        frameSpec.sampleRate     = out.spec.sampleRate;
+        frameSpec.numChannel     = out.spec.numChannel;
+        frameSpec.format         = out.spec.format;
+        frameSpec.bytesPerSample = out.spec.bytesPerSample;
+        frameSpec.bitsPerSample  = out.spec.bitsPerSample;
+
+        if (!(m_srcSpec == frameSpec) || m_srcSpec.bytesPerSample != frameSpec.bytesPerSample) {
+            m_srcSpec.sampleRate     = frameSpec.sampleRate;
+            m_srcSpec.numChannel     = frameSpec.numChannel;
+            m_srcSpec.format         = frameSpec.format;
+            m_srcSpec.bytesPerSample = frameSpec.bytesPerSample;
+            m_srcSpec.bitsPerSample  = frameSpec.bitsPerSample;
+            m_bytesPerMs             = static_cast<uint64_t>(m_srcSpec.sampleRate)
+                * static_cast<uint64_t>(m_srcSpec.numChannel)
+                * static_cast<uint64_t>(m_srcSpec.bytesPerSample) / 1000;
+
+            // 覆盖后按新规格重建：原先可能已按声明值建过，留着就是拿错参数做重采样。
+            // 与设备规格相等就把工厂丢掉（不需要重采样）。
             m_lazyResample = Optional<Lazy<std::shared_ptr<AudioResample>>>();
-        } else {
-            m_lazyResample->Value(); // 触发工厂函数，此时 m_srcSpec 已更新为真实解码格式
+            if (!(m_srcSpec == m_devSpec) && deviceSpecSupportsResample()) {
+                m_lazyResample.emplace(
+                    [this]() -> std::shared_ptr<AudioResample> { return createResampler(); });
+                if (m_lazyResample->Value() == nullptr) {
+                    setError(sdk::ErrorCode::DecodeInitFailed, "resample init failed");
+                    return;
+                }
+            }
         }
     }
 
@@ -415,6 +581,13 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
         * static_cast<size_t>(out.spec.numChannel) * static_cast<size_t>(out.spec.bytesPerSample);
     if (frameBytes == 0 || out.lineData == nullptr) {
         return;
+    }
+
+    // 首帧的真实规格：解码器说了算，EOS 汇总的换算基准跟着它走（mp3 等容器头里没有）
+    if (out.spec.sampleRate > 0 && out.spec.numChannel > 0 && out.spec.bytesPerSample > 0) {
+        m_decodedRate   = static_cast<uint32_t>(out.spec.sampleRate);
+        m_pcmFrameBytes = static_cast<size_t>(out.spec.numChannel)
+            * static_cast<size_t>(out.spec.bytesPerSample);
     }
 
     m_interleaveBuf.resize(frameBytes);
@@ -429,6 +602,12 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
     }
 
     writeDecodedBytes(m_interleaveBuf.data(), frameBytes);
+
+    // 跳帧之后又解出了数据 → 这一次是「坏帧」而不是「截断」（规格 4.1）。
+    if (m_pendingFrameSkip) {
+        m_pendingFrameSkip      = false;
+        m_frameSkipWithDataAfter = true;
+    }
 }
 
 bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
@@ -450,6 +629,10 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
 
     const char *writePtr = pcm + skipped;
     size_t writeLen      = pcmSize - skipped;
+
+    if (m_pcmFrameBytes > 0) {
+        m_decodedFrames += static_cast<uint64_t>(writeLen / m_pcmFrameBytes);
+    }
 
     const char *outData = writePtr;
     size_t outLen       = writeLen;
@@ -527,8 +710,7 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         DataSourceBase *ds = m_extractor->getDataSource();
         int ret            = -1;
         if (ds != nullptr) {
-            flacDecode.initFromDataSource(ds, m_extractor->getAudioDataOffset(),
-                                          m_extractor->getDataSize());
+            flacDecode.initFromDataSource(ds, 0, m_extractor->getDataSize());
             ret = flacDecode.process_until_end_of_stream() ? 0 : -1;
         } else {
             AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
@@ -602,6 +784,8 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         }
         ret = decode.decode(extPtr->data(), extPtr->size());
     }
+    // 跳过的包已经在发生顺序上经 onAudioDecodeSkip() 记过账，上报留给 EOS 汇总
+    // （规格 F1：一次坏文件只挂一条错误）；这里只区分「放弃」与「正常跑完」。
     if (ret < 0) {
         return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
     }

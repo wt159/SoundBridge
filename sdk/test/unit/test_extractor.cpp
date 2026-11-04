@@ -411,13 +411,18 @@ TEST_SUITE("ExtractorFactory")
         REQUIRE(extractor == nullptr);
     }
 
+    // 以下三个用例注册的是只验证「扩展名归一化 / 魔数探测」的替身，它没有真实 spec
+    // （sampleRate/numChannel 恒 0）。#38 把工厂出口收紧成 spec 契约的唯一校验点后，
+    // 这类替身必须显式 opt-in allowEmptySpec，否则会被出口当成坏头拒绝。
     TEST_CASE("Factory create normalizes uppercase extension")
     {
         const std::string ext = ".factory_upper_unit_case";
         const bool registered = ExtractorFactory::registerExtractor(
-            ext, [](DataSourceBase *source) -> ExtractorHelper * {
+            ext,
+            [](DataSourceBase *source) -> ExtractorHelper * {
                 return new TestOnlyExtractor(source);
-            });
+            },
+            nullptr, true);
         REQUIRE(registered == true);
 
         TestFactoryDataSource source(makeMagicHeader("unit"));
@@ -431,9 +436,11 @@ TEST_SUITE("ExtractorFactory")
     {
         const std::string ext = ".factory_missing_dot_unit_case";
         const bool registered = ExtractorFactory::registerExtractor(
-            ext, [](DataSourceBase *source) -> ExtractorHelper * {
+            ext,
+            [](DataSourceBase *source) -> ExtractorHelper * {
                 return new TestOnlyExtractor(source);
-            });
+            },
+            nullptr, true);
         REQUIRE(registered == true);
 
         TestFactoryDataSource source(makeMagicHeader("unit"));
@@ -451,7 +458,7 @@ TEST_SUITE("ExtractorFactory")
             [](DataSourceBase *source) -> ExtractorHelper * {
                 return new TestOnlyExtractor(source);
             },
-            sniffUnitMagic);
+            sniffUnitMagic, true);
         REQUIRE(registered == true);
 
         TestFactoryDataSource source(makeMagicHeader("unit"));

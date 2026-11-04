@@ -66,6 +66,7 @@ private:
     void stopConsumerThread();
     void consumeAudioData();
     bool shouldFillSilence();
+    void handleDecodeError(const MusicPropertiesPtr &cur);
 
 private:
     std::shared_ptr<AudioDevice> m_audioDev;
@@ -83,6 +84,8 @@ private:
     std::atomic<int> m_skipFailures;
     std::atomic<bool> m_switching;
     std::atomic<bool> m_shuttingDown;
+    // 本次播放（一次 _play）里本次曲目的解码失败只上报一次，避免 10ms 消费循环刷屏
+    std::atomic<bool> m_decodeErrorHandled;
     WorkQueue m_workQueue;
     WorkQueue::TaskID m_consumerTaskID;
 };
@@ -98,6 +101,7 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_skipFailures(0)
     , m_switching(false)
     , m_shuttingDown(false)
+    , m_decodeErrorHandled(false)
     , m_workQueue()
     , m_consumerTaskID(WorkQueue::TaskID_Error)
 {
@@ -147,6 +151,8 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
                 return;
             }
             if (m_pendingAdd.fetch_sub(1) == 1) {
+                // 被拒文件不进播放列表，永远不会成为当前曲目，只能靠这份汇总让它们可见
+                m_musicList->reportScanSummary();
                 m_musicList->updateList();
             }
         });
@@ -160,7 +166,11 @@ void MusicPlayer::Impl::play()
         return;
     }
 
-    m_workQueue.asyncRunTask([this]() { _play(); });
+    m_workQueue.asyncRunTask([this]() {
+        // 用户主动播放 = 新的播放会话：上次因坏数据失败的曲目可以重新尝试
+        m_musicList->clearFailedTracks();
+        _play();
+    });
 }
 
 void MusicPlayer::Impl::pause()
@@ -256,6 +266,7 @@ void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
 void MusicPlayer::Impl::_play()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
+    m_decodeErrorHandled.store(false);
     if (m_state == MusicPlayerState::StoppedState) {
         bumpTraceId("play");
     }
@@ -472,21 +483,79 @@ void MusicPlayer::Impl::consumeAudioData()
                 }
             });
         }
+    }
 
-        StreamDecoderState st = cur->streamDecoder->state();
-        if (st == StreamDecoderState::EOS && ring->availableRead() == 0) {
-            if (!isShuttingDown() && !m_switching.load() && !m_switching.exchange(true)) {
-                m_workQueue.asyncRunTask([this]() {
-                    if (!isShuttingDown()) {
-                        if (!m_musicList->advanceToNextTrack()) {
-                            _stop();
-                        }
+    StreamDecoderState st = cur->streamDecoder->state();
+    if (st == StreamDecoderState::ERROR) {
+        // 已解出的 PCM 先播完再上报：报出来的位置必须是用户实际听到的位置（基石 B4）
+        if (ring->availableRead() == 0) {
+            handleDecodeError(cur);
+        }
+        return;
+    }
+
+    if (st == StreamDecoderState::EOS && ring->availableRead() == 0) {
+        if (!isShuttingDown() && !m_switching.load() && !m_switching.exchange(true)) {
+            m_workQueue.asyncRunTask([this]() {
+                if (!isShuttingDown()) {
+                    if (!m_musicList->advanceToNextTrack()) {
+                        _stop();
                     }
-                    m_switching.store(false);
-                });
-            }
+                }
+                m_switching.store(false);
+            });
         }
     }
+}
+
+void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
+{
+    if (cur == nullptr || cur->streamDecoder == nullptr) {
+        return;
+    }
+    if (m_decodeErrorHandled.exchange(true)) {
+        return;
+    }
+
+    const ErrorCode code       = cur->streamDecoder->errorCode();
+    const std::string detail   = cur->streamDecoder->errorDetail();
+    const ErrorCodeInfo &info  = GetErrorInfo(code);
+    const uint64_t positionMs  = cur->signalProperties.curPositionMs.load();
+    const bool canAutoSkip     = (info.action == ErrorAction::SkipTrack) && shouldAutoSkipOnError();
+    LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
+                       "decode error code=%d detail=%s index=%d positionMs=%llu path=%s",
+                       static_cast<int>(code), detail.c_str(), static_cast<int>(cur->index),
+                       static_cast<unsigned long long>(positionMs),
+                       cur->fileProperties.fullPath.c_str());
+
+    // 本次播放会话内不再自动重试这一曲（规格 8.2 / 实现清单 21）
+    m_musicList->markTrackFailed(cur->index);
+    if (m_listener != nullptr) {
+        m_listener->onMusicPlayerError(code, detail, static_cast<int>(cur->index),
+                                       cur->fileProperties.fullPath, m_traceId);
+    }
+
+    stopConsumerThread();
+    m_audioDev->stop();
+    m_audioDev->clearQueue();
+    m_audioDev->close();
+
+    if (!canAutoSkip) {
+        // 停在坏处：位置留在 curPositionMs，状态置 Paused（规格 8.2）
+        updatePlayState(MusicPlayerState::PausedState);
+        return;
+    }
+
+    m_switching.store(true);
+    m_workQueue.asyncRunTask([this]() {
+        bool advanced = (m_musicList != nullptr) && m_musicList->skipToNextPlayable();
+        m_switching.store(false);
+        if (advanced) {
+            _play();
+        } else {
+            updatePlayState(MusicPlayerState::PausedState);
+        }
+    });
 }
 
 void MusicPlayer::Impl::startConsumerThread()
@@ -516,6 +585,7 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     LogPrintfWithTrace(SdkLogLevel::Info, LOG_TAG, m_traceId, "putMusicPlayListCurBuf : %d(%s)",
                        property->index, property->fileProperties.fileName.data());
     m_skipFailures.store(0);
+    m_decodeErrorHandled.store(false);
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         m_curMusicProperties = property;
@@ -549,6 +619,17 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
                                              const std::string &path)
 {
     if (isShuttingDown()) {
+        return;
+    }
+    if (index < 0) {
+        // 批量扫描汇总：不绑定曲目、不改变播放状态，只是让被拒文件可见
+        std::string summary = FormatError(code, detail);
+        LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, m_traceId,
+                           "scan summary code=%d message=%s", static_cast<int>(code),
+                           summary.c_str());
+        if (m_listener != nullptr) {
+            m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
+        }
         return;
     }
     m_switching.store(false);

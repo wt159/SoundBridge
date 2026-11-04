@@ -1,6 +1,7 @@
 #include "WAVExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
+#include <algorithm>
 #include <cstring>
 
 #define LOG_TAG "WAVExtractor"
@@ -51,6 +52,14 @@ WAVExtractor::WAVExtractor(DataSourceBase *source)
     : m_dataSource(source)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
+    , m_dataTruncated(false)
+    , m_waveFormat(0)
+    , m_channelMask(0)
+    , m_dataOffset(0)
+    , m_dataSize(0)
+    , m_audioSpec()
+    , m_audioCodecID(AUDIO_CODEC_ID_NONE)
+    , m_metaBuf()
 {
     m_initCheck = init();
 }
@@ -200,25 +209,49 @@ status_t WAVExtractor::init()
         } else if (!memcmp(chunkHeader, "data", 4)) {
             if (m_validFormat) {
                 m_dataOffset = offset;
-                m_dataSize   = chunkSize;
-                LOG_INFO(LOG_TAG, "dataOffset=%lu, dataSize=%lu", (long unsigned)m_dataOffset,
-                         (long unsigned)m_dataSize);
+
+                // 规格 T2 / 条目 6：按 min(声明长度, 文件剩余) 读，按 clamp 后的长度算可播样本。
+                // 不 clamp 的两条后果都在这一行里：短读 → NO_INIT（整个文件一个字都不播），
+                // 以及 44 字节头就能要 4GB 的分配点（#24）。
+                off64_t fileSize = 0;
+                if (m_dataSource->getSize(&fileSize) != OK || fileSize < 0) {
+                    fileSize = 0;
+                }
+                uint64_t available
+                    = (static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(m_dataOffset))
+                    ? static_cast<uint64_t>(fileSize) - static_cast<uint64_t>(m_dataOffset)
+                    : 0;
+                uint64_t declaredSize = static_cast<uint64_t>(chunkSize);
+                m_dataTruncated       = declaredSize > available;
+                m_dataSize            = static_cast<size_t>(std::min(declaredSize, available));
+                LOG_INFO(LOG_TAG, "dataOffset=%lu, dataSize=%lu (declared %lu%s)",
+                         (long unsigned)m_dataOffset, (long unsigned)m_dataSize,
+                         (long unsigned)declaredSize, m_dataTruncated ? ", truncated" : "");
 
                 if (m_waveFormat == WAVE_FORMAT_MSGSM) {
                     // 65 bytes decode to 320 8kHz samples
-                    m_audioSpec.durationMs = 1000000LL * (m_dataSize / 65 * 320) / 8000;
+                    m_audioSpec.durationMs = 1000000LL * (chunkSize / 65 * 320) / 8000;
                 } else {
                     if (!m_audioSpec.bytesPerSample || !m_audioSpec.numChannel)
                         return ERROR_MALFORMED;
 
-                    size_t num_samples
-                        = m_dataSize / (m_audioSpec.numChannel * m_audioSpec.bytesPerSample);
-                    m_audioSpec.samples = num_samples;
+                    // durationMs 仍报头里声明的值：文件确实声称那么长，「实测短于标称」
+                    // 才是可判定的信号（T2）。samples 反映真正解得出的部分。
+                    size_t declaredSamples
+                        = chunkSize / (m_audioSpec.numChannel * m_audioSpec.bytesPerSample);
+                    m_audioSpec.samples = m_dataSize
+                        / (m_audioSpec.numChannel * m_audioSpec.bytesPerSample);
                     if (!m_audioSpec.sampleRate)
                         return ERROR_MALFORMED;
 
-                    m_audioSpec.durationMs = 1000LL * num_samples / m_audioSpec.sampleRate;
+                    m_audioSpec.durationMs = 1000LL * declaredSamples / m_audioSpec.sampleRate;
                     LOG_INFO(LOG_TAG, "durationMs = %lu", (long unsigned)m_audioSpec.durationMs);
+                }
+
+                if (m_dataSize == 0) {
+                    // 一帧都没有：连「解出多少播多少」都无从谈起，按拒绝兜底（规格 3.2 P1₀/P2）
+                    LOG_ERROR(LOG_TAG, "no playable data bytes");
+                    return NO_INIT;
                 }
 
                 m_audioCodecID = AUDIO_CODEC_ID_NONE;

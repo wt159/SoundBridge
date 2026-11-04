@@ -40,6 +40,9 @@ class AudioDecodeCallback {
 public:
     virtual ~AudioDecodeCallback() { }
     virtual void onAudioDecodeCallback(AudioDecodeSpec &out) = 0;
+    // 「这一包解不出，已经跳过」的通知（规格 4.3 条目 11）。按发生顺序回调，
+    // 所以调用方能分清「跳帧之后还有数据」（坏帧）与「跳完就到结尾」（截断）。
+    virtual void onAudioDecodeSkip() { }
 };
 
 class AudioDecode {
@@ -50,6 +53,9 @@ public:
     sdk_utils::status_t initCheck();
     int decode(const char *data, ssize_t size);
     int decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets);
+    // 单包解不出而被跳过的包数（规格 4.3 条目 11）。只进日志与 detail，不做机器可读的
+    // 错误字段（规格 F3）；测试用它验证「连续失败到阈值就放弃、不扫完整段垃圾」。
+    int skippedPacketCount() const;
 
 private:
     class Impl;

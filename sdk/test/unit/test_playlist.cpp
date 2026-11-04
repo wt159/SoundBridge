@@ -278,7 +278,7 @@ TEST_SUITE("MusicPlayList")
         REQUIRE(playlist->skipToNextPlayable() == false);
     }
 
-    TEST_CASE("skipToNextPlayable returns true when track is selectable")
+    TEST_CASE("skipToNextPlayable does not retry the only track")
     {
         RealMediaFixture fixture;
         REQUIRE(fixture.exists("music.wav"));
@@ -287,7 +287,8 @@ TEST_SUITE("MusicPlayList")
         std::shared_ptr<MusicPlayList> playlist
             = makeMusicPlayListWithOneTrack(callback, fixture.mediaPath("music.wav"));
 
-        REQUIRE(playlist->skipToNextPlayable() == true);
+        // 只有一曲时没有「下一首」：绕回自己就是同一曲重试第二次（规格 8.2 / 实现清单 21）
+        REQUIRE(playlist->skipToNextPlayable() == false);
     }
 
     TEST_CASE("skipToNextPlayable with multiple tracks wraps around")

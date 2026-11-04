@@ -128,17 +128,36 @@ status_t ASFExtractor::init()
     status_t ret   = NO_INIT;
     off64_t offset = 0, fileSize = 0;
     m_dataSource->getSize(&fileSize);
+    // 兜底解析必须自己保证终止（规格 10.#3）：正常 ASF 的顶层对象只有个位数，
+    // 走到上限说明这不是一份能解析的文件，再转下去只会刷日志。
+    const size_t kMaxObjectCount = 1024;
+    size_t objectCount           = 0;
     while (offset <= fileSize) {
+        if (++objectCount > kMaxObjectCount) {
+            LOGW("too many objects (%zu), treat as corrupted", objectCount);
+            m_validFormat = false;
+            break;
+        }
+        const off64_t objectStart = offset;
         uint8_t objectHeader[24];
-        if (m_dataSource->readAt(offset, objectHeader, sizeof(objectHeader))
+        if (m_dataSource->readAt(objectStart, objectHeader, sizeof(objectHeader))
             < (ssize_t)sizeof(objectHeader)) {
             m_validFormat = false;
             break;
         }
-        offset += sizeof(objectHeader);
         Object obj;
         getGuidObjByArray(objectHeader, obj);
         LOGI("id=%#x, size=%llu", obj.id.v1, obj.size);
+        // 对象长度必须至少容纳对象头，且落在文件范围内。否则「下一个对象 = 本对象起点 + 长度」
+        // 不再前进（obj.size == 0 时 0 - 24 回绕会原地打转），直接判损坏退出。
+        if (obj.size < sizeof(objectHeader)
+            || obj.size > static_cast<uint64_t>(fileSize - objectStart)) {
+            LOGW("invalid object size %llu at %lld, treat as corrupted", obj.size,
+                 (long long)objectStart);
+            m_validFormat = false;
+            break;
+        }
+        offset = objectStart + static_cast<off64_t>(sizeof(objectHeader));
         if (obj.id == guidHeader) {
             uint8_t temp[6];
             if (m_dataSource->readAt(offset, temp, sizeof(temp)) < (ssize_t)sizeof(temp)) {
@@ -173,7 +192,8 @@ status_t ASFExtractor::init()
         } else {
             LOGW("Unknown object, skip it");
         }
-        offset += (obj.size - sizeof(objectHeader));
+        // 严格前进：上面的校验已经保证 obj.size >= 24，off64_t 上不会回绕
+        offset = objectStart + static_cast<off64_t>(obj.size);
     }
 
     if (!m_validFormat) {
@@ -318,9 +338,6 @@ status_t ASFExtractor::initWithFFmpegDemux()
     m_audioSpec.bytesPerSample
         = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    if (fmt->duration > 0) {
-        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
-    }
     m_bitRate    = static_cast<int>(par->bit_rate);
     m_blockAlign = static_cast<int>(par->block_align);
     if (par->extradata && par->extradata_size > 0) {
@@ -337,15 +354,49 @@ status_t ASFExtractor::initWithFFmpegDemux()
         return NO_MEMORY;
     }
 
+    int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
             AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(pkt->size);
             memcpy(packet->data(), pkt->data, pkt->size);
             packetizedAudioData.push_back(packet);
+
+            if (pkt->duration > 0) {
+                totalPktDuration += pkt->duration;
+            }
         }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
+
+    // 时长归属（#39 / 规格 6.2 S1）：包时间轴优先，ASF File Properties 的
+    // playDuration 只兜底。该字段是封装器写的，改写它的工具真实存在；包时长来自
+    // 每个数据包自带的样本数，本就在读包，零额外 IO。
+    uint64_t measuredMs = 0;
+    if (totalPktDuration > 0) {
+        const double scale = av_q2d(audioStream->time_base) * 1000.0;
+        if (scale > 0) {
+            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
+        }
+    }
+    const uint64_t declaredMs
+        = fmt->duration > 0 ? static_cast<uint64_t>(fmt->duration / 1000) : 0;
+    if (measuredMs > 0) {
+        m_audioSpec.durationMs = measuredMs;
+        // S5：只打一条日志，不新增错误码、不进 UI——音频本身是完好的，报错是误伤。
+        const uint64_t diff
+            = declaredMs > measuredMs ? declaredMs - measuredMs : measuredMs - declaredMs;
+        if (declaredMs > 0 && diff * 100 > declaredMs) {
+            LOGW("declared duration %llu ms disagrees with packet timeline %llu ms (using packet "
+                 "timeline)",
+                 static_cast<unsigned long long>(declaredMs),
+                 static_cast<unsigned long long>(measuredMs));
+        }
+    } else if (declaredMs > 0) {
+        m_audioSpec.durationMs = declaredMs;
+        LOGW("no packet timeline, fall back to container duration %llu ms",
+             static_cast<unsigned long long>(declaredMs));
+    }
 
     avformat_close_input(&fmt);
     avio_context_free(&avioCtx);
@@ -389,11 +440,16 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
         Object obj;
         getGuidObjByArray(objectHeader, obj);
         LOGI("id=%#x, size=%llu", obj.id.v1, obj.size);
+        // 与顶层循环同一条规则：长度为 0 或装不下对象头的子对象会让 offset/size 不再推进
+        if (obj.size < sizeof(objectHeader)) {
+            LOGW("invalid child object size %llu, treat as corrupted", obj.size);
+            return NO_INIT;
+        }
         if (obj.id == guidFileProperties) {
             LOGD("File Properties Object");
-            uint8_t temp[obj.size];
-            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp, sizeof(temp))
-                < (ssize_t)sizeof(temp)) {
+            std::vector<uint8_t> temp(static_cast<size_t>(obj.size));
+            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp.data(), temp.size())
+                < (ssize_t)temp.size()) {
                 return NO_INIT;
                 ;
             }
@@ -414,9 +470,9 @@ status_t ASFExtractor::parseHeaderObject(off64_t startOffset, ASF::HeaderObject 
             headerObj.fpObj.dump();
         } else if (obj.id == guidStreamProperties) {
             LOGD("Stream Properties Object");
-            uint8_t temp[obj.size];
-            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp, sizeof(temp))
-                < (ssize_t)sizeof(temp)) {
+            std::vector<uint8_t> temp(static_cast<size_t>(obj.size));
+            if (m_dataSource->readAt(offset + sizeof(objectHeader), temp.data(), temp.size())
+                < (ssize_t)temp.size()) {
                 return NO_INIT;
             }
             StreamPropertiesObject spObj;

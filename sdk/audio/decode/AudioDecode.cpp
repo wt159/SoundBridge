@@ -12,6 +12,21 @@ extern "C" {
 
 using namespace sdk_utils;
 
+namespace {
+// 规格 4.3 的护栏：连续失败到这个数就放弃。没有它，一份纯乱码的 mp3 会让解码器
+// 把整个文件扫一遍找同步点。取「帧数」写法（比 500ms 好实现，且与码率无关）。
+constexpr int kMaxConsecutiveFailedPackets = 32;
+
+// 只跳「单包解不出」：码流里有一段坏数据。上下文级失败（ENOMEM、格式不支持、
+// 句柄坏掉）必须中止——它们不会因为换一个包就好了。
+// AVERROR(EPERM)=-1 是 libavcodec 对「这个包解不出来」的老返回值（wma/asf 实测），
+// 与 INVALIDDATA/EINVAL 同属数据层面的单包错误。
+bool isSkippablePacketError(int err)
+{
+    return err == AVERROR_INVALIDDATA || err == AVERROR(EINVAL) || err == AVERROR(EPERM);
+}
+} // namespace
+
 class AudioDecode::Impl {
 private:
     AVCodecID m_avCodecID;
@@ -28,6 +43,8 @@ private:
     std::string m_configuration;
     std::string m_licenseInfo;
     status_t m_initCheck;
+    int m_skippedPackets;
+    int m_consecutiveFailures;
 
 public:
     Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config);
@@ -35,10 +52,13 @@ public:
     int decode(const char *data, ssize_t size);
     int decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets);
     status_t initCheck() { return m_initCheck; }
+    int skippedPacketCount() const { return m_skippedPackets; }
 
 private:
     char *getAVErrorString(int errnum);
     int decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame);
+    // 返回 true 表示「这个包只是自己解不出，可以跳过继续」；false 表示应当中止。
+    bool skipFailedPacket(int err);
 };
 
 AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback,
@@ -56,6 +76,8 @@ AudioDecode::Impl::Impl(AudioCodecID codec, AudioDecodeCallback *callback,
     , m_configuration(avcodec_configuration())
     , m_licenseInfo(avcodec_license())
     , m_initCheck(NO_INIT)
+    , m_skippedPackets(0)
+    , m_consecutiveFailures(0)
 {
 
     LOG_INFO(LOG_TAG, "av log level: %d", av_log_get_level());
@@ -261,8 +283,14 @@ int AudioDecode::Impl::decode(const char *srcData, ssize_t srcSize)
         if (m_pkt->size > 0) {
             ret = decode(m_ctx, m_pkt, m_frame);
             if (ret < 0) {
-                LOG_ERROR(LOG_TAG, "decode failed: %d", ret);
-                goto err;
+                // 单包解不出：跳过这一段，继续处理后面的包（规格 4.3 条目 11）。
+                // 整段停会让一秒干扰毁掉后面十分钟。
+                if (!skipFailedPacket(ret)) {
+                    LOG_ERROR(LOG_TAG, "decode failed: %d", ret);
+                    goto err;
+                }
+            } else {
+                m_consecutiveFailures = 0;
             }
         }
 
@@ -326,11 +354,15 @@ int AudioDecode::Impl::decodePackets(const std::vector<AudioBuffer::AudioBufferP
         m_pkt->size = static_cast<int>(packet->size());
         int ret     = decode(m_ctx, m_pkt, m_frame);
         if (ret < 0) {
+            if (skipFailedPacket(ret)) {
+                continue;
+            }
             LOG_ERROR(LOG_TAG, "decode packet failed: %s", getAVErrorString(ret));
             m_pkt->data = nullptr;
             m_pkt->size = 0;
             return ret;
         }
+        m_consecutiveFailures = 0;
     }
 
     m_pkt->data = nullptr;
@@ -347,6 +379,27 @@ char *AudioDecode::Impl::getAVErrorString(int errnum)
 {
     av_strerror(errnum, m_error, sizeof(m_error));
     return m_error;
+}
+
+bool AudioDecode::Impl::skipFailedPacket(int err)
+{
+    if (!isSkippablePacketError(err)) {
+        return false;
+    }
+    ++m_skippedPackets;
+    ++m_consecutiveFailures;
+    if (m_consecutiveFailures >= kMaxConsecutiveFailedPackets) {
+        LOG_ERROR(LOG_TAG,
+                  "giving up after %d consecutive undecodable packets (skipped %d in total, last: %s)",
+                  m_consecutiveFailures, m_skippedPackets, getAVErrorString(err));
+        return false;
+    }
+    LOG_WARNING(LOG_TAG, "skipping undecodable packet #%d in a row: %s", m_consecutiveFailures,
+                getAVErrorString(err));
+    if (m_callback != nullptr) {
+        m_callback->onAudioDecodeSkip();
+    }
+    return true;
 }
 
 int AudioDecode::Impl::decode(AVCodecContext *ctx, AVPacket *pkt, AVFrame *frame)
@@ -407,4 +460,9 @@ int AudioDecode::decode(const char *data, ssize_t size)
 int AudioDecode::decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
 {
     return m_impl->decodePackets(packets);
+}
+
+int AudioDecode::skippedPacketCount() const
+{
+    return m_impl->skippedPacketCount();
 }

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <random>
+#include <sstream>
 
 namespace sdk {
 
@@ -168,10 +169,16 @@ bool MusicPlayList::skipToNextPlayable()
     size_t count      = m_curIndex.load();
     size_t startIndex = m_selectMusicProperties->index;
     size_t prevIndex  = startIndex;
-    for (size_t step = 1; step <= count; ++step) {
+    // step 从 1 开始且最多 count-1：本曲已经在播/已失败，绕回它自己就是「同一曲重试第二次」，
+    // 也会让两首坏曲互相跳过变成死循环（规格 8.2 / 实现清单 21）。
+    for (size_t step = 1; step < count; ++step) {
         size_t index                 = (startIndex + step) % count;
         MusicPropertiesPtr candidate = m_musicListProperties.at(index);
+        if (isTrackFailed(candidate->index)) {
+            continue;
+        }
         if (!startStreaming(candidate)) {
+            markTrackFailed(candidate->index);
             continue;
         }
         releaseDecodedBuffersExcept(candidate->index, prevIndex);
@@ -182,6 +189,56 @@ bool MusicPlayList::skipToNextPlayable()
         return true;
     }
     return false;
+}
+
+void MusicPlayList::markTrackFailed(size_t index)
+{
+    std::lock_guard<std::mutex> lock(m_failedMutex);
+    m_failedIndices.insert(index);
+    LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
+                       "track marked failed in this session index=%zu", index);
+}
+
+bool MusicPlayList::isTrackFailed(size_t index) const
+{
+    std::lock_guard<std::mutex> lock(m_failedMutex);
+    return m_failedIndices.find(index) != m_failedIndices.end();
+}
+
+void MusicPlayList::clearFailedTracks()
+{
+    std::lock_guard<std::mutex> lock(m_failedMutex);
+    m_failedIndices.clear();
+}
+
+void MusicPlayList::recordScanRejection(ErrorCode code)
+{
+    std::lock_guard<std::mutex> lock(m_rejectMutex);
+    m_scanRejects[code] += 1;
+}
+
+void MusicPlayList::reportScanSummary()
+{
+    std::map<ErrorCode, int> rejects;
+    {
+        std::lock_guard<std::mutex> lock(m_rejectMutex);
+        rejects.swap(m_scanRejects);
+    }
+    if (rejects.empty()) {
+        return;
+    }
+    for (std::map<ErrorCode, int>::const_iterator it = rejects.begin(); it != rejects.end(); ++it) {
+        std::ostringstream detail;
+        detail << it->second
+               << ((it->second == 1) ? " file cannot be played" : " files cannot be played");
+        std::string traceId = currentTraceId();
+        LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, traceId,
+                           "scan summary code=%d detail=%s", static_cast<int>(it->first),
+                           detail.str().c_str());
+        if (m_callback != nullptr) {
+            m_callback->onMusicPlayListError(it->first, detail.str(), -1, "");
+        }
+    }
 }
 void MusicPlayList::_addMusic(const std::string &musicPath)
 {
@@ -197,23 +254,29 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
     std::shared_ptr<FileSource> source(new FileSource(musicPath.c_str()));
     if (source == nullptr) {
+        recordScanRejection(ErrorCode::FileOpenFailed);
         reportError(ErrorCode::FileOpenFailed, "new FileSource failed", musicProperties);
         return;
     }
     if (source->initCheck() != OK) {
+        recordScanRejection(ErrorCode::FileOpenFailed);
         reportError(ErrorCode::FileOpenFailed, "FileSource initCheck failed", musicProperties);
         return;
     }
     processProperties.source = source;
+    // 规格 5.4 H3：拒绝的唯一出口是 createExtractor 返回空，错误码按「扩展名是否注册」分，
+    // 不按「解析失败」分——注册过却被拒说明头坏了，没注册且魔数认不出才是格式不支持。
+    const bool extensionRegistered
+        = ExtractorFactory::isSupportedExtension(fileProperties.extensionName);
     std::shared_ptr<ExtractorHelper> extractor(
         ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName, true));
     if (extractor == nullptr) {
-        reportError(ErrorCode::ExtractorUnsupported, "createExtractor returned nullptr",
-                    musicProperties);
-        return;
-    }
-    if (extractor->initCheck() != OK) {
-        reportError(ErrorCode::ExtractorInitFailed, "extractor initCheck failed", musicProperties);
+        const ErrorCode code = extensionRegistered ? ErrorCode::ExtractorInitFailed
+                                                   : ErrorCode::ExtractorUnsupported;
+        const char *detail   = extensionRegistered ? "extractor rejected the file header"
+                                                   : "createExtractor returned nullptr";
+        recordScanRejection(code);
+        reportError(code, detail, musicProperties);
         return;
     }
     auto openEnd = std::chrono::steady_clock::now();

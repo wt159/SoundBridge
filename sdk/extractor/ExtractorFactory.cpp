@@ -116,6 +116,7 @@ namespace {
 struct ExtractorEntry {
     ExtractorFactory::ExtractorCreator creator;
     ExtractorFactory::ExtractorSniffer sniffer;
+    bool allowEmptySpec = false;
 };
 
 using RegistryMap = std::unordered_map<std::string, ExtractorEntry>;
@@ -132,31 +133,61 @@ std::mutex &extractorRegistryMutex()
     return s_mutex;
 }
 
-// #21：AudioSpec 只保证 sampleRate / numChannel 有效；format / bytesPerSample 允许未知，
-// 由解码首帧回填。缺了前两项一定是提取器 bug，但工厂只负责构造、不负责审核——
-// 测试替身和探测型提取器允许 spec 为空，一律丢弃会误杀合法用法。
-// 所以这里只把「静默的 0」变成显式日志，避免它一路流到下游变成除零或错的时长。
-ExtractorHelper *warnIfSpecUnusable(ExtractorHelper *extractor, const std::string &extensionName)
+bool lookupEntry(const std::string &normalizedExtension, ExtractorEntry *entry)
+{
+    if (entry == nullptr) {
+        return false;
+    }
+    std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+    RegistryMap &registry = extractorRegistry();
+    RegistryMap::const_iterator search = registry.find(normalizedExtension);
+    if (search == registry.end()) {
+        return false;
+    }
+    *entry = search->second;
+    return true;
+}
+
+// 规格 B2 / 10.#14：工厂出口是拒绝文件的唯一出口。
+// initCheck != OK 与 spec 不合格都在这里收成 nullptr，调用方只判断返回值。
+// allowEmptySpec 只给测试替身放行 spec 检查，init 失败一律拒绝。
+ExtractorHelper *finalizeExtractor(ExtractorHelper *extractor, const ExtractorEntry &entry,
+                                   const std::string &extensionName)
 {
     if (extractor == nullptr) {
         return nullptr;
     }
+    if (extractor->initCheck() != sdk_utils::OK) {
+        LOGW("createExtractor init failed: %s", extensionName.c_str());
+        delete extractor;
+        return nullptr;
+    }
+
     const AudioSpec spec = extractor->getAudioSpec();
-    if (extractor->initCheck() != sdk_utils::OK || spec.sampleRate <= 0 || spec.numChannel <= 0) {
-        LOGW("createExtractor got unusable spec: %s (init=%d sr=%d ch=%d)", extensionName.c_str(),
-             static_cast<int>(extractor->initCheck()), spec.sampleRate, spec.numChannel);
+    if (!entry.allowEmptySpec && (spec.sampleRate <= 0 || spec.numChannel <= 0)) {
+        LOGW("createExtractor got unusable spec: %s (sr=%d ch=%d)", extensionName.c_str(),
+             spec.sampleRate, spec.numChannel);
+        delete extractor;
+        return nullptr;
     }
     return extractor;
 }
+
+// 扩展名命中后构造一次；失败返回 nullptr（对象已释放）。
+ExtractorHelper *createFromEntry(const ExtractorEntry &entry, DataSourceBase *source,
+                                 const std::string &extensionName)
+{
+    return finalizeExtractor(entry.creator(source), entry, extensionName);
 }
+} // namespace
 
 bool ExtractorFactory::registerExtractor(const std::string &extensionName, ExtractorCreator creator)
 {
-    return registerExtractor(extensionName, std::move(creator), nullptr);
+    return registerExtractor(extensionName, std::move(creator), nullptr, false);
 }
 
 bool ExtractorFactory::registerExtractor(const std::string &extensionName, ExtractorCreator creator,
-                                         ExtractorSniffer sniffer)
+                                         ExtractorSniffer sniffer, bool allowEmptySpec)
 {
     const std::string normalized = normalizeExtension(extensionName);
     if (normalized.empty() || !creator) {
@@ -167,8 +198,9 @@ bool ExtractorFactory::registerExtractor(const std::string &extensionName, Extra
     std::lock_guard<std::mutex> guard(extractorRegistryMutex());
     auto &registry = extractorRegistry();
     ExtractorEntry entry;
-    entry.creator = std::move(creator);
-    entry.sniffer = std::move(sniffer);
+    entry.creator        = std::move(creator);
+    entry.sniffer        = std::move(sniffer);
+    entry.allowEmptySpec = allowEmptySpec;
     std::pair<RegistryMap::iterator, bool> insertResult
         = registry.emplace(normalized, std::move(entry));
     if (!insertResult.second) {
@@ -189,13 +221,33 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
                                                    bool enableSniff)
 {
     const std::string normalized = normalizeExtension(extensionName);
-    {
-        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
-        auto &registry = extractorRegistry();
-        auto search    = registry.find(normalized);
-        if (search != registry.end()) {
-            return warnIfSpecUnusable(search->second.creator(source), normalized);
+    ExtractorEntry registeredEntry;
+    if (lookupEntry(normalized, &registeredEntry)) {
+        ExtractorHelper *extractor = createFromEntry(registeredEntry, source, normalized);
+        if (extractor != nullptr) {
+            return extractor;
         }
+
+        // 规格 5.4 H4：扩展名命中但头坏了，做一次魔数回退，命中即用、不递归。
+        // 否则「改成不认识的后缀能播、改成认识的后缀判损坏」无法向用户解释。
+        if (!enableSniff) {
+            LOGW("createExtractor rejected: %s", normalized.c_str());
+            return nullptr;
+        }
+        const std::string sniffed = sniffExtensionByMagic(source);
+        if (!sniffed.empty() && sniffed != normalized) {
+            ExtractorEntry sniffedEntry;
+            if (lookupEntry(sniffed, &sniffedEntry)) {
+                ExtractorHelper *fallback = createFromEntry(sniffedEntry, source, sniffed);
+                if (fallback != nullptr) {
+                    LOGI("createExtractor magic fallback: %s -> %s", normalized.c_str(),
+                         sniffed.c_str());
+                    return fallback;
+                }
+            }
+        }
+        LOGW("createExtractor rejected: %s", normalized.c_str());
+        return nullptr;
     }
 
     if (!enableSniff) {
@@ -205,12 +257,10 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
 
     const std::string sniffed = sniffExtensionByMagic(source);
     if (!sniffed.empty()) {
-        std::lock_guard<std::mutex> guard(extractorRegistryMutex());
-        auto &registry = extractorRegistry();
-        auto search    = registry.find(sniffed);
-        if (search != registry.end()) {
+        ExtractorEntry sniffedEntry;
+        if (lookupEntry(sniffed, &sniffedEntry)) {
             LOGI("createExtractor sniff hit: %s", sniffed.c_str());
-            return warnIfSpecUnusable(search->second.creator(source), sniffed);
+            return createFromEntry(sniffedEntry, source, sniffed);
         }
         LOGW("createExtractor unsupported sniffed extension: %s", sniffed.c_str());
     }
@@ -231,12 +281,23 @@ ExtractorHelper *ExtractorFactory::createExtractor(DataSourceBase *source,
         }
         if (entry.second.sniffer(source)) {
             LOGI("createExtractor sniffer hit: %s", entry.first.c_str());
-            return warnIfSpecUnusable(entry.second.creator(source), entry.first);
+            return createFromEntry(entry.second, source, entry.first);
         }
     }
 
     LOGW("createExtractor sniff failed: %s", normalized.c_str());
     return nullptr;
+}
+
+bool ExtractorFactory::isSupportedExtension(const std::string &extensionName)
+{
+    const std::string normalized = normalizeExtension(extensionName);
+    if (normalized.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> guard(extractorRegistryMutex());
+    auto &registry = extractorRegistry();
+    return registry.find(normalized) != registry.end();
 }
 
 std::vector<std::string> ExtractorFactory::registeredExtensions()

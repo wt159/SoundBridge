@@ -273,6 +273,8 @@ status_t APEExtractor::initWithFFmpegDemux()
         return NO_MEMORY;
     }
 
+    // 逐包累加时长（#39 / 规格 6.2 S1）：见下方时长归属注释。
+    int64_t totalPktDuration = 0;
     while (av_read_frame(fmt, pkt) >= 0) {
         if (pkt->stream_index == audioIndex && pkt->size > 0) {
             // 只保留未拼接的原始帧，供上层逐包解码使用（APE 无 parser）。
@@ -281,13 +283,44 @@ status_t APEExtractor::initWithFFmpegDemux()
                 = std::make_shared<AudioBuffer>(static_cast<size_t>(pkt->size));
             memcpy(frame->data(), pkt->data, static_cast<size_t>(pkt->size));
             m_packetizedMetaBuf.push_back(frame);
+
+            if (pkt->duration > 0) {
+                totalPktDuration += pkt->duration;
+            }
         }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
 
-    if (fmt->duration > 0) {
-        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
+    // 时长归属（#39 / 规格 6.2 S1）：包时间轴优先，APE 头里的声明值只兜底。
+    // 实测（ffmpeg 4.4.4）：ape 解复用器给的 pkt->duration **恒为 0**，连包内的 4 字节
+    // 帧头（块大小）都由头里的 blocksperframe / finalframeblocks 重写，所以这条格式上
+    // 拿不到独立于声明字段的时间轴，实际总是落到下面的兜底分支——日志会把这件事说出来。
+    // 累加逻辑保留：换成会填 pkt->duration 的解复用器时，时长自动前移，无需再改这里。
+    uint64_t measuredMs = 0;
+    if (totalPktDuration > 0) {
+        const double scale = av_q2d(audioStream->time_base) * 1000.0;
+        if (scale > 0) {
+            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
+        }
+    }
+    const uint64_t declaredMs
+        = fmt->duration > 0 ? static_cast<uint64_t>(fmt->duration / 1000) : 0;
+    if (measuredMs > 0) {
+        m_audioSpec.durationMs = measuredMs;
+        // S5：只打一条日志，不新增错误码、不进 UI——音频本身是完好的，报错是误伤。
+        const uint64_t diff
+            = declaredMs > measuredMs ? declaredMs - measuredMs : measuredMs - declaredMs;
+        if (declaredMs > 0 && diff * 100 > declaredMs) {
+            LOGW("declared duration %llu ms disagrees with packet timeline %llu ms (using packet "
+                 "timeline)",
+                 static_cast<unsigned long long>(declaredMs),
+                 static_cast<unsigned long long>(measuredMs));
+        }
+    } else if (declaredMs > 0) {
+        m_audioSpec.durationMs = declaredMs;
+        LOGW("no packet timeline, fall back to container duration %llu ms",
+             static_cast<unsigned long long>(declaredMs));
     }
 
     avformat_close_input(&fmt);
