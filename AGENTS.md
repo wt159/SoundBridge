@@ -60,12 +60,14 @@ SoundBridge 是 C++11 + Qt5 Widgets 的跨平台音乐播放器；核心工作�
 - 根文档只放跨仓库规则；进入 `app/`、`sdk/test/`、`sdk/extractor/` 时优先读取该子目录 AGENTS。
 - 代码风格继续沿用现状：WebKit 风格、4 空格、指针/引用右靠、`#pragma once`、导入顺序“项目 → 系统 → 第三方”。
 - 错误处理分两层：内部返回 `sdk_utils::status_t`，对外 API 走 `soundbridge::ErrorCode`/`sdk::ErrorCode`。
+- **跨平台改动必须双端验证**：凡是改到平台条件编译（`#ifdef _WIN32` / `__unix__`）、POSIX 头（`dirent.h` / `sys/stat.h` / `unistd.h`）、文件或目录/进程 API，本地 Windows 编译与测试全绿**不算完成**；要逐项确认非 `_WIN32` 分支用到的每个符号都有对应头文件与实现，并等 Linux 侧 `sdk-coverage` 工作流编译通过（用 `gh run list` / `gh run watch` 核对，不能只看本地 ctest）。
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - 不要改 `sdk/3rdparty/` 来“修业务问题”；先在自有代码层面适配。
 - 不要跨层新增依赖或把 UI 逻辑塞回 `sdk/`。
 - 不要在业务代码扩散 `#ifdef _WIN32`；编码/路径转换集中到边界工具，例如 `sdk/utils/Utf8Path.h`。
 - 不要继续使用 `off64_t` 作为新增公开接口类型；Windows 兼容性差，优先 `size_t` / `uint64_t`。
+- 不要把 POSIX 头拆到三分支的 `#else` 里：Linux 命中 `#elif defined(__unix__)` 时会漏掉 `dirent.h` / `sys/stat.h`，`mkdir` / `opendir` / `readdir` / `closedir` 全部未声明；Windows/POSIX 二分即可，三个头统一放进非 `_WIN32` 分支（2026-11-04 CI 编译红灯，修复见 `d5c261ed1`）。
 
 ## COMMANDS
 ```bash
