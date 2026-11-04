@@ -5,18 +5,40 @@
 #define LOG_TAG "AACExtractor"
 
 using namespace sdk_utils;
-static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
+
+// ID3v2 前缀长度：0 = 无前缀；声明合法时返回 10 + tagSize；声明超出整份文件时
+// 只认 10 字节头（与 mp3 的 clamp 规则一致，规格 10.#19）。size 是整份文件可用
+// 字节数，data 只需前 10 字节有效。init / sniff / countAdtsFrames 共用这一份逻辑。
+static size_t id3PrefixSize(const uint8_t *data, size_t size)
+{
+    if (data == nullptr || size < 10 || memcmp(data, "ID3", 3) != 0) {
+        return 0;
+    }
+    const size_t tagSize = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14)
+        | ((data[8] & 0x7f) << 7) | (data[9] & 0x7f);
+    const size_t prefix = tagSize + 10;
+    return (prefix > size) ? 10 : prefix;
+}
+
+static bool readHeader(DataSourceBase *source, off64_t offset, uint8_t *buf, size_t size)
 {
     if (source == nullptr || buf == nullptr || size == 0) {
         return false;
     }
-    return source->readAt(0, buf, size) >= static_cast<ssize_t>(size);
+    return source->readAt(offset, buf, size) >= static_cast<ssize_t>(size);
 }
 
 bool AACExtractor::sniff(DataSourceBase *source)
 {
+    uint8_t probe[10] = { 0 };
+    off64_t fileSize  = 0;
+    off64_t offset    = 0;
+    if (source != nullptr && source->getSize(&fileSize) == OK && fileSize >= 10
+        && source->readAt(0, probe, 10) == 10) {
+        offset = static_cast<off64_t>(id3PrefixSize(probe, static_cast<size_t>(fileSize)));
+    }
     uint8_t buf[4] = { 0 };
-    if (!readHeader(source, buf, sizeof(buf))) {
+    if (!readHeader(source, offset, buf, sizeof(buf))) {
         return false;
     }
     if (memcmp(buf, "ADIF", 4) == 0) {
@@ -44,15 +66,9 @@ static size_t countAdtsFrames(const uint8_t *data, size_t size)
         return 0;
     }
 
-    size_t offset = 0;
-    if (size >= 10 && memcmp(data, "ID3", 3) == 0) {
-        size_t tagSize = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14)
-            | ((data[8] & 0x7f) << 7) | (data[9] & 0x7f);
-        offset = tagSize + 10;
-        if (offset >= size) {
-            return 0;
-        }
-    }
+    // 旧实现只在这里跳 ID3，init() 却从 offset 0 解 ADTS 头，带前缀的合法文件全损。
+    // 现在与 init() / sniff() 共用同一份前缀计算（规格 10.#19）。
+    size_t offset = id3PrefixSize(data, size);
 
     size_t frameCount = 0;
     while (offset + 7 <= size) {
@@ -87,9 +103,19 @@ AACExtractor::~AACExtractor() { }
 
 status_t AACExtractor::init()
 {
+    // 先算出 ID3v2 前缀，与 sniff() / countAdtsFrames() 共用同一份逻辑。
+    // 旧实现从 offset 0 解 ADTS 头，带 200 字节前缀的合法文件会被解析成垃圾。
+    // m_metaBuf 仍读整份文件（payload 含 tag，规格 7.1），只挪动「解析头」的位置。
+    off64_t fileSize = 0;
+    m_dataSource->getSize(&fileSize);
+    uint8_t probe[10] = { 0 };
+    const off64_t prefix = (m_dataSource->readAt(0, probe, 10) == 10)
+        ? static_cast<off64_t>(id3PrefixSize(probe, static_cast<size_t>(fileSize)))
+        : 0;
+
     // Check file format: ADIF or ADTS
     uint32_t id;
-    if (m_dataSource->readAt(0, &id, sizeof id) < 2) {
+    if (m_dataSource->readAt(prefix, &id, sizeof id) < 2) {
         return NO_INIT;
     }
     if (memcmp(&id, "ADIF", 4) == 0) {
@@ -99,7 +125,7 @@ status_t AACExtractor::init()
     } else {
         LOG_INFO(LOG_TAG, "this is ADTS format");
         uint8_t data[10];
-        if (m_dataSource->readAt(0, data, 10) < 10) {
+        if (m_dataSource->readAt(prefix, data, 10) < 10) {
             return NO_INIT;
         }
         m_header.adts.syncWord               = (data[0] << 4) | (data[1] >> 4);
@@ -139,10 +165,15 @@ status_t AACExtractor::init()
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
 
-    off64_t fileSize = 0;
-    m_dataSource->getSize(&fileSize);
-    m_metaBuf = std::make_shared<AudioBuffer>(fileSize);
-    if (m_dataSource->readAt(0, m_metaBuf->data(), fileSize) < fileSize) {
+    // payload 是「音频」的整块视图：从 ID3 前缀之后开始，标签不进 payload
+    // （规格 7.3 M6：跳过 tag 对外完全静默）。若把前缀一起喂给解码器，它会被
+    // 当成不可解帧跳过，EOS 汇总就会误报一条 DataCorrupted。
+    const off64_t payloadSize = (fileSize > prefix) ? (fileSize - prefix) : 0;
+    if (payloadSize <= 0) {
+        return NO_INIT;
+    }
+    m_metaBuf = std::make_shared<AudioBuffer>(payloadSize);
+    if (m_dataSource->readAt(prefix, m_metaBuf->data(), payloadSize) < payloadSize) {
         LOG_ERROR(LOG_TAG, "readAt failed");
         return NO_MEMORY;
     }

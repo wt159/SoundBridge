@@ -205,7 +205,22 @@ static bool Resync(DataSourceBase *source, uint32_t match_header, off64_t *inout
 
             len += 10;
 
-            *inout_pos += len;
+            // 声明长度必须先和文件剩余比一次（规格 10.#18）。声明超出文件时这个
+            // tag 不可信：只跳过 10 字节头，把后面的字节当音频继续找帧同步，
+            // 而不是按声明推进到文件之外——那样 Resync 必然失败、整首解出 0 字节。
+            off64_t fileSize = 0;
+            if (source->getSize(&fileSize) != OK || fileSize < *inout_pos) {
+                fileSize = *inout_pos;
+            }
+            const off64_t declaredEnd = *inout_pos + static_cast<off64_t>(len);
+            if (declaredEnd > fileSize) {
+                LOGW("ID3 tag declares %llu bytes but only %lld remain; "
+                     "treating it as a header-only tag",
+                     (unsigned long long)len, (long long)(fileSize - *inout_pos));
+                *inout_pos += 10;
+                break;
+            }
+            *inout_pos = declaredEnd;
 
             LOGV("skipped ID3 tag, new starting offset is %lld (0x%016llx)", (long long)*inout_pos,
                  (long long)*inout_pos);
