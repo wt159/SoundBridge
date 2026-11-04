@@ -104,6 +104,55 @@ creator() 返回对象
 - **「拒绝」在表格里是一句话，实现里是唯一出口**（B2），不是九个格式各写一遍。
 - **同一行里「播到坏处」+ `缺口11` 是常见组合**：这些格式在播放路径上其实已经能播出部分（B 类实测 90%），缺的是「说出来」。
 
+### 2.1 矩阵覆盖对照（#41 收口）
+
+下表把 §2 总表的每一格对到可执行的用例。全部用例在
+`sdk/test/unit/test_bad_input.cpp` 的 `TEST_SUITE("BadInput")` 下，共 **55 条 / 396 断言**，
+没有新增 ctest 分组。`...` 表示同构用例的公共后缀。
+
+| 坏法 | 覆盖的格子 | 用例 | 断言 |
+|---|---|---|---|
+| 截断 P1 | wav ×3、aiff ×1 | `wav truncated in the middle...`、`wav truncated at a different ratio...`、`wav missing only its last 128 bytes...`、`aiff truncated in the middle...` | `measured ∈ r × good ± max(5%×good,150ms)`，报 `DataTruncated` |
+| 截断 P1（EOS 汇总） | flac | `flac truncated at 60 percent reports truncation instead of silent end` | 短于标称 > 5pp 必须报码（条目 23） |
+| 截断 P0 | mp3、mkv | `mp3 cut inside the trailing tag stays silent`、`mkv cut at the tail stays silent` | 完整且 `Ok` |
+| 截断 P2 | wav、ogg、m4a | `wav cut below one frame is rejected...`、`ogg truncation is rejected...`、`m4a with its trailing moov cut off is rejected` | ring 0 字节 + 报错 |
+| 截断（D 类不可检测，反向） | aac | `aac truncation stays silent while the ratio judgement still holds` | 判据仍成立，但**不断言错误码** |
+| 坏帧（跳过继续） | flac、mp3、aac、ape、m4a、asf、ogg | 7 条 `... bad frame plays to the end and reports corruption`（含 `ogg bad page...`） | `measured ≈ good`、一律 `DataCorrupted`、**不得** `DataTruncated` |
+| 坏帧（护栏） | ffmpeg 路径 | `ffmpeg path gives up after 32 consecutive undecodable packets`、`a long run of undecodable packets is abandoned...` | 连续失败 ≥32 帧放弃 |
+| 坏帧（不可检测，反向） | wav、aiff、mkv | 3 条 `... bad frame stays silent because it is undetectable` | 断言「确实检不出」 |
+| 头坏（拒绝） | aac ×2、flac、工厂 ×4、9 格式 ×1 | `aac header with zero sync word...`、`aac header with zero channel configuration...`、`flac streaminfo with zero sample rate...`、`factory rejects...` 系列、`every rejected format exits through createExtractor returning null` | 唯一出口 `createExtractor() == nullptr` |
+| 头坏（进程安全） | flac、asf、wma | `flac oversized metadata block...`、`asf object with zero size...`、`wma object with zero size...` | 不崩、不挂死、不写日志洪水 |
+| 头坏（不可检测，反向） | mp3 | `mp3 zeroed head stays undetectable because there is no required header` | 断言「确实检不出」 |
+| 超大元数据 | mp3 ×2、aac、批量 | `mp3 tag declaring more than the file holds...`、`aac with an id3 prefix...`、`batch scan does not count tag-wrapped files as rejected` | 零容差：有/无 tag 逐项相同 |
+| 声明撒谎（时长） | m4a、asf、flac | `m4a duration follows the packet timeline...`、`asf duration follows...`、`flac total samples lie does not change how much audio is decoded` | 零容差差分（改声明后逐位不变） |
+| 声明撒谎（不可检测，反向） | wav ×2、m4a | `wav sample rate lie stays undetectable`、`wav channel count lie stays undetectable`、`m4a container spec fields never reach spec or payload` | 断言「确实检不出」 |
+| 上报链路与交互 | — | `corrupted mid-stream reports DataCorrupted...`、`player reports decode error instead of stalling silently`、`batch scan reports a summary...`、`auto skip ...` 等 6 条 | 错误码、文案、autoSkip |
+
+**结构性不覆盖**（总表里写了期望，但不属于「可造的坏文件」）：
+
+- 「超大元数据」列里 wav / aiff / flac / ogg / mkv 的格子写的是「无自有 tag 读取」
+  「不解析 comment」「ffmpeg 侧不设限」——描述的是**代码结构**，由 #31 的 clamp 清单
+  与提取器工厂的结构性用例覆盖，不逐格造素材。
+- 截断 × asf / ape / m4a-faststart 三格：判据与 wav / aiff 完全相同（T1 不按格式分叉），
+  走的是同一条 EOS 汇总实现路径，已由 P1 组锁住；不重复跑流式解码（见 2.2）。
+
+**跨格式一致性**由两处锁定，不另起重复解码的用例：总表「坏帧」一行的七个格式各有
+一条用例、全部断言同一个 `DataCorrupted` 并显式排除 `DataTruncated`；「头坏」的拒绝格
+由 `every rejected format exits through createExtractor returning null` 一条遍历九个格式
+锁住唯一出口。再跑一遍同样的音频不带来新信息。
+
+### 2.2 耗时：交付时的估算已更正
+
+条目 28 交付时估「整套 < 3 s」。实测（2026-11-04，Windows / MinGW）：
+**55 用例 / 396 断言 / 91.6 s**，`ctest -R sdk_` 全套约 120 s。
+
+原因：基石 B4 要求量测仪器是**流式播放路径**，每条用例要把整份素材解到 EOS，
+ring 背压按 1 ms 轮询；素材是 `music/` 里几十秒到数分钟的成品。3 s 是按
+「15 份素材 × 字节手术」估的，没有算流式解码本身的开销。
+
+**决定：不削用例。** 换成短片段会改掉 `r × good` 的锚，动到所有截断与坏帧判据；
+省下的一分钟 CI 时间远不值这个风险。规格里的 3 s 以本节实测值为准。
+
 ## 3. 截断
 
 ### 3.1 定义与现状
@@ -538,13 +587,13 @@ else:                             next = offset + declared
 
 这一节是**结论**，不是待办。每一条都锁在反向用例里（用例断言「确实检不出」），防止将来有人加假信号让它们「变绿」。
 
-| 坏法 × 格式 | 为什么检不出 |
-|---|---|
-| 截断 × mp3 / aac / mkv | 标称时长跟着文件一起缩水，`declared == measured`。**判据仍然能判**（用完好文件当锚、期望 `r × good`），只是运行期无法向用户报出来 |
-| 坏帧 × wav / aiff / mkv | 无帧级校验，坏字节直接变成错误样本，长度不变 |
-| 头坏 × mp3 | 裸流没有「必需结构」可坏，扫到同步字就能播 |
-| 声明撒谎（采样率/声道）× wav / aiff / flac / ogg | 头是唯一自述，没有第二个来源；撒谎只表现为变速降调/声道错位 |
-| 声明撒谎（容器层 spec 字段）× m4a / asf / ape / mkv | 提取器读 `codecpar`、解码器读码流 ASC，容器层字段根本不进决策链 |
+| 坏法 × 格式 | 为什么检不出 | 反向用例（断言「确实检不出」） |
+|---|---|---|
+| 截断 × mp3 / aac / mkv | 标称时长跟着文件一起缩水，`declared == measured`。**判据仍然能判**（用完好文件当锚、期望 `r × good`），只是运行期无法向用户报出来 | `mp3 cut inside the trailing tag stays silent`、`mkv cut at the tail stays silent`、`aac truncation stays silent while the ratio judgement still holds` |
+| 坏帧 × wav / aiff / mkv | 无帧级校验，坏字节直接变成错误样本，长度不变 | 3 条 `... bad frame stays silent because it is undetectable` |
+| 头坏 × mp3 | 裸流没有「必需结构」可坏，扫到同步字就能播 | `mp3 zeroed head stays undetectable because there is no required header` |
+| 声明撒谎（采样率/声道）× wav / aiff / flac / ogg | 头是唯一自述，没有第二个来源；撒谎只表现为变速降调/声道错位 | `wav sample rate lie stays undetectable`、`wav channel count lie stays undetectable`（PCM 代表；aiff/flac/ogg 同构，头同样是唯一自述） |
+| 声明撒谎（容器层 spec 字段）× m4a / asf / ape / mkv | 提取器读 `codecpar`、解码器读码流 ASC，容器层字段根本不进决策链 | `m4a container spec fields never reach spec or payload`（m4a 代表，四个格式共用同一条路径） |
 
 这张表统一指**运行期能否检测**。「不可检测」不等于「判据不成立」：截断的判据永远成立（`r` 是用例自己切的），只是生产环境里没有第二来源可比，所以无法向用户报出来。写用例时这一区别很关键——不可检测的格式仍然要断言 `r × good`，只是**不能断言错误码**。
 
@@ -595,7 +644,7 @@ else:                             next = offset + declared
 | 25 | 素材全部字节手术合成、不入库；写临时目录、跑完删；读源走 `FileSource`（中文名必需） |
 | 26 | 扩展名冲突组：同一份完好 wav 用 `.wav` / `.xyz` / `.mp3` 打开，三者 `createExtractor()` 均非空且 spec 一致（锁 H4） |
 | 27 | 反向用例：#8~#10 的坏帧、第 9 节整张表，断言「确实检不出」 |
-| 28 | 规模：源素材都 ≤ 4.8MB，整套预计 < 3 s，与现有覆盖度矩阵（2.5 s）同量级 |
+| 28 | 规模：源素材都 ≤ 4.8MB、字节手术合成不入库、跑完删；不新增 ctest 分组。**交付时估的「< 3 s」不成立**，实测 55 用例 / 396 断言 / 91.6 s，修正见 §2.2 |
 
 ### 一条 ADR
 
