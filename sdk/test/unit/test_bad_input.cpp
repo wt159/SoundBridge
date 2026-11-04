@@ -842,6 +842,69 @@ std::vector<char> extractorPayload(const std::string &path, const char *extensio
 }
 
 
+
+// ---- 以下 helper 来自 #41（矩阵收口）----
+
+// 改 wav fmt 的声道数并同步 byteRate / blockAlign，让头自身保持自洽。
+// 规格 9 第 4 条：PCM 头是唯一自述，改完没有任何第二来源可以比对。
+bool patchWavChannels(std::vector<char> &data, uint16_t channels)
+{
+    if (data.size() < 44 || std::memcmp(data.data(), "RIFF", 4) != 0 || channels == 0) {
+        return false;
+    }
+    size_t offset = 12;
+    while (offset + 8 <= data.size()) {
+        const uint32_t chunkSize = readU32LE(data, offset + 4);
+        if (std::memcmp(data.data() + offset, "fmt ", 4) == 0) {
+            const size_t body = offset + 8;
+            if (body + 16 > data.size()) {
+                return false;
+            }
+            const auto u16 = [&data](size_t at) -> uint16_t {
+                return static_cast<uint16_t>(static_cast<unsigned char>(data[at]))
+                    | (static_cast<uint16_t>(static_cast<unsigned char>(data[at + 1])) << 8);
+            };
+            const uint32_t sampleRate     = readU32LE(data, body + 4);
+            const uint16_t bits           = u16(body + 14);
+            const uint32_t bytesPerSample = bits / 8;
+            if (sampleRate == 0 || bytesPerSample == 0) {
+                return false;
+            }
+            data[body + 2] = static_cast<char>(channels & 0xff);
+            data[body + 3] = static_cast<char>((channels >> 8) & 0xff);
+            writeU32LE(data, body + 8, sampleRate * channels * bytesPerSample);
+            const uint16_t blockAlign = static_cast<uint16_t>(channels * bytesPerSample);
+            data[body + 12] = static_cast<char>(blockAlign & 0xff);
+            data[body + 13] = static_cast<char>((blockAlign >> 8) & 0xff);
+            return true;
+        }
+        offset += 8 + static_cast<size_t>(chunkSize) + (chunkSize & 1);
+    }
+    return false;
+}
+
+// 改 mp4 stsd 里 mp4a sample entry 的容器层 spec 字段（+24 channelCount、+32
+// sampleRate 16.16）。规格 9 第 5 条：这些字段根本不进决策链，提取器读 codecpar、
+// 解码器读码流 ASC。m4a 是四个 ffmpeg 格式的代表，共用同一条路径。
+bool patchMp4StsdSpec(std::vector<char> &data, uint32_t sampleRate, uint16_t channels)
+{
+    for (size_t i = 4; i + 36 <= data.size(); ++i) {
+        if (std::memcmp(data.data() + i, "mp4a", 4) != 0) {
+            continue;
+        }
+        const size_t entry = i - 4;
+        const uint32_t size = readU32BE(data, entry);
+        if (size < 36 || entry + size > data.size()) {
+            continue;
+        }
+        data[entry + 24] = static_cast<char>((channels >> 8) & 0xff);
+        data[entry + 25] = static_cast<char>(channels & 0xff);
+        writeU32BE(data, entry + 32, sampleRate << 16);
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 TEST_SUITE("BadInput")
@@ -2246,4 +2309,153 @@ TEST_SUITE("BadInput")
         }
         player.stop();
     }
+
+    // ---- 以下用例来自 #41（矩阵收口）----
+
+    // 规格 9 第 3 条：裸 mp3 流没有「必需头部」可坏，扫到同步字就能播。
+    // 把开头清零不会触发任何拒绝或错误码——将来谁给 mp3 加假头校验，这条就会红。
+    TEST_CASE("mp3 zeroed head stays undetectable because there is no required header")
+    {
+        RealMediaFixture fixture;
+        const char *name = "像我这样的人-毛不易.128.mp3";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::vector<char> good = readWholeFile(fixture.mediaPath(name));
+        REQUIRE(good.size() > 1024);
+        std::vector<char> broken = good;
+        zeroRange(broken, 0, 128);
+        TempFileSet tmp("mp3_head_zero");
+        std::string badPath = tmp.make(".mp3");
+        REQUIRE(writeWholeFile(badPath, broken));
+
+        ExtractorOutcome outcome = openExtractor(badPath, ".mp3");
+        REQUIRE(!rejected(outcome));
+        CHECK(outcome.sampleRate > 0);
+        CHECK(outcome.numChannel > 0);
+        StreamMeasurement run = measureStream(badPath, ".mp3", 60000);
+        REQUIRE(run.opened);
+        CHECK(run.bytes > 0);
+        CHECK(run.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格 9 第 4 条：PCM 头是唯一自述，声道数改了之后声明与实测一起变，
+    // 仍然自洽，没有任何第二来源可比。锁的是「不许伪造检测」。
+    TEST_CASE("wav channel count lie stays undetectable")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath = fixture.mediaPath(name);
+        std::vector<char> lie = readWholeFile(goodPath);
+        REQUIRE(!lie.empty());
+        REQUIRE(patchWavChannels(lie, 2));
+        TempFileSet tmp("wav_ch_lie");
+        std::string liePath = tmp.make(".wav");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        DurationLieMeasurement before = measureDuration(goodPath, ".wav", 120000);
+        DurationLieMeasurement after  = measureDuration(liePath, ".wav", 120000);
+        REQUIRE(before.opened);
+        REQUIRE(after.opened);
+        REQUIRE(before.decodedMs > 0);
+        CHECK(after.code == sdk::ErrorCode::Ok);
+        CHECK(withinTruncationBand(after.decodedMs, after.declaredMs, after.declaredMs));
+        // 半长来自「声明与数据一起被改」，不是检测到了什么。
+        CHECK(after.declaredMs < before.declaredMs);
+    }
+
+    // 规格 9 第 5 条：ffmpeg 格式的容器层 spec 字段根本不进决策链。
+    // 改 stsd 的 sr/ch，spec 与 payload 必须逐项无感。
+    TEST_CASE("m4a container spec fields never reach spec or payload")
+    {
+        RealMediaFixture fixture;
+        const char *name = "摇滚乐_Freesound.m4a";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(!good.empty());
+        std::vector<char> lie = good;
+        REQUIRE(patchMp4StsdSpec(lie, 48000, 1));
+        TempFileSet tmp("m4a_stsd_lie");
+        std::string liePath = tmp.make(".m4a");
+        REQUIRE(writeWholeFile(liePath, lie));
+
+        ExtractorOutcome before = openExtractor(goodPath, ".m4a");
+        ExtractorOutcome after  = openExtractor(liePath, ".m4a");
+        REQUIRE(!rejected(before));
+        CHECK(!rejected(after));
+        CHECK(after.sampleRate == before.sampleRate);
+        CHECK(after.numChannel == before.numChannel);
+        CHECK(after.durationMs == before.durationMs);
+        CHECK(extractorPayload(liePath, ".m4a") == extractorPayload(goodPath, ".m4a"));
+    }
+
+    // 规格 9 第 1 条：D 类截断运行期报不出来（标称时长跟着文件一起缩水），
+    // 但判据仍然成立——measured ≈ r × good，只是不能断言错误码。
+    TEST_CASE("aac truncation stays silent while the ratio judgement still holds")
+    {
+        RealMediaFixture fixture;
+        const char *name = "WavinFlag.aac";
+        if (!fixture.exists(name)) {
+            return;
+        }
+        std::string goodPath = fixture.mediaPath(name);
+        std::vector<char> good = readWholeFile(goodPath);
+        REQUIRE(good.size() > 4096);
+        StreamMeasurement goodRun = measureStream(goodPath, ".aac", 60000);
+        REQUIRE(goodRun.opened);
+        REQUIRE(goodRun.bytes > 0);
+        const uint64_t goodMs = devBytesToMs(goodRun.bytes);
+        REQUIRE(goodMs > 0);
+
+        TempFileSet tmp("aac60");
+        std::string badPath = tmp.make(".aac");
+        REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
+        StreamMeasurement bad = measureStream(badPath, ".aac", 60000);
+        REQUIRE(bad.opened);
+        CHECK(withinTruncationBand(devBytesToMs(bad.bytes), goodMs * 6 / 10, goodMs));
+        CHECK(bad.code == sdk::ErrorCode::Ok);
+    }
+
+    // 规格基石 B2：拒绝的唯一出口是 createExtractor() == nullptr。
+    // 逐格式把必需头部清零，断言没有任何一个格式从「init 失败但对象还在」这条
+    // 半吊子路径漏出去（#38 收口前工厂只 LOGW，会带出 spec 为空的对象）。
+    TEST_CASE("every rejected format exits through createExtractor returning null")
+    {
+        struct Item {
+            const char *name;
+            const char *extension;
+        };
+        static const Item items[] = {
+            { "music.wav", ".wav" },
+            { "俱乐部音乐循环-Freesound.aiff", ".aiff" },
+            { "小镇姑娘-陶喆.flac", ".flac" },
+            { "Ringtones-耳聆网.ogg", ".ogg" },
+            { "摇滚乐_Freesound.m4a", ".m4a" },
+            { "萨克斯机.asf", ".asf" },
+            { "music-ape.ape", ".ape" },
+            { "music-mkv.mkv", ".mkv" },
+            { "WavinFlag.aac", ".aac" },
+        };
+        RealMediaFixture fixture;
+        TempFileSet tmp("reject_all");
+        for (const Item &item : items) {
+            if (!fixture.exists(item.name)) {
+                continue;
+            }
+            std::vector<char> broken = readWholeFile(fixture.mediaPath(item.name));
+            REQUIRE(!broken.empty());
+            zeroRange(broken, 0, 512);
+            std::string path = tmp.make(item.extension);
+            REQUIRE(writeWholeFile(path, broken));
+            ExtractorOutcome outcome = openExtractor(path, item.extension);
+            CHECK(outcome.created == false);
+        }
+    }
+
 }
