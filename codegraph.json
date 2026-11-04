@@ -1,0 +1,26 @@
+{
+  "exclude": [
+    "sdk/3rdparty/**",
+    "build/**",
+    "build-coverage/**",
+    "package/**",
+    "music/**",
+    "log/**",
+    "sdk/test/log/**",
+    ".worktrees/**",
+    ".workbuddy/**",
+    ".codegraph/**",
+    ".cocoindex_code/**"
+  ],
+  "deprioritize": [
+    "scripts/",
+    "doc/",
+    "docs/"
+  ],
+  "extensions": {
+    ".h": "cpp",
+    ".hpp": "cpp",
+    ".ipp": "cpp",
+    ".inl": "cpp"
+  }
+}

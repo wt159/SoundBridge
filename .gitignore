@@ -14,6 +14,7 @@ sdk/test/log/**
 .worktrees/
 .workbuddy/
 .cocoindex_code/
+.codegraph/
 build-coverage/
 __pycache__/
 *.pyc

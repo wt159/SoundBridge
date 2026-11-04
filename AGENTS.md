@@ -100,6 +100,24 @@ cmake --build build --target package_portable
 - `music/` 里包含真实媒体样本；涉及 extractor / decode 的改动，优先补 `sdk_media_smoke` 或 `sdk_extractor_spec_tests`。
 - 用户口头说“提交一版”时，默认含义是：`git add` + `git commit` + `git push`；除非用户显式缩小范围，否则按这三个步骤执行。
 
+## CODE SEARCH DISCIPLINE
+
+Choose by the question, not by habit. CodeGraph is indexed at the repo root (`codegraph.json`); keep its scope in sync with this section.
+
+| Question | Tool | Reason |
+|---|---|---|
+| Where does a literal / error string / local variable / comment appear? | Built-in Grep, **always scoped with `path`** to `app/`, `sdk/{audio,extractor,test,utils,cosmos,log,include}/`, `sdk/*.cpp`, `doc/` | CodeGraph is a symbol index: it does not see strings, locals or comments |
+| Who calls X? What does changing X break? Which tests are affected? | CodeGraph CLI (`callers` / `callees` / `impact` / `affected`) or the `codegraph_explore` MCP tool | Pre-computed call graph; Grep returns lines, not relationships |
+| Find a code *shape* (all `#ifdef _WIN32` blocks, all `make_unique<Foo>`) | ast-grep (install on demand) or scoped Grep | Structural match needs no index |
+| Compiler-accurate definition / references under Qt macros and templates | clangd + `compile_commands.json` (Serena) | tree-sitter does not run the compiler; `#ifdef` and macro expansion are approximate |
+
+Hard rules:
+- **Never Grep from the repo root unscoped.** `sdk/3rdparty` has 84,717 tracked files (boost 74,095). Local A/B: one unscoped `git grep` = 1,831 ms vs 120 ms scoped (≈15×); a 10-query batch took 2m45s.
+- `codegraph.json` is the single source of truth for index scope (`exclude` / `deprioritize` / `extensions`). `.gitignore` **cannot** exclude `sdk/3rdparty/` because those files are already tracked. Add any new first-party source directory there.
+- `codegraph query` is symbol-level FTS5, not full-text. A/B: `measuredMs` → 1 symbol from CodeGraph vs 63 lines from scoped Grep. An empty CodeGraph result is NOT proof of absence; fall back to Grep.
+- The index auto-syncs ~1 s after edits. Do not run `codegraph serve --mcp` by hand and do not commit `.codegraph/` (gitignored). After editing `codegraph.json`, run `codegraph index --force`.
+- `git diff --name-only | codegraph affected --stdin --quiet` is a valid pre-test filter for this repo (verified: `ExtractorFactory.cpp` → 10 test files).
+
 ## Agent skills
 
 ### Issue tracker
