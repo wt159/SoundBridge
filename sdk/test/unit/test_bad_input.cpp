@@ -23,11 +23,10 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
-#elif defined(__unix__)
-#include <unistd.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
