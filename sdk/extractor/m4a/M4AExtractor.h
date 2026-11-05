@@ -20,6 +20,12 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    // 分配记账：逐包 payload + 包指针槽位（m4a 的 moov 索引由 ffmpeg demux 内部持有，
+    // 本仓不保留逐样本偏移表）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return packetFootprint(m_packetizedMetaBuf) + ExtractorHelper::heldPayloadBytes();
+    }
 
 private:
     sdk_utils::status_t initWithFFmpegDemux();

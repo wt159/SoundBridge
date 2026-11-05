@@ -224,6 +224,12 @@ public:
     virtual DataSourceBase *getDataSource() { return m_dataSource; }
     virtual off64_t getDataSize() { return m_dataSize; }
     virtual off64_t getAudioDataOffset() { return m_audioDataOffset; }
+    // 分配记账：payload 块 + 元数据块表 + 帧表（后两者是随包数增长的结构）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return bufferBytes(m_metaBuf) + vectorFootprint(m_header.metaDataBlockVec)
+            + vectorFootprint(m_header.audioFrameVec) + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~FLACExtractor();
 
 private:

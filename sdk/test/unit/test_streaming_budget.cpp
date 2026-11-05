@@ -149,6 +149,7 @@ TEST_SUITE("StreamingBudget")
             CHECK_MESSAGE(observation.metrics.startToFirstPcmUs > 0,
                           "start→首帧时间戳没有记上");
             CHECK_MESSAGE(observation.metrics.initScanUs > 0, "init 只读扫描耗时没有记上");
+            CHECK_MESSAGE(observation.metrics.peakHeldBytes > 0, "分配记账峰值没有记上");
             MESSAGE(tracks[i].fileName
                     << ": initScanUs " << observation.metrics.initScanUs
                     << ", startToFirstPcmUs " << observation.metrics.startToFirstPcmUs

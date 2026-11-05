@@ -14,6 +14,11 @@ public:
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual bool isDataTruncated() const { return m_dataTruncated; }
+    // 分配记账：payload 是整块 data chunk（当前链路仍是全量常驻）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return bufferBytes(m_metaBuf) + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~WAVExtractor();
 
 private:

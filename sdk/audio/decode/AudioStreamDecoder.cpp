@@ -121,6 +121,11 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     }
     // 观测点：提取器 init（只读扫描）耗时由工厂量好，这里抄进本任务的仪表。
     m_initScanUs.store(m_extractor->initScanMicros());
+    // 分配记账的第一个采样点：init 完成后提取器已经持有多少字节。
+    // 采样点只有 start / 首帧 / EOS 三处：提取器的持有量在播放期内只增不减
+    // （当前链路 init 期就装满了整首 payload），所以采样值的最大值就是峰值；
+    // 逐帧采样会让每次写 ring 都去遍历包表，把观测量变成 O(包数) 的负担。
+    noteHeldBytes(m_extractor->heldPayloadBytes());
 
     m_srcSpec    = m_extractor->getAudioSpec();
     m_codecID    = m_extractor->getAudioCodecID();
@@ -251,6 +256,10 @@ void AudioStreamDecoder::noteHeldBytes(size_t bytes)
 
 void AudioStreamDecoder::finishAtEndOfStream()
 {
+    // 分配记账的最后一个采样点（见 start() 里的采样点说明）。
+    if (m_extractor != nullptr) {
+        noteHeldBytes(m_extractor->heldPayloadBytes());
+    }
     // 规格 T4 / 条目 23：EOS 汇总处比「解出多少」与「标称多长」。
     // 修好前 flac 截到 60% 一路走到 EOS，用户看到进度条走到 177 秒就结束、界面还写着
     // 297 秒——「播到坏处」必须说出来，只有 P0（切在音频之后）才静默。
@@ -730,6 +739,10 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
             = std::chrono::steady_clock::now() - m_startClock;
         m_startToFirstPcmUs.store(static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()));
+        // 分配记账的第二个采样点：首帧后提取器可能刚建过整块拼接缓存。
+        if (m_extractor != nullptr) {
+            noteHeldBytes(m_extractor->heldPayloadBytes());
+        }
     }
 
     m_processedBytes += (pcmSize - skipped);

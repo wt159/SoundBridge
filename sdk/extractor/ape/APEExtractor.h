@@ -22,6 +22,11 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    // 分配记账：逐包 payload（APE 没有 parser，包边界是唯一表示）+ 包指针槽位。
+    virtual size_t heldPayloadBytes() const
+    {
+        return packetFootprint(m_packetizedMetaBuf) + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~APEExtractor();
 
 private:

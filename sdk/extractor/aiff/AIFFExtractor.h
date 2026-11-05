@@ -63,6 +63,12 @@ public:
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual bool isDataTruncated() const { return m_dataTruncated; }
+    // 分配记账：SSND payload + chunk 索引表（随 chunk 数增长，虽只有个位数）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return bufferBytes(m_metaBuf) + vectorFootprint(m_formChunk.chunkVec)
+            + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~AIFFExtractor();
 
 private:

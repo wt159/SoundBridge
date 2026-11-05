@@ -123,6 +123,12 @@ public:
     void setInitScanMicros(uint64_t micros) { m_initScanMicros = micros; }
     uint64_t initScanMicros() const { return m_initScanMicros; }
 
+    // 分配记账（规格第 5 节 / ADR 0003 / 票面 #56）：此刻为当前曲目持有的音频数据字节数。
+    // 必须计入 payload **与一切随包数增长的结构**（包索引 / 页表 / seek 表）——只算 payload
+    // 会让常驻上界判据形同虚设。基类只报自己的拼接缓存，各提取器把自有的 payload
+    // 与索引结构一起加上。固定容量对象（256 KB ring、AVIO 缓冲）不在这个口径里。
+    virtual size_t heldPayloadBytes() const { return bufferBytes(m_joinedMetaBuf); }
+
     // 提取器**能确定**文件被截断时返回 true，与 AudioSpec 一样是事实上报、不是处置：
     // 典型是 wav/aiff「声明的数据长度 > 文件实际剩余」，短读在字节层面可判定，
     // 但这种量级的缺口（128 字节 ≈ 0.016%）低于 T4 的 5pp 阈值，不能靠时长比对发现。
@@ -131,6 +137,27 @@ public:
 
 protected:
     ExtractorHelper() { }
+
+    static size_t bufferBytes(const AudioBuffer::AudioBufferPtr &buffer)
+    {
+        return buffer ? buffer->size() : 0;
+    }
+
+    // vector 的槽位本身也是随包数增长的结构（常数因子小，但不能漏）。
+    template <typename T> static size_t vectorFootprint(const std::vector<T> &items)
+    {
+        return items.capacity() * sizeof(T);
+    }
+
+    // 包化的 payload：每包的字节 + 指针表的槽位。
+    static size_t packetFootprint(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
+    {
+        size_t total = vectorFootprint(packets);
+        for (size_t i = 0; i < packets.size(); ++i) {
+            total += bufferBytes(packets[i]);
+        }
+        return total;
+    }
 
     static void normalizeAudioSpec(AudioSpec &spec)
     {

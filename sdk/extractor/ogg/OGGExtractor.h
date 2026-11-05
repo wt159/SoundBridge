@@ -54,6 +54,19 @@ public:
     virtual DataSourceBase *getDataSource() { return m_dataSource; }
     virtual off64_t getDataSize() { return m_dataSize; }
     virtual off64_t getAudioDataOffset() { return 0; }
+    // 分配记账：页表 + 每页的包（payload 就存在这里）+ 包指针槽位。
+    // 当前链路把整份文件的页都留在 m_pageVec 里，所以这个数约等于文件大小。
+    virtual size_t heldPayloadBytes() const
+    {
+        size_t total = bufferBytes(m_metaBuf) + vectorFootprint(m_pageVec);
+        for (size_t i = 0; i < m_pageVec.size(); ++i) {
+            total += vectorFootprint(m_pageVec[i].packets);
+            for (size_t j = 0; j < m_pageVec[i].packets.size(); ++j) {
+                total += bufferBytes(m_pageVec[i].packets[j].data);
+            }
+        }
+        return total + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~OGGExtractor();
 
 private:
