@@ -555,6 +555,9 @@ TEST_SUITE("ExtractorFactory")
     // 这么定是因为「拼接后送解码」只在 codec 有 ffmpeg parser 时安全：aac/mp3/flac/vorbis 有，
     // ape/wmav2/alac/pcm 没有，后者整块送进去只能解出开头（APE 曾 4.6s / 24.9s）。
     // 边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
+    //
+    // 本用例锁的是**旧形式仍并存**（expand 阶段）：已迁到增量供给的格式（#60 flac、#63 mkv）
+    // 不再有常驻逐包表，它们的包形状由 PacketFactory / StreamingBudget 套件从包工厂面锁定。
     TEST_CASE("packetized payload is the only representation")
     {
         struct PayloadCase {
@@ -564,7 +567,6 @@ TEST_SUITE("ExtractorFactory")
         const PayloadCase cases[] = {
             { "music-ape.ape", ".ape" },
             { "萨克斯机.asf", ".asf" },
-            { "music-mkv.mkv", ".mkv" },
             { "摇滚乐_Freesound.m4a", ".m4a" },
         };
 
