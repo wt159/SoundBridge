@@ -78,7 +78,8 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 // - 创建者：播放列表在做「这次要播哪首」的决定时造；消费者只借指针，不持有所有权。
 // - 销毁时机：新任务 start() **之前** —— stop / 切歌 / 停止播放都把旧任务整个丢掉，
 //   旧 ring 的引用计数归零，旧 decoder 析构时 join 掉自己的解码线程。
-// - 成员声明顺序即析构顺序的逆序：decoder 只持有 ring 的裸指针，必须先于 ring 销毁。
+// - 成员声明顺序决定析构顺序：decoder 声明在 ring 之后，所以先析构 decoder（其析构函数
+//   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
 struct PlaybackTask {
     PlaybackTask(const std::shared_ptr<AudioRingBuffer> &ringBuffer,
                  const std::shared_ptr<AudioStreamDecoder> &streamDecoder, size_t track)

@@ -91,6 +91,29 @@ bool waitUntil(const std::function<bool()> &predicate, int timeoutMs)
     return predicate();
 }
 
+// 消费端驱动：从 ring 取走恰好 bytes 字节（跨多次 read），超时返回已取到的量。
+size_t drainBytes(AudioRingBuffer &ring, size_t bytes, int timeoutMs = 5000)
+{
+    std::vector<char> buf(4096);
+    size_t total = 0;
+    int waited   = 0;
+    while (total < bytes && waited <= timeoutMs) {
+        const size_t avail = ring.availableRead();
+        if (avail == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            waited += 2;
+            continue;
+        }
+        const size_t once = std::min({ buf.size(), avail, bytes - total });
+        const size_t got  = ring.read(buf.data(), once);
+        if (got == 0) {
+            break;
+        }
+        total += got;
+    }
+    return total;
+}
+
 // 播放列表侧的接缝：不接设备、不进 10 ms push，只看任务所有权。
 struct RecordingPlayListCallback : public sdk::MusicPlayListCallback {
     int currentBufCount  = 0;
@@ -217,5 +240,84 @@ TEST_SUITE("PlaybackLifecycle")
         CHECK_MESSAGE(weakOldDecoder.expired(), "旧任务的 decoder 没有在切歌时销毁（join 未完成）");
 
         playlist->stopCurrentTask();
+    }
+
+    TEST_CASE("stop drops the task and the next play starts a fresh one")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+
+        RecordingPlayListCallback callback;
+        WorkQueue workQueue;
+        const std::string path = fixture.mediaPath("music.wav");
+        std::shared_ptr<sdk::MusicPlayList> playlist
+            = makePlayList(callback, workQueue, { path });
+
+        REQUIRE(playlist->startCurrentTask());
+        sdk::PlaybackTaskPtr task = playlist->currentTask();
+        REQUIRE(task != nullptr);
+        // stop 之前 ring 里确实还有没播完的 PCM：这样「stop 不 drain」才是可观察的，
+        // 而不是碰巧 ring 本来就是空的。
+        REQUIRE_MESSAGE(waitUntil([&task]() { return task->ring->availableRead() > 0; }, 5000),
+                        "任务启动后 ring 里没有 PCM");
+
+        std::weak_ptr<AudioRingBuffer> weakRing          = task->ring;
+        std::weak_ptr<AudioStreamDecoder> weakDecoder    = task->decoder;
+        AudioRingBuffer *previousRingAddress             = task->ring.get();
+        task.reset();
+
+        playlist->stopCurrentTask();
+
+        // stop 之后没有任务 = 消费端没有 ring 可读，只能出静音；旧 PCM 随 ring 一起丢弃。
+        CHECK_MESSAGE(playlist->currentTask() == nullptr, "stop 之后还挂着播放任务");
+        CHECK_MESSAGE(weakRing.expired(), "stop 之后旧 ring 没有被释放（旧 PCM 还留着）");
+        CHECK_MESSAGE(weakDecoder.expired(), "stop 之后解码线程没有被 join 并销毁");
+
+        // 幂等：重复 stop 不改变结论。
+        playlist->stopCurrentTask();
+        CHECK(playlist->currentTask() == nullptr);
+
+        // stop 期间到达的 play 排到 stop 完成之后执行：它看到的是干净的任务，
+        // 新 ring、位置从 0 起算，不会接着上一首的缓冲播。
+        REQUIRE(playlist->startCurrentTask());
+        sdk::PlaybackTaskPtr replay = playlist->currentTask();
+        REQUIRE(replay != nullptr);
+        CHECK_MESSAGE(replay->ring.get() != previousRingAddress, "stop 之后 play 复用了旧的 ring");
+        CHECK_MESSAGE(replay->decoder->positionMs() == 0, "stop 之后 play 没有从 0 起算");
+
+        playlist->stopCurrentTask();
+    }
+
+    TEST_CASE("seek issued while no task runs is dropped, not deferred to the next task")
+    {
+        AudioSpec spec = makeSpec(3000);
+        PatternPcmExtractor extractor(spec, static_cast<size_t>(3000 * kBytesPerMs));
+
+        AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
+        AudioStreamDecoder decoder(&ring, spec);
+        REQUIRE(decoder.start(&extractor) == sdk_utils::OK);
+        REQUIRE(drainBytes(ring, static_cast<size_t>(25 * kBytesPerMs)) > 0);
+        const uint64_t positionBeforeStop = decoder.positionMs();
+
+        decoder.stop();
+        REQUIRE(decoder.state() == StreamDecoderState::IDLE);
+
+        // 停机窗口 = 切歌 / 停止中：这一次 seek 必须当场丢掉。
+        decoder.seekToMs(1000);
+        CHECK_MESSAGE(decoder.state() == StreamDecoderState::IDLE, "停机期间的 seek 把解码器拉进了 SEEKING");
+        CHECK_MESSAGE(decoder.positionMs() == positionBeforeStop,
+                      "停机期间的 seek 改写了位置：" << decoder.positionMs() << " ms");
+
+        // 下一个任务从自己的段起算：丢弃的 seek 不许迟到生效。
+        AudioRingBuffer nextRing(AudioRingBuffer::kDefaultCapacity);
+        AudioStreamDecoder nextDecoder(&nextRing, spec);
+        REQUIRE(nextDecoder.start(&extractor) == sdk_utils::OK);
+        CHECK_MESSAGE(nextDecoder.positionMs() == 0, "新任务的段基准被停机窗口里的 seek 带偏了");
+        REQUIRE(drainBytes(nextRing, static_cast<size_t>(25 * kBytesPerMs)) > 0);
+        CHECK_MESSAGE(nextDecoder.positionMs() == 25,
+                      "新任务的位置被停机窗口里的 seek 带偏到 " << nextDecoder.positionMs() << " ms");
+        nextDecoder.stop();
     }
 }
