@@ -180,6 +180,17 @@ status_t AudioDecodeProcess::init()
             }
         } else {
             packetizedMetaData = m_extractor->getPacketizedMetaData();
+            // 旧形式缺席（既没有逐包表，也拼不出整块视图）时退回包工厂逐包取：
+            // 包边界在播放期现场重算的格式不持有任何常驻 payload（ADR 0003，#60 flac 起、
+            // #63 mkv），仪器必须与生产链同构，否则「量测走播放路径」就不成立了。
+            if (packetizedMetaData.empty() && m_extractor->packetCount() != 0
+                && m_extractor->getMetaData() == nullptr) {
+                PacketCursor cursor(m_extractor);
+                AudioBuffer::AudioBufferPtr packet;
+                while (cursor.nextPacket(packet)) {
+                    packetizedMetaData.push_back(packet);
+                }
+            }
         }
         m_payloadPacketCount = packetizedMetaData.size();
         int ret              = 0;

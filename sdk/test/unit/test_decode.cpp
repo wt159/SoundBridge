@@ -440,7 +440,16 @@ TEST_SUITE("AudioDecode")
             AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
             REQUIRE(decode.initCheck() == sdk_utils::OK);
 
-            const std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+            // 供给形式（#57 / ADR 0003）：有逐包表就用逐包表；没有表也没有整块视图的格式
+            // （#60 flac 起、#63 mkv）只能按包工厂逐包取——与生产链同构，喂的是同一段负载。
+            std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+            if (packets.empty() && extractor->packetCount() != 0) {
+                PacketCursor cursor(extractor.get());
+                AudioBuffer::AudioBufferPtr packet;
+                while (cursor.nextPacket(packet)) {
+                    packets.push_back(packet);
+                }
+            }
             int result = 0;
             if (!packets.empty()) {
                 result = decode.decodePackets(packets);
