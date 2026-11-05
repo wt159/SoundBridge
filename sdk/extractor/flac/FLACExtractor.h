@@ -261,4 +261,6 @@ private:
     size_t m_maxFrameBytes;
     std::unique_ptr<FLACFrameReader> m_reader;
     size_t m_nextPacketIndex;
+    // 当前包序列的起点：新任务为 0，native seek 之后为目标偏移
+    off64_t m_sequenceOffset;
 };

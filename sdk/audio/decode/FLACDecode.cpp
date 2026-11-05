@@ -93,6 +93,8 @@ bool FLACDecode::initFromPacketFactory(ExtractorHelper *extractor, DecodeSupplyO
     m_extractor      = extractor;
     m_observer       = observer;
     m_cursor.reset(new PacketCursor(extractor));
+    // 新任务从流头开始：包序列可能还停在上一任务的位置（提取器跨任务存活）。
+    extractor->seekPacketByte(0);
     releasePacket();
     m_inBuf           = nullptr;
     m_dataSource      = nullptr;

@@ -31,6 +31,7 @@ FLACExtractor::FLACExtractor(DataSourceBase *source)
     , m_maxFrameBytes(0)
     , m_reader()
     , m_nextPacketIndex(0)
+    , m_sequenceOffset(0)
 {
     m_initCheck = init();
 }
@@ -43,23 +44,26 @@ FLACFrameReader *FLACExtractor::reader()
         m_reader.reset(new FLACFrameReader(m_dataSource, m_audioDataOffset, m_dataSize,
                                            m_maxFrameBytes));
         m_nextPacketIndex = 0;
+        m_sequenceOffset  = 0;
     }
     return m_reader.get();
 }
 
 AudioBuffer::AudioBufferPtr FLACExtractor::packetAt(size_t index)
 {
+    // 解复用面在播放期（解码线程第一次拉包时）创建，init 期只有 O(1) 摘要。
     FLACFrameReader *frameReader = reader();
     if (frameReader == nullptr) {
         return nullptr;
     }
-    // 只支持顺序拉取：游标 rewind（index 回到 0）等价于从流头重来，其余跳跃视为结束。
-    if (index != m_nextPacketIndex) {
-        if (index != 0) {
-            return nullptr;
-        }
-        frameReader->seekTo(0);
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到本段起点重来
+    // （新任务从流头开始，native seek 之后从目标偏移开始）。其余跳跃不接受，
+    // 随机定位只能走 seekPacketByte()。
+    if (index == 0) {
+        frameReader->seekTo(m_sequenceOffset);
         m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
     }
 
     AudioBuffer::AudioBufferPtr packet;
@@ -77,6 +81,9 @@ bool FLACExtractor::seekPacketByte(off64_t offset)
         return false;
     }
     frameReader->seekTo(offset);
+    // 段起点跟着走：随后游标 rewind 到 0 时，packetAt(0) 从这里重新开始，
+    // 而不是把流拉回文件头（那样 native seek 会被自己的第一包抵消掉）。
+    m_sequenceOffset  = offset;
     m_nextPacketIndex = 0;
     return true;
 }
