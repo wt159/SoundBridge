@@ -36,7 +36,8 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_seekRequestMs(-1)
     , m_seekDiscardBytes(0)
     , m_processedBytes(0)
-    , m_consumedBytes(0)
+    , m_segmentBaseBytes(0)
+    , m_pendingSeekBaseMs(0)
     , m_bytesPerMs(0)
     , m_abortDecode(false)
     , m_decodedFrames(0)
@@ -146,7 +147,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_seekRequestMs.store(-1);
     m_seekDiscardBytes = 0;
     m_processedBytes   = 0;
-    m_consumedBytes.store(0);
+    // 新任务 = 新段：位置从 0 起算（切歌后不复用旧曲的已消费字节）。
+    m_segmentBaseBytes.store(0);
+    m_pendingSeekBaseMs = 0;
     m_decodedFrames = 0;
     m_seekBaseMs    = 0;
     m_skippedFrames = 0;
@@ -284,16 +287,53 @@ void AudioStreamDecoder::setError(sdk::ErrorCode code, const char *detail)
     m_state.store(StreamDecoderState::ERROR);
 }
 
-uint64_t AudioStreamDecoder::positionMs() const
+uint64_t AudioStreamDecoder::positionBytesPerMs() const
 {
     if (m_bytesPerMs == 0) {
         return 0;
     }
-    return m_consumedBytes.load(std::memory_order_relaxed) / m_bytesPerMs;
+    // ring 里装的是「写进去的那一档」PCM：重采样生效时是设备格式，否则是源格式。
+    // 判断条件与 writeDecodedBytes 建重采样器的条件一致（同一份 spec 比较）。
+    if (!deviceSpecSupportsResample() || (m_srcSpec == m_devSpec)) {
+        return m_bytesPerMs;
+    }
+    return static_cast<uint64_t>(m_devSpec.sampleRate)
+        * static_cast<uint64_t>(m_devSpec.numChannel)
+        * static_cast<uint64_t>(m_devSpec.bytesPerSample) / 1000;
+}
+
+void AudioStreamDecoder::applySegmentBase(uint64_t targetMs)
+{
+    const uint64_t bytesPerMs = positionBytesPerMs();
+    if (bytesPerMs == 0) {
+        // 首帧之前还不知道 PCM 格式（mp3 / aac 等容器头不声明 bytesPerSample），
+        // 算不出字节基准。先寄存目标，等首帧确定字节口径后补算，别把位置钉死成 0。
+        m_segmentBaseBytes.store(0);
+        m_pendingSeekBaseMs = targetMs;
+        return;
+    }
+    m_segmentBaseBytes.store(targetMs * bytesPerMs);
+    m_pendingSeekBaseMs = 0;
+}
+
+uint64_t AudioStreamDecoder::positionMs() const
+{
+    const uint64_t bytesPerMs = positionBytesPerMs();
+    if (bytesPerMs == 0 || m_ring == nullptr) {
+        return 0;
+    }
+    // 规格 #55 第 3 节：segmentBaseBytes 是消费端 O(1) 段基准，与 ring 分开存。
+    // ring 的 readPos() 只数「本段内被消费端取走的字节」，seek 时会归零；
+    // 两者相加才是全程单调的位置，单独用任何一个都会在 seek / 切歌时跳数字。
+    const uint64_t consumedThisSegment = m_ring->readPos();
+    return (m_segmentBaseBytes.load(std::memory_order_relaxed) + consumedThisSegment)
+        / bytesPerMs;
 }
 
 uint64_t AudioStreamDecoder::durationMs() const
 {
+    // 提取器 init 期给出的标称时长，播放期间不变；0 表示未知（规格 #55 第 3 节）。
+    // 未知时位置仍按已消费 PCM 报，不从标称时长反推。
     return m_durationMs;
 }
 
@@ -356,9 +396,11 @@ void AudioStreamDecoder::threadFunc()
             if (seekMs >= 0) {
                 m_state.store(StreamDecoderState::SEEKING);
                 std::this_thread::sleep_for(std::chrono::milliseconds(12));
+                // 段基准先于 ring 归零更新：消费端此刻看到的是「目标 + 旧段已读」的短暂高估，
+                // 而不是掉回 0（后者正是段基准必须离开 ring 的原因）。
+                applySegmentBase(static_cast<uint64_t>(seekMs));
                 m_ring->reset();
-                m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
-                m_processedBytes   = m_consumedBytes.load();
+                m_processedBytes   = 0;
                 m_seekDiscardBytes = 0;
                 m_decodedFrames    = 0;
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
@@ -426,9 +468,9 @@ void AudioStreamDecoder::threadFunc()
             if (seekMs >= 0) {
                 m_state.store(StreamDecoderState::SEEKING);
                 std::this_thread::sleep_for(std::chrono::milliseconds(12));
+                applySegmentBase(static_cast<uint64_t>(seekMs));
                 m_ring->reset();
-                m_consumedBytes.store(static_cast<uint64_t>(seekMs) * m_bytesPerMs);
-                m_processedBytes   = m_consumedBytes.load();
+                m_processedBytes   = 0;
                 m_seekDiscardBytes = 0;
                 m_decodedFrames    = 0;
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
@@ -473,8 +515,11 @@ void AudioStreamDecoder::threadFunc()
         if (seekMs >= 0) {
             m_state.store(StreamDecoderState::SEEKING);
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
+            // 位置口径：段基准 + ring 段内读计数，两者都用「ring 内容那一档」字节（positionBytesPerMs）。
+            // 丢弃口径：m_seekDiscardBytes 数的是**源格式** PCM（重采样之前），两者互不换算，
+            // 因此不会因为重采样倍率不同而互相打架——seek 后位置=目标，交付字节=源字节减去丢弃量。
+            applySegmentBase(static_cast<uint64_t>(seekMs));
             m_ring->reset();
-            m_consumedBytes.store(0);
             m_processedBytes = 0;
             m_seekDiscardBytes
                 = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
@@ -574,6 +619,15 @@ void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
                     return;
                 }
             }
+        }
+    }
+
+    // seek 发生在首帧之前：此刻字节口径已经确定，把当时寄存的段基准补上。
+    if (m_pendingSeekBaseMs != 0) {
+        const uint64_t bytesPerMs = positionBytesPerMs();
+        if (bytesPerMs != 0) {
+            m_segmentBaseBytes.store(m_pendingSeekBaseMs * bytesPerMs);
+            m_pendingSeekBaseMs = 0;
         }
     }
 
