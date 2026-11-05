@@ -565,32 +565,12 @@ TEST_SUITE("PacketFactory")
         CHECK(spec.durationMs > 0);
     }
 
-    TEST_CASE("real single-block file exposes its whole payload as one packet")
-    {
-        RealMediaFixture fixture;
-        const std::string name("music.wav");
-        if (!fixture.exists(name)) {
-            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
-            return;
-        }
-
-        std::shared_ptr<FileSource> source;
-        std::unique_ptr<ExtractorHelper> extractor;
-        REQUIRE(fixture.create(name, ".wav", source, extractor));
-        REQUIRE(extractor != nullptr);
-        REQUIRE(extractor->initCheck() == sdk_utils::OK);
-
-        AudioBuffer::AudioBufferPtr joined = extractor->getMetaData();
-        REQUIRE(joined != nullptr);
-        CHECK(joined->size() > 0);
-
-        PacketCursor cursor(extractor.get());
-        AudioBuffer::AudioBufferPtr packet;
-        REQUIRE(cursor.nextPacket(packet));
-        CHECK(packet->size() == joined->size());
-        CHECK(std::memcmp(packet->data(), joined->data(), joined->size()) == 0);
-        CHECK(cursor.nextPacket(packet) == false);
-    }
+    // 这里原有一条「真实素材的整块视图等于唯一一包」的用例（#57 用 wav 做载体）。
+    // #60–#64 把 11 种格式全部迁到「包按需现场切」之后，任何真实素材都不再有整块视图，
+    // 该用例的前提被迁移本身取消了 —— 不是被放宽。整块供给的语义仍由合成提取器锁定：
+    //   * packet cursor treats a single-block payload as exactly one packet
+    //   * StreamingBudget: whole view supply is red under both criteria
+    // 旧形式整体退场（contract）见 #66。
 
     // wav / aiff 的增量包面（票面 #61 / 规格第 9 节 E8）。
     //
