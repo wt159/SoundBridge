@@ -7,6 +7,8 @@ namespace {
 // 帧头最长 16 字节：4 字节固定段 + 6 字节 UTF-8 编号 + 2 字节块长/采样率扩展 + CRC-8。
 const size_t kMinHeaderBytes = 16;
 const size_t kReadChunk      = 8 * 1024;
+// 流头（fLaC + 元数据块）按这个粒度切包：大封面也不许把峰值抬起来。
+const size_t kHeaderChunk    = 64 * 1024;
 
 uint8_t crc8(const uint8_t *data, size_t size)
 {
@@ -111,7 +113,6 @@ FLACFrameReader::FLACFrameReader(DataSourceBase *source, off64_t streamHeaderEnd
     , m_endOffset(endOffset)
     , m_nextOffset(0)
     , m_scanCap(0)
-    , m_pendingBytes(0)
     , m_buf()
 {
     size_t cap = std::max<size_t>(maxFrameBytes, 32 * 1024) * 2;
@@ -139,21 +140,22 @@ void FLACFrameReader::seekTo(off64_t offset)
     }
     m_nextOffset = offset;
     m_buf.clear();
-    m_pendingBytes = 0;
 }
 
 bool FLACFrameReader::nextPacket(AudioBuffer::AudioBufferPtr &packet)
 {
     packet.reset();
     m_buf.clear();
-    m_pendingBytes = 0;
     if (m_source == nullptr || m_nextOffset >= m_endOffset) {
         return false;
     }
 
-    // 首包是流头（fLaC + 元数据块）：libFLAC 要先看到 STREAMINFO 才会做整段 MD5 校验。
+    // 首包（或前几包）是流头（fLaC + 元数据块）：libFLAC 要先看到 STREAMINFO 才会做整段
+    // MD5 校验。流头按 kHeaderChunk 切包——大封面（PICTURE）可以到几百 KB，整块吞进来
+    // 会让常驻峰值随文件元数据大小跳一档；切片之后每个包仍是 O(1) 有界。
     if (m_nextOffset < m_streamHeaderEnd) {
-        const size_t length = static_cast<size_t>(m_streamHeaderEnd - m_nextOffset);
+        const size_t length = std::min(static_cast<size_t>(m_streamHeaderEnd - m_nextOffset),
+                                       kHeaderChunk);
         ensureBytes(length);
         if (m_buf.empty()) {
             return false;
@@ -181,7 +183,12 @@ bool FLACFrameReader::produceFrame(AudioBuffer::AudioBufferPtr &packet)
         if (atEnd() || m_buf.size() >= m_scanCap) {
             return m_buf.empty() ? false : emit(m_buf.size(), packet);
         }
+        const size_t before = m_buf.size();
         appendChunk(0);
+        if (m_buf.size() == before) {
+            // 读不动了（短读 / 坏源）：把手上这些交出去，别原地空转。
+            return m_buf.empty() ? false : emit(m_buf.size(), packet);
+        }
     }
 
     // 2) 帧尾：下一个通过帧头检查、并且帧尾 CRC-16 与整帧自洽的位置。
@@ -193,7 +200,11 @@ bool FLACFrameReader::produceFrame(AudioBuffer::AudioBufferPtr &packet)
             if (atEnd() || m_buf.size() >= m_scanCap) {
                 return emit(m_buf.size(), packet);
             }
+            const size_t before = m_buf.size();
             appendChunk(0);
+            if (m_buf.size() == before) {
+                return emit(m_buf.size(), packet);
+            }
             continue;
         }
         if (candidate >= 2 && candidate <= m_buf.size()
@@ -213,12 +224,10 @@ bool FLACFrameReader::emit(size_t length, AudioBuffer::AudioBufferPtr &packet)
     AudioBuffer::AudioBufferPtr out = std::make_shared<AudioBuffer>(length);
     std::memcpy(out->data(), m_buf.data(), length);
 
-    m_pendingBytes = length;
     m_nextOffset += static_cast<off64_t>(length);
     m_buf.clear();
     // 交出之后包由调用方持有，提取器不再记一份（解码侧按 alloc/free 记账）。
-    m_pendingBytes = 0;
-    packet         = out;
+    packet = out;
     return true;
 }
 

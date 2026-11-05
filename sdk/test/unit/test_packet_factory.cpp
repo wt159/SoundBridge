@@ -236,6 +236,7 @@ TEST_SUITE("PacketFactory")
         while (cursor.nextPacket(packet)) {
             REQUIRE(packet != nullptr);
             REQUIRE(packet->size() > 0);
+            const off64_t packetStart = nextOffset;
             ++count;
             totalBytes += packet->size();
             maxPacketBytes = std::max(maxPacketBytes, packet->size());
@@ -250,7 +251,10 @@ TEST_SUITE("PacketFactory")
             if (count == 1) {
                 firstIsStreamHeader = packet->size() >= 4
                     && std::memcmp(packet->data(), "fLaC", 4) == 0;
-            } else {
+            }
+            // 流头之后每包一帧：起点在音频数据区里的包必须以帧同步码开头。
+            // （流头本身按 64 KB 切片，大封面不会把峰值抬起来。）
+            if (packetStart >= extractor->getAudioDataOffset()) {
                 const unsigned char *head = reinterpret_cast<const unsigned char *>(packet->data());
                 const bool sync           = head[0] == 0xFF && (head[1] & 0xFE) == 0xF8;
                 allFramesStartWithSync = allFramesStartWithSync && sync;

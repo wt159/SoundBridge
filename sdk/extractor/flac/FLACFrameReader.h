@@ -34,8 +34,8 @@ public:
     // 拉下一包：首包是流头，之后每包一帧。返回 false 表示序列正常结束。
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet);
 
-    // 已分配且尚未释放的字节：读缓冲容量 + 正在产出的包。
-    size_t heldBytes() const { return m_buf.capacity() + m_pendingBytes; }
+    // 已分配且尚未释放的字节：只有读缓冲的容量（交出后的包归解码侧记账）。
+    size_t heldBytes() const { return m_buf.capacity(); }
 
 private:
     // 扫描缓冲的硬上限：坏数据处也不会为了「找到下一帧」把整首读进内存。
@@ -57,6 +57,5 @@ private:
     off64_t m_endOffset;
     off64_t m_nextOffset;
     size_t m_scanCap;
-    size_t m_pendingBytes;
     std::vector<uint8_t> m_buf;
 };
