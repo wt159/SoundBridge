@@ -82,6 +82,12 @@ public:
     // 这些提取器本来就只持有整块 payload，边界就是整块本身，与旧路径 decode(data, size)
     // 完全一致。持有逐包表的提取器（ape / asf / m4a / mkv）覆写这两个方法，零复制交出旧边界，
     // 调用方因此不需要迁移任何东西。
+    //
+    // 未知总数（#60 起）：包边界在播放期按 offset 现场重算的格式（FLAC 的帧扫描）事先
+    // 不知道有多少包。这类提取器让 packetCount() 返回 kUnknownPacketCount，序列以
+    // packetAt() 返回 nullptr 结束——「读完为止」，不建任何随包数增长的索引。
+    static const size_t kUnknownPacketCount = static_cast<size_t>(-1);
+
     virtual size_t packetCount() { return getMetaData() == nullptr ? 0 : 1; }
     virtual AudioBuffer::AudioBufferPtr packetAt(size_t index)
     {
@@ -90,6 +96,16 @@ public:
         }
         return getMetaData();
     }
+
+    // 单包序列的字节定位（FLAC 的 native random access 用，ADR 0003 / #49）：
+    // 提取器把「下一包从哪个文件偏移开始」作为 O(1) 状态暴露给解码侧，
+    // 解码器只负责把 libFLAC 的 seek/tell 转成这两个调用，不自己算包边界。
+    virtual bool seekPacketByte(off64_t offset)
+    {
+        (void)offset;
+        return false;
+    }
+    virtual off64_t packetBytePosition() const { return 0; }
 
     // 需要连续缓冲的消费者（FLAC/Vorbis 专用解码路径、部分用例）走这里。
     // 默认实现把包拼起来并缓存：没有包化数据时返回 nullptr，与「没有 payload」同义。
@@ -213,6 +229,7 @@ public:
 
     // 拉下一包；返回 false 表示序列正常结束。空包（nullptr 或 0 字节）不产出、直接跳过，
     // 与整块视图拼合时「跳过空包」的语义一致。
+    // 未知总数（kUnknownPacketCount）的序列没有「跳过空包继续」的余地：nullptr 就是结束。
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet)
     {
         packet.reset();
@@ -220,11 +237,18 @@ public:
             return false;
         }
 
-        const size_t count = m_extractor->packetCount();
-        while (m_nextIndex < count) {
+        const size_t count    = m_extractor->packetCount();
+        const bool countKnown = count != ExtractorHelper::kUnknownPacketCount;
+        while (!countKnown || m_nextIndex < count) {
             AudioBuffer::AudioBufferPtr current = m_extractor->packetAt(m_nextIndex);
             ++m_nextIndex;
-            if (current != nullptr && current->size() > 0) {
+            if (current == nullptr) {
+                if (!countKnown) {
+                    return false;
+                }
+                continue;
+            }
+            if (current->size() > 0) {
                 packet = current;
                 ++m_produced;
                 return true;

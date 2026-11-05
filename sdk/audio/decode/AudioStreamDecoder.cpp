@@ -52,6 +52,9 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_silenceFills(0)
     , m_startToFirstPcmUs(0)
     , m_initScanUs(0)
+    , m_packetHeldBytes(0)
+    , m_packetsPulled(0)
+    , m_packetsPulledAtFirstPcm(0)
     , m_startClock()
     , m_firstPcmNoted(false)
     , m_thread()
@@ -108,6 +111,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_silenceFills.store(0);
     m_startToFirstPcmUs.store(0);
     m_initScanUs.store(0);
+    m_packetHeldBytes = 0;
+    m_packetsPulled.store(0);
+    m_packetsPulledAtFirstPcm.store(0);
     m_firstPcmNoted = false;
 
     m_errorCode.store(sdk::ErrorCode::Ok);
@@ -122,11 +128,10 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     }
     // 观测点：提取器 init（只读扫描）耗时由工厂量好，这里抄进本任务的仪表。
     m_initScanUs.store(m_extractor->initScanMicros());
-    // 分配记账的第一个采样点：init 完成后提取器已经持有多少字节。
-    // 采样点只有 start / 首帧 / EOS 三处：提取器的持有量在播放期内只增不减
-    // （当前链路 init 期就装满了整首 payload），所以采样值的最大值就是峰值；
-    // 逐帧采样会让每次写 ring 都去遍历包表，把观测量变成 O(包数) 的负担。
-    noteHeldBytes(m_extractor->heldPayloadBytes());
+    // 分配记账的第一个采样点：init 完成后提取器已经持有多少字节（增量路径下是 O(1) 摘要 + 解复用缓冲）。
+    // 之后的采样点挂在包的 alloc/free 事件上（refreshHeldPeak）——增量供给下持有量会先增后减，
+    // 只在 start / 首帧 / EOS 采样会把峰值低估。
+    refreshHeldPeak();
 
     m_srcSpec    = m_extractor->getAudioSpec();
     m_codecID    = m_extractor->getAudioCodecID();
@@ -239,11 +244,41 @@ std::string AudioStreamDecoder::errorDetail() const
 StreamMetrics AudioStreamDecoder::metrics() const
 {
     StreamMetrics out;
-    out.peakHeldBytes     = m_peakHeldBytes.load();
-    out.silenceFills      = m_silenceFills.load();
-    out.startToFirstPcmUs = m_startToFirstPcmUs.load();
-    out.initScanUs        = m_initScanUs.load();
+    out.peakHeldBytes          = m_peakHeldBytes.load();
+    out.silenceFills           = m_silenceFills.load();
+    out.startToFirstPcmUs      = m_startToFirstPcmUs.load();
+    out.initScanUs             = m_initScanUs.load();
+    out.packetsPulled          = m_packetsPulled.load();
+    out.packetsPulledAtFirstPcm = m_packetsPulledAtFirstPcm.load();
     return out;
+}
+
+void AudioStreamDecoder::onPacketAcquired(size_t bytes)
+{
+    m_packetHeldBytes += bytes;
+    refreshHeldPeak();
+}
+
+void AudioStreamDecoder::onPacketReleased(size_t bytes)
+{
+    m_packetHeldBytes = m_packetHeldBytes > bytes ? m_packetHeldBytes - bytes : 0;
+    refreshHeldPeak();
+}
+
+void AudioStreamDecoder::onPacketPulled(size_t totalPulled)
+{
+    m_packetsPulled.store(totalPulled);
+}
+
+void AudioStreamDecoder::refreshHeldPeak()
+{
+    size_t held = m_packetHeldBytes;
+    if (m_extractor != nullptr) {
+        held += m_extractor->heldPayloadBytes();
+    }
+    // 解码器自己的两块固定缓冲：只随单帧大小变化，不随素材时长增长（判据里的 O(1) 项）。
+    held += m_interleaveBuf.capacity() + m_resampleBuf.capacity();
+    noteHeldBytes(held);
 }
 
 void AudioStreamDecoder::noteSilenceFill()
@@ -269,10 +304,8 @@ void AudioStreamDecoder::noteHeldBytes(size_t bytes)
 
 void AudioStreamDecoder::finishAtEndOfStream()
 {
-    // 分配记账的最后一个采样点（见 start() 里的采样点说明）。
-    if (m_extractor != nullptr) {
-        noteHeldBytes(m_extractor->heldPayloadBytes());
-    }
+    // 分配记账的最后一个采样点（其余采样点挂在包的 alloc/free 事件上）。
+    refreshHeldPeak();
     // 规格 T4 / 条目 23：EOS 汇总处比「解出多少」与「标称多长」。
     // 修好前 flac 截到 60% 一路走到 EOS，用户看到进度条走到 177 秒就结束、界面还写着
     // 297 秒——「播到坏处」必须说出来，只有 P0（切在音频之后）才静默。
@@ -445,9 +478,18 @@ void AudioStreamDecoder::threadFunc()
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flac(this);
         flac.setAbortFlag(&m_abortDecode);
+        // 供给形式只看「提取器有没有包」：有包就逐包 pull（增量），没有包才回退到
+        // DataSource / 整块视图（expand 阶段的生产链回退口，batch 之间还能绿）。
+        // demux 句柄（FLACDecode + 包游标）在这一行之前是不存在的，创建发生在解码线程里、
+        // 随本任务退出释放（规格 4.3 所有权清单）。
         DataSourceBase *ds = m_extractor->getDataSource();
-        if (ds != nullptr) {
-            // 从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
+        if (m_extractor->packetCount() != 0) {
+            if (!flac.initFromPacketFactory(m_extractor, this)) {
+                setError(sdk::ErrorCode::DecodeInitFailed, "flac packet supply init failed");
+                return;
+            }
+        } else if (ds != nullptr) {
+            // 旧形式（回退口）：从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
             // libFLAC 只在读到 STREAMINFO 之后才会做整段 MD5 校验（没有 STREAMINFO 时它
             // 直接 do_md5_checking=false），所以只喂纯帧数据等于把 #10 的检测手段关掉。
             if (!flac.initFromDataSource(ds, 0, m_extractor->getDataSize())) {
@@ -479,11 +521,15 @@ void AudioStreamDecoder::threadFunc()
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
+                // 取消位必须在定位**之前**清：seek 目标已经从槽里取走（exchange 成 -1），
+                // 而 libFLAC 的定位过程要读流，读回调会把还置着的取消位当成停止信号直接
+                // ABORT 掉这次定位（旧 DataSource 路径的读回调不看取消位，所以没有这一步）。
+                // 定位途中若又有新 seek 到达，控制线程会重新置位，这一次定位照样让位。
+                m_abortDecode.store(false);
                 if (!flac.seekToSample(targetSample)) {
                     setError(sdk::ErrorCode::DataCorrupted, "flac seek failed");
                     break;
                 }
-                m_abortDecode.store(false);
                 m_state.store(StreamDecoderState::DECODING);
             }
 
@@ -822,10 +868,9 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
             = std::chrono::steady_clock::now() - m_startClock;
         m_startToFirstPcmUs.store(static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()));
-        // 分配记账的第二个采样点：首帧后提取器可能刚建过整块拼接缓存。
-        if (m_extractor != nullptr) {
-            noteHeldBytes(m_extractor->heldPayloadBytes());
-        }
+        // 并行判据的结构证据：首帧交付那一刻供给序列走到哪。整块形式下这里等于总数。
+        m_packetsPulledAtFirstPcm.store(m_packetsPulled.load());
+        refreshHeldPeak();
     }
 
     m_processedBytes += (pcmSize - skipped);
