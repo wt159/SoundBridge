@@ -32,10 +32,14 @@ public:
     AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &devSpec);
     ~AudioStreamDecoder();
 
+    // 启动一次播放任务：先 stop() + join 上一次任务，再起一个新的解码线程。
+    // 每次 start() 必定是新线程；join 由调用线程在起线程之前完成，禁止 detach / 后台 join。
+    // 新任务自带新的 ring（规格 4.3），所以这里不清 ring：reset() 由新解码线程的第一件事做。
     sdk_utils::status_t start(ExtractorHelper *extractor);
     // startThread=false 只做初始化（供只检查状态/生命周期的场合），不会产出任何数据：
     // 同步解码入口已按 #18 删除，解码只能由 threadFunc 驱动。
     sdk_utils::status_t start(ExtractorHelper *extractor, bool startThread);
+    // 置取消位并 join。幂等；join 只在调用它的线程上发生。
     void stop();
     void seekToMs(uint64_t targetMs);
 
@@ -81,6 +85,9 @@ private:
     uint64_t positionBytesPerMs() const;
     // 把 seek 目标写成段基准；字节口径未知（首帧之前）时寄存目标，首帧后补算。
     void applySegmentBase(uint64_t targetMs);
+    // 取消请求是否仍然有效：停止 / 取消位 / 槽里还挂着没被处理的 seek 目标。
+    // 解码线程只把 `RunDecodeResult::Abort` 当作**结果**，从不把它当成取消信号读回来。
+    bool cancelRequested() const;
 
     // runDecode() 一次性解完整个 payload，成功即「流已耗尽」，不存在「还有数据」的中间态。
     // 用枚举而不是 0/-1，避免再把「成功」映射成「还有进度」而看不出矛盾。

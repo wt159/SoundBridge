@@ -167,24 +167,28 @@ TEST_SUITE("PlaybackPosition")
 
     TEST_CASE("starting a new track restarts the segment from zero")
     {
-        AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
         AudioSpec spec = makeSpec(1000);
         PcmExtractor first(spec, pcmBytesForMs(1000));
         PcmExtractor second(spec, pcmBytesForMs(1000));
-        AudioStreamDecoder decoder(&ring, spec);
 
-        REQUIRE(decoder.start(&first) == sdk_utils::OK);
-        REQUIRE(drainBytes(ring, kChunkBytes) == kChunkBytes);
-        REQUIRE(decoder.positionMs() == 25);
+        // 切歌 = 换一个播放任务：新 ring + 新 decoder（规格 4.3：ring 归当前任务独占，
+        // 不复用实例）。ring 的清零由新解码线程在自己的第一件事里完成，不在控制线程。
+        AudioRingBuffer firstRing(AudioRingBuffer::kDefaultCapacity);
+        AudioStreamDecoder firstDecoder(&firstRing, spec);
+        REQUIRE(firstDecoder.start(&first) == sdk_utils::OK);
+        REQUIRE(drainBytes(firstRing, kChunkBytes) == kChunkBytes);
+        REQUIRE(firstDecoder.positionMs() == 25);
+        firstDecoder.stop();
 
-        // 切歌 = 新任务 start()：新段基准必须归零，旧曲的已消费字节不许带过来。
-        REQUIRE(decoder.start(&second) == sdk_utils::OK);
-        CHECK(decoder.positionMs() == 0);
+        AudioRingBuffer secondRing(AudioRingBuffer::kDefaultCapacity);
+        AudioStreamDecoder secondDecoder(&secondRing, spec);
+        REQUIRE(secondDecoder.start(&second) == sdk_utils::OK);
+        CHECK(secondDecoder.positionMs() == 0);
 
-        REQUIRE(drainBytes(ring, kChunkBytes) == kChunkBytes);
-        CHECK(decoder.positionMs() == 25);
+        REQUIRE(drainBytes(secondRing, kChunkBytes) == kChunkBytes);
+        CHECK(secondDecoder.positionMs() == 25);
 
-        decoder.stop();
+        secondDecoder.stop();
     }
 
     TEST_CASE("unknown duration keeps position on the consumed pcm track")

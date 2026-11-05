@@ -127,6 +127,11 @@ MusicPlayer::Impl::~Impl()
     m_shuttingDown.store(true);
     m_switching.store(true);
     stopConsumerThread();
+    // 播放任务在这里 join + 销毁（不 detach）。析构是「谁发起谁在新任务前 join」的唯一例外，
+    // 与规格 4.4 的「析构例外」一致：控制事件已停，不会再有新任务。
+    if (m_musicList != nullptr) {
+        m_musicList->stopCurrentTask();
+    }
     if (m_audioDev != nullptr) {
         m_audioDev->stop();
         m_audioDev->close();
@@ -283,6 +288,14 @@ void MusicPlayer::Impl::_play()
         }
         return;
     }
+    // play 负责备好本次播放任务：stop 之后 ring / decoder 已被丢弃，这里必须建新的；
+    // 暂停后恢复则沿用还活着的那个任务（缓冲不白扔）。顺序遵循规格 4.1：
+    // 任务先就绪，再开设备、再起消费线程。
+    if (!m_musicList->startCurrentTask()) {
+        onMusicPlayListError(ErrorCode::DecodeInitFailed, "failed to start playback task",
+                             static_cast<int>(cur->index), cur->fileProperties.fullPath);
+        return;
+    }
     if (m_audioDev->open() != 0) {
         onMusicPlayListError(ErrorCode::AudioDeviceOpenFailed, "audio device open failed",
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
@@ -327,6 +340,9 @@ void MusicPlayer::Impl::_stop()
         return;
     }
     stopConsumerThread();
+    // 停止时整个播放任务被丢弃：解码线程在这里 join，旧 PCM 随 ring 一起消失，
+    // 不 drain、不播完（规格 4.1 stop 行）。
+    m_musicList->stopCurrentTask();
     m_audioDev->clearQueue();
     m_audioDev->stop();
     m_audioDev->close();
@@ -341,14 +357,25 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         cur = m_curMusicProperties;
     }
-    if (cur == nullptr || cur->streamDecoder == nullptr || pos > cur->signalProperties.durationMs) {
+    PlaybackTaskPtr task = m_musicList->currentTask();
+    if (cur == nullptr || task == nullptr || task->decoder == nullptr) {
+        // 停止 / 切歌窗口里没有可 seek 的任务：显式丢弃这一次 seek（规格 4.1 seek 行），
+        // 不能让它在下一个任务上「迟到生效」。
+        LOG_INFO(LOG_TAG, "seek dropped: no playback task");
+        return;
+    }
+    if (task->trackIndex != cur->index) {
+        LOG_INFO(LOG_TAG, "seek dropped: task belongs to another track");
+        return;
+    }
+    if (pos > cur->signalProperties.durationMs) {
         return;
     }
 
     // 位置只有一个来源：解码器的段基准 + ring 段内读计数（见 AudioStreamDecoder::positionMs）。
     // 消费端不再自己维护字节偏移，避免 seek 目标与播放进度两套口径互相打架。
     cur->signalProperties.curPositionMs = pos;
-    cur->streamDecoder->seekToMs(pos);
+    task->decoder->seekToMs(pos);
     m_listener->onMusicPlayerPositionChanged(pos);
 }
 
@@ -419,15 +446,21 @@ bool MusicPlayer::Impl::shouldFillSilence()
     if (isShuttingDown() || m_switching.load()) {
         return true;
     }
+    PlaybackTaskPtr task = m_musicList->currentTask();
+    if (task == nullptr || task->ring == nullptr || task->decoder == nullptr) {
+        // 没有播放任务 = stop 之后 / 切歌窗口：这一拍只能出静音。
+        return true;
+    }
+    if (task->decoder->state() == StreamDecoderState::SEEKING) {
+        return true;
+    }
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         cur = m_curMusicProperties;
     }
-    if (cur == nullptr || cur->ringBuffer == nullptr || cur->streamDecoder == nullptr) {
-        return true;
-    }
-    if (cur->streamDecoder->state() == StreamDecoderState::SEEKING) {
+    // 任务与「当前曲目」对不上：切歌通知还没走完，读 ring 就会把上一首的 PCM 送出去。
+    if (cur == nullptr || task->trackIndex != cur->index) {
         return true;
     }
     return false;
@@ -447,8 +480,9 @@ void MusicPlayer::Impl::consumeAudioData()
             std::lock_guard<std::mutex> lock(m_curMusicMutex);
             cur = m_curMusicProperties;
         }
-        if (cur != nullptr && cur->streamDecoder != nullptr) {
-            cur->streamDecoder->noteSilenceFill();
+        PlaybackTaskPtr task = m_musicList->currentTask();
+        if (task != nullptr && task->decoder != nullptr) {
+            task->decoder->noteSilenceFill();
         }
         return;
     }
@@ -458,8 +492,12 @@ void MusicPlayer::Impl::consumeAudioData()
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
         cur = m_curMusicProperties;
     }
+    PlaybackTaskPtr task = m_musicList->currentTask();
+    if (cur == nullptr || task == nullptr || task->ring == nullptr || task->decoder == nullptr) {
+        return;
+    }
 
-    AudioRingBuffer *ring = cur->ringBuffer.get();
+    AudioRingBuffer *ring = task->ring.get();
 
     const size_t kQueueThreshold = 256 * 1024;
     if (m_audioDev->getQueuedBytes() > kQueueThreshold) {
@@ -476,7 +514,7 @@ void MusicPlayer::Impl::consumeAudioData()
         // 单一位置来源：解码器按「段基准 + ring 段内已读字节」换算。
         // 消费端只负责告知时间，不再累计自己的字节偏移（seek / 切歌时两套计数会漂移）。
         SignalProperties &signalProperties = cur->signalProperties;
-        const uint64_t curPositionMs       = cur->streamDecoder->positionMs();
+        const uint64_t curPositionMs       = task->decoder->positionMs();
         signalProperties.curPositionMs     = curPositionMs;
 
         if (!isShuttingDown()) {
@@ -488,7 +526,7 @@ void MusicPlayer::Impl::consumeAudioData()
         }
     }
 
-    StreamDecoderState st = cur->streamDecoder->state();
+    StreamDecoderState st = task->decoder->state();
     if (st == StreamDecoderState::ERROR) {
         // 已解出的 PCM 先播完再上报：报出来的位置必须是用户实际听到的位置（基石 B4）
         if (ring->availableRead() == 0) {
@@ -513,15 +551,17 @@ void MusicPlayer::Impl::consumeAudioData()
 
 void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
 {
-    if (cur == nullptr || cur->streamDecoder == nullptr) {
+    PlaybackTaskPtr task = m_musicList->currentTask();
+    if (cur == nullptr || task == nullptr || task->decoder == nullptr
+        || task->trackIndex != cur->index) {
         return;
     }
     if (m_decodeErrorHandled.exchange(true)) {
         return;
     }
 
-    const ErrorCode code       = cur->streamDecoder->errorCode();
-    const std::string detail   = cur->streamDecoder->errorDetail();
+    const ErrorCode code       = task->decoder->errorCode();
+    const std::string detail   = task->decoder->errorDetail();
     const ErrorCodeInfo &info  = GetErrorInfo(code);
     const uint64_t positionMs  = cur->signalProperties.curPositionMs.load();
     const bool canAutoSkip     = (info.action == ErrorAction::SkipTrack) && shouldAutoSkipOnError();

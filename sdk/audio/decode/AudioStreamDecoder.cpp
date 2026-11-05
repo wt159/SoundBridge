@@ -182,7 +182,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_decodedRate   = static_cast<uint32_t>(m_srcSpec.sampleRate);
     m_pcmFrameBytes = static_cast<size_t>(m_srcSpec.numChannel)
         * static_cast<size_t>(m_srcSpec.bytesPerSample);
-    m_ring->reset();
+    // 这里刻意**不**清 ring：reset() 只能由解码线程发起（规格 4.4），
+    // 新段的清零由 threadFunc() 的第一件事完成。生产链每次播放任务都用新 ring，
+    // 所以控制线程返回时消费端不可能从这颗 ring 里读到上一首的 PCM。
     if (startThread) {
         m_state.store(StreamDecoderState::DECODING);
         m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
@@ -394,6 +396,14 @@ uint64_t AudioStreamDecoder::durationMs() const
     return m_durationMs;
 }
 
+bool AudioStreamDecoder::cancelRequested() const
+{
+    // 取消只有一个协议：控制线程先写 seek 目标、再置 m_abortDecode（停止则直接置 m_stopRequest）。
+    // 槽里还挂着目标，就说明这次 seek 还没被解码线程处理完，此时任何等待都必须立刻退出，
+    // 否则「让位」的那次收尾会把紧接着到达的新目标一起搁死（连续 seek 后一次覆盖前一次）。
+    return m_stopRequest.load() || m_abortDecode.load() || m_seekRequestMs.load() >= 0;
+}
+
 bool AudioStreamDecoder::canDecode() const
 {
     StreamDecoderState currentState = m_state.load();
@@ -404,8 +414,8 @@ bool AudioStreamDecoder::canDecode() const
         return false;
     }
 
-    // 停止请求
-    if (m_stopRequest.load() || m_abortDecode.load()) {
+    // 停止或 seek 请求
+    if (cancelRequested()) {
         return false;
     }
 
@@ -425,6 +435,12 @@ void AudioStreamDecoder::threadFunc()
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;
     }
+
+    // 新段起点的清零只在这一处：解码线程是 ring 的唯一生产者，也是唯一能 reset 的人
+    // （规格 4.4）。顺序不可反——段基准先归零，再清 ring；消费端此刻处于
+    // switching / SEEKING 静默窗口，不读 ring。
+    applySegmentBase(0);
+    m_ring->reset();
 
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flac(this);
@@ -568,7 +584,10 @@ void AudioStreamDecoder::threadFunc()
     }
 
     for (;;) {
-        int64_t seekMs = m_seekRequestMs.load();
+        // 取走即清空：本分支处理 seek 的整段时间里（12 ms 静默窗口 + 重放）到达的新目标
+        // 会留在槽里，处理完由下面的 `m_seekRequestMs >= 0` 接住，不会被这次处理抹掉。
+        // 反过来「读值再在结尾写 -1」会把窗口内到达的目标一起清掉——连续 seek 后一次就丢了。
+        int64_t seekMs = m_seekRequestMs.exchange(-1);
         if (seekMs >= 0) {
             m_state.store(StreamDecoderState::SEEKING);
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
@@ -582,7 +601,6 @@ void AudioStreamDecoder::threadFunc()
                 = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
             m_decodedFrames = 0;
             m_seekBaseMs    = static_cast<uint64_t>(seekMs);
-            m_seekRequestMs.store(-1);
             m_abortDecode.store(false);
             m_state.store(StreamDecoderState::DECODING);
 
@@ -631,12 +649,15 @@ void AudioStreamDecoder::threadFunc()
 
 void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
 {
-    if (m_abortDecode.load()) {
+    if (m_stopRequest.load()) {
+        // 停止同时置取消位：让 libFLAC / libvorbis 的解码调用尽快返回。
+        m_abortDecode.store(true);
         return;
     }
 
-    if (m_stopRequest.load()) {
-        m_abortDecode.store(true);
+    // 取消位一旦置起就丢掉这一帧（不写 ring）：上层只认「取消」这一个信号，
+    // 不在回调里区分是停止还是 seek——两者的处置都是「这次解码作废」。
+    if (cancelRequested()) {
         return;
     }
 
@@ -776,7 +797,7 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
 
     size_t written = 0;
     while (written < outLen) {
-        if (m_abortDecode.load() || m_stopRequest.load()) {
+        if (cancelRequested()) {
             return false;
         }
         size_t avail = m_ring->availableWrite();
@@ -824,9 +845,9 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
             return RunDecodeResult::Error;
         }
         if (!writeDecodedBytes(extPtr->data(), extPtr->size())) {
-            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
+            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
+        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
@@ -846,9 +867,9 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
             ret = flacDecode.decode(extPtr);
         }
         if (ret < 0) {
-            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
+            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
+        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
@@ -858,7 +879,7 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         DataSourceBase *ds = m_extractor->getDataSource();
         if (ds != nullptr) {
             if (!vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize())) {
-                return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
+                return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
             }
             while (true) {
                 ret = vorbisDecode.decodeOne();
@@ -878,9 +899,9 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
             ret = vorbisDecode.decode(extPtr);
         }
         if (ret < 0) {
-            return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
+            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
         }
-        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
+        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
     }
 
     AudioCodecConfig config;
@@ -912,7 +933,7 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
     // 跳过的包已经在发生顺序上经 onAudioDecodeSkip() 记过账，上报留给 EOS 汇总
     // （规格 F1：一次坏文件只挂一条错误）；这里只区分「放弃」与「正常跑完」。
     if (ret < 0) {
-        return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Error;
+        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
     }
-    return m_abortDecode.load() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
+    return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
 }
