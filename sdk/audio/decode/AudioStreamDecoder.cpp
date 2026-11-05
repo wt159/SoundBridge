@@ -649,14 +649,15 @@ void AudioStreamDecoder::threadFunc()
 
 void AudioStreamDecoder::onAudioDecodeCallback(AudioDecodeSpec &out)
 {
-    // 取消位一旦置起就丢掉这一帧（不写 ring）：上层只认「取消」这一个信号，
-    // 不在回调里区分是停止还是 seek——两者的处置都是「这次解码作废」。
-    if (cancelRequested()) {
+    if (m_stopRequest.load()) {
+        // 停止同时置取消位：让 libFLAC / libvorbis 的解码调用尽快返回。
+        m_abortDecode.store(true);
         return;
     }
 
-    if (m_stopRequest.load()) {
-        m_abortDecode.store(true);
+    // 取消位一旦置起就丢掉这一帧（不写 ring）：上层只认「取消」这一个信号，
+    // 不在回调里区分是停止还是 seek——两者的处置都是「这次解码作废」。
+    if (cancelRequested()) {
         return;
     }
 
