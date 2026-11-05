@@ -12,6 +12,7 @@
 #include "ogg/OGGExtractor.h"
 #include "wav/WAVExtractor.h"
 #include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -177,7 +178,17 @@ ExtractorHelper *finalizeExtractor(ExtractorHelper *extractor, const ExtractorEn
 ExtractorHelper *createFromEntry(const ExtractorEntry &entry, DataSourceBase *source,
                                  const std::string &extensionName)
 {
-    return finalizeExtractor(entry.creator(source), entry, extensionName);
+    // 观测点（规格第 5 节 / 票面 #56）：init 只读扫描耗时。
+    // 提取器的构造就是 init（demux 装配 + 逐包装载），所以这里量构造耗时。
+    // 只记录、不判红绿，也不参与工厂的接受/拒绝判断。
+    const std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+    ExtractorHelper *extractor                        = entry.creator(source);
+    const std::chrono::steady_clock::duration elapsed = std::chrono::steady_clock::now() - begin;
+    if (extractor != nullptr) {
+        extractor->setInitScanMicros(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()));
+    }
+    return finalizeExtractor(extractor, entry, extensionName);
 }
 } // namespace
 

@@ -47,6 +47,12 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_pendingFrameSkip(false)
     , m_frameSkipWithDataAfter(false)
     , m_md5Mismatch(false)
+    , m_peakHeldBytes(0)
+    , m_silenceFills(0)
+    , m_startToFirstPcmUs(0)
+    , m_initScanUs(0)
+    , m_startClock()
+    , m_firstPcmNoted(false)
     , m_thread()
 {
 }
@@ -94,6 +100,15 @@ bool AudioStreamDecoder::deviceSpecSupportsResample() const
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
+    // 观测点从这个时刻起算（= start() 的入口）。放在 stop() 之后，
+    // 免得把上一次任务的 join 时间算进首播延迟。
+    m_startClock = std::chrono::steady_clock::now();
+    m_peakHeldBytes.store(0);
+    m_silenceFills.store(0);
+    m_startToFirstPcmUs.store(0);
+    m_initScanUs.store(0);
+    m_firstPcmNoted = false;
+
     m_errorCode.store(sdk::ErrorCode::Ok);
     {
         std::lock_guard<std::mutex> lock(m_errorMutex);
@@ -104,6 +119,13 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder start with null ring or extractor");
         return sdk_utils::INVALID_OPERATION;
     }
+    // 观测点：提取器 init（只读扫描）耗时由工厂量好，这里抄进本任务的仪表。
+    m_initScanUs.store(m_extractor->initScanMicros());
+    // 分配记账的第一个采样点：init 完成后提取器已经持有多少字节。
+    // 采样点只有 start / 首帧 / EOS 三处：提取器的持有量在播放期内只增不减
+    // （当前链路 init 期就装满了整首 payload），所以采样值的最大值就是峰值；
+    // 逐帧采样会让每次写 ring 都去遍历包表，把观测量变成 O(包数) 的负担。
+    noteHeldBytes(m_extractor->heldPayloadBytes());
 
     m_srcSpec    = m_extractor->getAudioSpec();
     m_codecID    = m_extractor->getAudioCodecID();
@@ -209,8 +231,43 @@ std::string AudioStreamDecoder::errorDetail() const
     return m_errorDetail;
 }
 
+StreamMetrics AudioStreamDecoder::metrics() const
+{
+    StreamMetrics out;
+    out.peakHeldBytes     = m_peakHeldBytes.load();
+    out.silenceFills      = m_silenceFills.load();
+    out.startToFirstPcmUs = m_startToFirstPcmUs.load();
+    out.initScanUs        = m_initScanUs.load();
+    return out;
+}
+
+void AudioStreamDecoder::noteSilenceFill()
+{
+    // 只统计**静默窗口内**的静音填充（规格第 5 节 / 票面 #56）。
+    // 窗口的判据来自解码器自己看得见的三类信号：SEEKING、已请求停止、已置取消位。
+    // 窗口之外的记账一律丢弃——否则计数器会退化成「消费端调了几次接口」，
+    // 而判据要的「稳态窗口静音填充为零」就再也判不出来了。
+    const StreamDecoderState current = m_state.load();
+    if (current != StreamDecoderState::SEEKING && !m_stopRequest.load() && !m_abortDecode.load()) {
+        return;
+    }
+    m_silenceFills.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteHeldBytes(size_t bytes)
+{
+    size_t peak = m_peakHeldBytes.load(std::memory_order_relaxed);
+    while (bytes > peak
+           && !m_peakHeldBytes.compare_exchange_weak(peak, bytes, std::memory_order_relaxed)) {
+    }
+}
+
 void AudioStreamDecoder::finishAtEndOfStream()
 {
+    // 分配记账的最后一个采样点（见 start() 里的采样点说明）。
+    if (m_extractor != nullptr) {
+        noteHeldBytes(m_extractor->heldPayloadBytes());
+    }
     // 规格 T4 / 条目 23：EOS 汇总处比「解出多少」与「标称多长」。
     // 修好前 flac 截到 60% 一路走到 EOS，用户看到进度条走到 177 秒就结束、界面还写着
     // 297 秒——「播到坏处」必须说出来，只有 P0（切在音频之后）才静默。
@@ -680,6 +737,20 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
             continue;
         }
         written += got;
+    }
+
+    // 观测点：start() → 首次把 PCM 交给消费端（ring 写入成功）。
+    // 只记第一次；seek 之后的重新起算不属于首播延迟（规格第 5 节）。
+    if (!m_firstPcmNoted && written > 0) {
+        m_firstPcmNoted = true;
+        const std::chrono::steady_clock::duration elapsed
+            = std::chrono::steady_clock::now() - m_startClock;
+        m_startToFirstPcmUs.store(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()));
+        // 分配记账的第二个采样点：首帧后提取器可能刚建过整块拼接缓存。
+        if (m_extractor != nullptr) {
+            noteHeldBytes(m_extractor->heldPayloadBytes());
+        }
     }
 
     m_processedBytes += (pcmSize - skipped);

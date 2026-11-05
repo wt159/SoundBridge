@@ -219,6 +219,12 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    // 分配记账：逐包 payload + 包指针槽位 + 数据对象里的数据包表（随包数增长）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return packetFootprint(m_packetizedMetaBuf) + vectorFootprint(m_dataObj.dataPacketVec)
+            + ExtractorHelper::heldPayloadBytes();
+    }
     virtual ~ASFExtractor();
 
 private:

@@ -5,6 +5,7 @@
 #include "ByteUtils.h"
 #include "DataSource.hpp"
 #include "ErrorUtils.h"
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -115,6 +116,19 @@ public:
     virtual off64_t getDataSize() { return 0; }
     virtual off64_t getAudioDataOffset() { return 0; }
 
+    // 观测点（规格第 5 节 / 票面 #56）：提取器 init 的只读扫描耗时，单位微秒。
+    // 由 ExtractorFactory 在构造后回填（构造就是 init），解码器在 start() 时抄进 StreamMetrics。
+    // 已知代价：当前 init 仍是「全量装载 payload」，所以这个数现在等于「启动开销」，
+    // 不是纯粹的只读扫描；E2 把 init 改成只读扫描 + O(1) 摘要后，同一测量点自动变准。
+    void setInitScanMicros(uint64_t micros) { m_initScanMicros = micros; }
+    uint64_t initScanMicros() const { return m_initScanMicros; }
+
+    // 分配记账（规格第 5 节 / ADR 0003 / 票面 #56）：此刻为当前曲目持有的音频数据字节数。
+    // 必须计入 payload **与一切随包数增长的结构**（包索引 / 页表 / seek 表）——只算 payload
+    // 会让常驻上界判据形同虚设。基类只报自己的拼接缓存，各提取器把自有的 payload
+    // 与索引结构一起加上。固定容量对象（256 KB ring、AVIO 缓冲）不在这个口径里。
+    virtual size_t heldPayloadBytes() const { return bufferBytes(m_joinedMetaBuf); }
+
     // 提取器**能确定**文件被截断时返回 true，与 AudioSpec 一样是事实上报、不是处置：
     // 典型是 wav/aiff「声明的数据长度 > 文件实际剩余」，短读在字节层面可判定，
     // 但这种量级的缺口（128 字节 ≈ 0.016%）低于 T4 的 5pp 阈值，不能靠时长比对发现。
@@ -123,6 +137,27 @@ public:
 
 protected:
     ExtractorHelper() { }
+
+    static size_t bufferBytes(const AudioBuffer::AudioBufferPtr &buffer)
+    {
+        return buffer ? buffer->size() : 0;
+    }
+
+    // vector 的槽位本身也是随包数增长的结构（常数因子小，但不能漏）。
+    template <typename T> static size_t vectorFootprint(const std::vector<T> &items)
+    {
+        return items.capacity() * sizeof(T);
+    }
+
+    // 包化的 payload：每包的字节 + 指针表的槽位。
+    static size_t packetFootprint(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
+    {
+        size_t total = vectorFootprint(packets);
+        for (size_t i = 0; i < packets.size(); ++i) {
+            total += bufferBytes(packets[i]);
+        }
+        return total;
+    }
 
     static void normalizeAudioSpec(AudioSpec &spec)
     {
@@ -137,4 +172,6 @@ private:
 
     // getMetaData() 的拼接缓存：只有被请求过才分配，提取器自己不保存副本。
     AudioBuffer::AudioBufferPtr m_joinedMetaBuf;
+    // init 只读扫描耗时（观测点，见上）。
+    uint64_t m_initScanMicros = 0;
 };

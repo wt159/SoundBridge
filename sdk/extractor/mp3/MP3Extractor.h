@@ -35,6 +35,11 @@ public:
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    // 分配记账：payload 是首帧之后整份字节流（当前链路仍是全量常驻）。
+    virtual size_t heldPayloadBytes() const
+    {
+        return bufferBytes(m_metaBuf) + ExtractorHelper::heldPayloadBytes();
+    }
 
 private:
     sdk_utils::status_t init();
