@@ -4,6 +4,7 @@
 #include <ExtractorFactory.h>
 #include <ExtractorHelper.hpp>
 #include <FileSource.h>
+#include <algorithm>
 #include <cstring>
 #include <doctest/doctest.h>
 #include <memory>
@@ -193,6 +194,88 @@ TEST_SUITE("PacketFactory")
         REQUIRE(joined != nullptr);
         REQUIRE(replayed.size() == joined->size());
         CHECK(std::memcmp(replayed.data(), joined->data(), joined->size()) == 0);
+    }
+
+    // FLAC 的增量包面（票面 #60 / 规格第 9 节 E7）。
+    //
+    // FLAC 没有 ffmpeg demux，帧边界只能按 offset 现场重算（ADR 0003「读过 ≠ 常驻」）。
+    // 契约形状：首包是流头（fLaC + 元数据块，libFLAC 要有 STREAMINFO 才做整段 MD5 校验），
+    // 之后每包一帧；init 期不留任何随包数增长的结构。
+    TEST_CASE("flac packet factory yields frame boundaries without holding the stream")
+    {
+        RealMediaFixture fixture;
+        const std::string name("小镇姑娘-陶喆.flac");
+        if (!fixture.exists(name)) {
+            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".flac", source, extractor));
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        // init 只留 O(1) 定长摘要：构造完成时提取器不持有任何 payload 或索引。
+        CHECK(extractor->heldPayloadBytes() == 0);
+        // 未知总数用哨兵表示；0 的含义是「没有包」，那会让解码侧退回全量形式。
+        CHECK(extractor->packetCount() != 0);
+
+        PacketCursor cursor(extractor.get());
+        AudioBuffer::AudioBufferPtr packet;
+        size_t count                = 0;
+        size_t totalBytes           = 0;
+        size_t maxPacketBytes       = 0;
+        size_t heldAfterMuchLater   = 0;
+        size_t heldAtEnd            = 0;
+        bool contiguous             = true;
+        bool allFramesStartWithSync = true;
+        bool firstIsStreamHeader    = false;
+        off64_t nextOffset          = 0;
+
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            REQUIRE(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
+            maxPacketBytes = std::max(maxPacketBytes, packet->size());
+
+            // 包首尾相接、覆盖整段负载：本包从上一包的结束处开始，位置只增不减。
+            if (nextOffset + static_cast<off64_t>(packet->size())
+                != extractor->packetBytePosition()) {
+                contiguous = false;
+            }
+            nextOffset = extractor->packetBytePosition();
+
+            if (count == 1) {
+                firstIsStreamHeader = packet->size() >= 4
+                    && std::memcmp(packet->data(), "fLaC", 4) == 0;
+            } else {
+                const unsigned char *head = reinterpret_cast<const unsigned char *>(packet->data());
+                const bool sync           = head[0] == 0xFF && (head[1] & 0xFE) == 0xF8;
+                allFramesStartWithSync = allFramesStartWithSync && sync;
+            }
+            if (count == 1000) {
+                heldAfterMuchLater = extractor->heldPayloadBytes();
+            }
+        }
+        heldAtEnd = extractor->heldPayloadBytes();
+
+        CHECK(firstIsStreamHeader);
+        CHECK(allFramesStartWithSync);
+        CHECK(contiguous);
+        CHECK(static_cast<off64_t>(totalBytes) == extractor->getDataSize());
+        // 一包一帧：297 s / 4608 采样的块大小 ≈ 2850 帧，绝不是「整首一包」。
+        CHECK(count > 1000);
+        // 单帧压缩后远小于整首；上界只用来防「整首一包」式的退化。
+        CHECK(maxPacketBytes < 64 * 1024);
+        // 持有量不随包数增长：第 1000 包之后与序列末尾的读数必须相同。
+        CHECK(heldAfterMuchLater == heldAtEnd);
+        CHECK(heldAtEnd <= maxPacketBytes * 2 + 16 * 1024);
+
+        MESSAGE(name << ": packets " << count << ", totalBytes " << totalBytes
+                     << ", maxPacketBytes " << maxPacketBytes << ", held "
+                     << heldAfterMuchLater);
     }
 
     TEST_CASE("real single-block file exposes its whole payload as one packet")

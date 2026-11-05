@@ -24,16 +24,67 @@ bool FLACExtractor::sniff(DataSourceBase *source)
 
 FLACExtractor::FLACExtractor(DataSourceBase *source)
     : m_dataSource(source)
-    , m_metaBuf(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
     , m_audioDataOffset(0)
     , m_dataSize(0)
+    , m_maxFrameBytes(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
 {
     m_initCheck = init();
 }
 
 FLACExtractor::~FLACExtractor() { }
+
+FLACFrameReader *FLACExtractor::reader()
+{
+    if (m_reader == nullptr && m_dataSource != nullptr) {
+        m_reader.reset(new FLACFrameReader(m_dataSource, m_audioDataOffset, m_dataSize,
+                                           m_maxFrameBytes));
+        m_nextPacketIndex = 0;
+    }
+    return m_reader.get();
+}
+
+AudioBuffer::AudioBufferPtr FLACExtractor::packetAt(size_t index)
+{
+    FLACFrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return nullptr;
+    }
+    // 只支持顺序拉取：游标 rewind（index 回到 0）等价于从流头重来，其余跳跃视为结束。
+    if (index != m_nextPacketIndex) {
+        if (index != 0) {
+            return nullptr;
+        }
+        frameReader->seekTo(0);
+        m_nextPacketIndex = 0;
+    }
+
+    AudioBuffer::AudioBufferPtr packet;
+    if (!frameReader->nextPacket(packet)) {
+        return nullptr;
+    }
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+bool FLACExtractor::seekPacketByte(off64_t offset)
+{
+    FLACFrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return false;
+    }
+    frameReader->seekTo(offset);
+    m_nextPacketIndex = 0;
+    return true;
+}
+
+off64_t FLACExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
+}
 
 status_t FLACExtractor::init()
 {
@@ -50,8 +101,9 @@ status_t FLACExtractor::init()
     } else {
         LOG_INFO(LOG_TAG, "this is FLAC format");
         m_validFormat = true;
-        memcpy(m_header.fileMark.id, id, 4);
 
+        // init 只读扫描：走完元数据块只为拿到 STREAMINFO 与音频数据起点，
+        // 不留任何随块数 / 包数增长的结构（ADR 0003：只留 O(1) 定长摘要）。
         while (1) {
             LOGD("offset: %d", offset);
             uint8_t header[4];
@@ -68,12 +120,6 @@ status_t FLACExtractor::init()
 
             LOGI("isLastBlock: %d, type: %d, blockSize: %d", block.header.isLastBlock,
                  block.header.type, block.header.blockSize);
-
-            // if (block.header.type >= PICTURE) {
-            //     LOGE("invalid type");
-            //     offset -= 4;
-            //     break;
-            // }
 
             int size = block.header.blockSize;
             if (block.header.type == STREAMINFO) {
@@ -112,7 +158,7 @@ status_t FLACExtractor::init()
                      block.data.streamInfo.minFrameSize, block.data.streamInfo.maxFrameSize,
                      block.data.streamInfo.sampleRate, block.data.streamInfo.channels,
                      block.data.streamInfo.bitsPerSample, block.data.streamInfo.totalSamples);
-                m_header.metaDataBlockVec.push_back(block);
+                m_maxFrameBytes      = block.data.streamInfo.maxFrameSize;
                 m_spec.sampleRate     = block.data.streamInfo.sampleRate;
                 m_spec.numChannel     = block.data.streamInfo.channels;
                 m_spec.bitsPerSample  = block.data.streamInfo.bitsPerSample;
@@ -144,7 +190,6 @@ status_t FLACExtractor::init()
                 LOGD("block header type is UNKNOWN");
             }
             offset += size;
-            m_header.metaDataBlockVec.push_back(block);
 
             if (block.header.isLastBlock) {
                 m_audioDataOffset = offset;
