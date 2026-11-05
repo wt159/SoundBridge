@@ -1,10 +1,12 @@
 #pragma once
 
+#include "AACFrameReader.h"
 #include "AudioBuffer.h"
 #include "AudioDecode.h"
 #include "DataSource.hpp"
 #include "ExtractorHelper.hpp"
 #include "NonCopyable.hpp"
+#include <memory>
 #include <vector>
 
 struct ADTSHeader {
@@ -49,16 +51,28 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
-    // 分配记账：payload 是整份 ADTS 字节流（当前链路仍是全量常驻）。
+    virtual AudioBuffer::AudioBufferPtr getMetaData();
+    virtual off64_t getDataSize() { return m_dataSize; }
+    virtual off64_t getAudioDataOffset() { return m_audioStart; }
+
+    // —— 包工厂的单包面（#62 / ADR 0003）——
+    // 每个 ADTS 帧是一包，总数事先未知（kUnknownPacketCount = 读到为止）。
+    virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
+    virtual bool seekPacketByte(off64_t offset);
+    virtual off64_t packetBytePosition() const;
+
+    // 分配记账：扫描缓冲是 O(1)。旧整块视图被仪器请求过时才多一份。
     virtual size_t heldPayloadBytes() const
     {
-        return bufferBytes(m_metaBuf) + ExtractorHelper::heldPayloadBytes();
+        return bufferBytes(m_metaBuf)
+            + (m_reader != nullptr ? m_reader->heldBytes() : 0);
     }
     virtual ~AACExtractor();
 
 private:
     sdk_utils::status_t init();
+    AACFrameReader *reader();
 
 private:
     DataSourceBase *m_dataSource;
@@ -68,4 +82,10 @@ private:
     bool m_validFormat;
     AudioSpec m_spec;
     AACHeader m_header;
+    // ADTS 帧区间：ID3v2 前缀之后到文件尾。音频负载不含标签（规格 7.3 M6）。
+    off64_t m_dataSize;
+    off64_t m_audioStart;
+    std::unique_ptr<AACFrameReader> m_reader;
+    size_t m_nextPacketIndex;
+    off64_t m_sequenceOffset;
 };
