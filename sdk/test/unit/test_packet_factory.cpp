@@ -16,8 +16,8 @@
 // 新增的单包迭代必须能遍历旧视图覆盖的同一段负载，边界逐项一致，且不复制包表；
 // 旧形式（getMetaData() / getPacketizedMetaData()）同时保持可用，任何调用方都不用迁移。
 //
-// 本套件是「格式中立」的：只碰 ExtractorHelper 的包工厂面与量测仪器 AudioDecodeProcess，
-// 不新增同步解码入口（#18 继续成立），也不改生产链 AudioStreamDecoder。
+// 本套件只碰 ExtractorHelper 的包工厂面：不新增同步解码入口（#18 继续成立），
+// 也不改生产链 AudioStreamDecoder。
 
 namespace {
 
