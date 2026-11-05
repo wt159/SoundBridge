@@ -25,6 +25,7 @@
 // Forward declarations
 class FLACDecode;
 class VorbisDecode;
+class AudioDecode;
 
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
 
@@ -105,6 +106,10 @@ private:
 
     void threadFunc();
     RunDecodeResult runDecode();
+    // 增量供给的 ffmpeg 分支（#62 / ADR 0003）：mp3 / aac 逐包喂、整个任务只建一次
+    // 编解码器；seek 按「顺序重放」重建解码器并从包序列起点重新迭代（#49 第二档）。
+    std::unique_ptr<AudioDecode> createFfmpegPacketDecoder();
+    void runFfmpegPacketLoop();
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
     // 按当前的 m_srcSpec / m_devSpec 造一个重采样器；失败返回 nullptr。
     std::shared_ptr<AudioResample> createResampler();
