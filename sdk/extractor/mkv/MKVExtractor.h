@@ -18,6 +18,13 @@ public:
     {
         return m_packetizedMetaBuf;
     }
+    // 单包面（expand 阶段，#57 / ADR 0003）：零复制地把旧逐包表的边界交给 PacketCursor。
+    // 这里不做任何边界重算，游标看到的包与 getPacketizedMetaData() 是同一批对象。
+    virtual size_t packetCount() { return m_packetizedMetaBuf.size(); }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index)
+    {
+        return index < m_packetizedMetaBuf.size() ? m_packetizedMetaBuf[index] : nullptr;
+    }
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }

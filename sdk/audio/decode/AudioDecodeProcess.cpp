@@ -7,10 +7,12 @@
 
 using namespace sdk_utils;
 
-AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor)
+AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor, PayloadSupply supply)
     : m_extractor(extractor)
     , m_decode(nullptr)
     , m_decSize(0)
+    , m_supply(supply)
+    , m_payloadPacketCount(0)
 {
     m_decBufVec.clear();
     m_spec    = m_extractor->getAudioSpec();
@@ -167,9 +169,20 @@ status_t AudioDecodeProcess::init()
             LOG_ERROR(LOG_TAG, "new AudioDecode failed or initCheck failed, %p", m_decode.get());
             return INVALID_OPERATION;
         }
-        std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData
-            = m_extractor->getPacketizedMetaData();
-        int ret = 0;
+        std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData;
+        // 供给形式只影响「负载从哪来」（#57 expand 阶段）：解码本身仍是同一套。
+        // 默认路径逐字保持旧行为；单包迭代路径用 PacketCursor 逐包拼出同一段负载。
+        if (m_supply == PayloadSupply::PacketIteration) {
+            PacketCursor cursor(m_extractor);
+            AudioBuffer::AudioBufferPtr packet;
+            while (cursor.nextPacket(packet)) {
+                packetizedMetaData.push_back(packet);
+            }
+        } else {
+            packetizedMetaData = m_extractor->getPacketizedMetaData();
+        }
+        m_payloadPacketCount = packetizedMetaData.size();
+        int ret              = 0;
         if (!packetizedMetaData.empty()) {
             ret = m_decode->decodePackets(packetizedMetaData);
         } else {

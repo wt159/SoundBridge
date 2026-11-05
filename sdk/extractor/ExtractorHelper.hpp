@@ -59,6 +59,9 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
 //     ape/wmav2/alac/pcm 没有）。没有 parser 时解码器「一个 packet 出有限帧」，
 //     把整段音频当成一个 packet 送进去只能解出开头——APE 曾因此 4.6s/24.9s。
 //     边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
+//   - 单包面（#57）：packetCount() / packetAt() 加 PacketCursor 是层间单元的新形状，
+//     解码侧逐包 pull、零复制；旧的两个整块视图在 expand 阶段继续可用，调用方不用迁移。
+//     逐格式迁移见 #60 起的票，旧形式退场归 #66 的 contract 票。
 class ExtractorHelper {
 public:
     virtual ~ExtractorHelper() { }
@@ -70,6 +73,22 @@ public:
     virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
     {
         return std::vector<AudioBuffer::AudioBufferPtr>();
+    }
+
+    // —— 包工厂的单包面（expand 阶段，#57 / ADR 0003）——
+    // 解码侧按需 pull 单包，整块视图只是按需拼合的产物；两个方法必须 O(1)：
+    // 不允许为了「交出第 i 包」复制包表、拼合负载或重建索引。
+    // 默认实现把**按需拼合的整块视图**当作一整包：wav / mp3 / flac / ogg / aiff / aac
+    // 这些提取器本来就只持有整块 payload，边界就是整块本身，与旧路径 decode(data, size)
+    // 完全一致。持有逐包表的提取器（ape / asf / m4a / mkv）覆写这两个方法，零复制交出旧边界，
+    // 调用方因此不需要迁移任何东西。
+    virtual size_t packetCount() { return getMetaData() == nullptr ? 0 : 1; }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index)
+    {
+        if (index != 0) {
+            return nullptr;
+        }
+        return getMetaData();
     }
 
     // 需要连续缓冲的消费者（FLAC/Vorbis 专用解码路径、部分用例）走这里。
@@ -174,4 +193,57 @@ private:
     AudioBuffer::AudioBufferPtr m_joinedMetaBuf;
     // init 只读扫描耗时（观测点，见上）。
     uint64_t m_initScanMicros = 0;
+};
+
+// 单包迭代游标（expand 阶段，#57 / ADR 0003）。包是层间唯一单元，
+// 解码线程按需 pull 下一包，不主动推。
+//
+// 只持有「下一包序号」与提取器指针，是 O(1) 常驻：不复制包表、不缓存负载、
+// 不预读、不建索引，所以不改变 heldPayloadBytes() 的口径，也不需要额外的分配记账。
+// 生命周期由拉取方（解码线程 / 量测仪器）持有；游标存活期间提取器必须存活。
+// 有且只有 forward + rewind 两种移动：随机定位属于 seek 策略（#49），不在这里开口子。
+class PacketCursor {
+public:
+    explicit PacketCursor(ExtractorHelper *extractor)
+        : m_extractor(extractor)
+        , m_nextIndex(0)
+        , m_produced(0)
+    {
+    }
+
+    // 拉下一包；返回 false 表示序列正常结束。空包（nullptr 或 0 字节）不产出、直接跳过，
+    // 与整块视图拼合时「跳过空包」的语义一致。
+    bool nextPacket(AudioBuffer::AudioBufferPtr &packet)
+    {
+        packet.reset();
+        if (m_extractor == nullptr) {
+            return false;
+        }
+
+        const size_t count = m_extractor->packetCount();
+        while (m_nextIndex < count) {
+            AudioBuffer::AudioBufferPtr current = m_extractor->packetAt(m_nextIndex);
+            ++m_nextIndex;
+            if (current != nullptr && current->size() > 0) {
+                packet = current;
+                ++m_produced;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 回到序列起点（供量测仪器二次遍历用；生产链的顺序重放同样从这里起）。
+    void rewind()
+    {
+        m_nextIndex = 0;
+        m_produced  = 0;
+    }
+
+    size_t packetsProduced() const { return m_produced; }
+
+private:
+    ExtractorHelper *m_extractor;
+    size_t m_nextIndex;
+    size_t m_produced;
 };
