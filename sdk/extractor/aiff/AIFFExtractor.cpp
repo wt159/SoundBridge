@@ -35,12 +35,57 @@ AIFFExtractor::AIFFExtractor(DataSourceBase *source)
     , m_dataTruncated(false)
     , m_audioSpec()
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
-    , m_metaBuf()
+    , m_dataOffset(0)
+    , m_dataSize(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
 {
     m_initCheck = init();
 }
 
 AIFFExtractor::~AIFFExtractor() { }
+
+PcmPacketReader *AIFFExtractor::reader()
+{
+    if (m_reader == nullptr && m_dataSource != nullptr) {
+        const size_t frameBytes = static_cast<size_t>(m_audioSpec.numChannel)
+            * static_cast<size_t>(m_audioSpec.bytesPerSample);
+        m_reader.reset(new PcmPacketReader(m_dataSource, m_dataOffset,
+                                           static_cast<off64_t>(m_dataSize), frameBytes));
+        m_nextPacketIndex = 0;
+    }
+    return m_reader.get();
+}
+
+AudioBuffer::AudioBufferPtr AIFFExtractor::packetAt(size_t index)
+{
+    PcmPacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return nullptr;
+    }
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到 SSND 起点重来
+    //（新任务与顺序重放 seek 都从这里起）。其余跳跃不接受。
+    if (index == 0) {
+        packetReader->rewind();
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
+    }
+
+    AudioBuffer::AudioBufferPtr packet;
+    if (!packetReader->nextPacket(packet)) {
+        return nullptr;
+    }
+    // AIFF 的 PCM 是大端：逐包在交出之前换成主机字节序（旧形式是整段换一次）。
+    AudioBuffer2HostEndian(packet, m_audioSpec);
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+off64_t AIFFExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
+}
 
 status_t AIFFExtractor::init()
 {
@@ -70,10 +115,7 @@ status_t AIFFExtractor::init()
                 m_validFormat = false;
                 break;
             }
-            m_formChunk.chunkID    = ck.chunkID;
-            m_formChunk.chunkSize  = ck.chunkSize;
-            m_formChunk.formType   = U32_AT(&formType[0]);
-            offset                += sizeof(formType);
+            offset += sizeof(formType);
             if (memcmp(formType, "AIFF", 4) == 0) {
                 m_validFormat = true;
             } else if (memcmp(formType, "AIFC", 4) == 0) {
@@ -97,7 +139,6 @@ status_t AIFFExtractor::init()
             cChunk->numSampleFrames = U32_AT(&temp[2]);
             cChunk->sampleSize      = U16_AT(&temp[6]);
             cChunk->sampleRate      = (uint32_t)ieee754_80bits_to_long_double(&temp[8]);
-            m_formChunk.chunkVec.push_back(cChunk);
             LOGI("numChannels=%u", cChunk->numChannels);
             LOGI("numSampleFrames=%u", cChunk->numSampleFrames);
             LOGI("sampleSize=%u", cChunk->sampleSize);
@@ -111,12 +152,8 @@ status_t AIFFExtractor::init()
                 break;
             }
             offset += sizeof(temp);
-            std::shared_ptr<FormatVersionChunk> fvChunk(new FormatVersionChunk());
-            fvChunk->chunkID   = ck.chunkID;
-            fvChunk->chunkSize = ck.chunkSize;
-            fvChunk->timestamp = U32_AT(&temp[0]);
-            m_formChunk.chunkVec.push_back(fvChunk);
-            LOGI("timestamp=%u", fvChunk->timestamp);
+            // FVER 只对 AIFC 有意义，读出来只为日志：不保留 chunk 表（#61 的 O(1) 摘要）。
+            LOGI("timestamp=%u", U32_AT(&temp[0]));
         } else if (ck.chunkID == kChunkID_SSND) {
             uint8_t temp[8];
             if (m_dataSource->readAt(offset, temp, sizeof(temp)) < (ssize_t)sizeof(temp)) {
@@ -124,14 +161,8 @@ status_t AIFFExtractor::init()
                 break;
             }
             offset += sizeof(temp);
-            std::shared_ptr<SoundDataChunk> sdChunk(new SoundDataChunk());
-            sdChunk->chunkID   = ck.chunkID;
-            sdChunk->chunkSize = ck.chunkSize;
-            sdChunk->offset    = U32_AT(&temp[0]);
-            sdChunk->blockSize = U32_AT(&temp[4]);
-            m_formChunk.chunkVec.push_back(sdChunk);
-            LOGI("offset=%u", sdChunk->offset);
-            LOGI("blockSize=%u", sdChunk->blockSize);
+            LOGI("offset=%u", U32_AT(&temp[0]));
+            LOGI("blockSize=%u", U32_AT(&temp[4]));
 
             // 规格 T2 / 条目 6：与 wav 同一条规则——按 min(声明长度, 文件剩余) 读。
             // durationMs 仍由 COMM 的 numSampleFrames 得出（标称值不变）。
@@ -149,14 +180,11 @@ status_t AIFFExtractor::init()
                 m_validFormat = false;
                 break;
             }
-            sdChunk->soundData = std::make_shared<AudioBuffer>(soundDataSize);
-            if (m_dataSource->readAt(offset, sdChunk->soundData->data(), soundDataSize)
-                < (ssize_t)soundDataSize) {
-                m_validFormat = false;
-                break;
-            }
-            offset    += soundDataSize;
-            m_metaBuf  = sdChunk->soundData;
+            // payload 不再在 init 期整首装载、也不整段换字节序（ADR 0003：只留 O(1) 摘要）：
+            // 切片与换字节序都发生在播放期，由 packetAt() 逐包完成。
+            m_dataOffset      = offset;
+            m_dataSize        = soundDataSize;
+            offset           += soundDataSize;
             // 可播样本按实际读到的算（规格 T2），标称时长留在 durationMs 里
             if (m_audioSpec.numChannel > 0 && m_audioSpec.bytesPerSample > 0) {
                 size_t frames
@@ -165,7 +193,6 @@ status_t AIFFExtractor::init()
                     m_audioSpec.samples = frames;
                 }
             }
-            AudioBuffer2HostEndian(m_metaBuf, m_audioSpec);
         } else {
             if (invalidChunkCount++ > 15) {
                 m_validFormat = false;
