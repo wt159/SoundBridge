@@ -442,6 +442,17 @@ void MusicPlayer::Impl::consumeAudioData()
         const size_t len = 4096;
         std::vector<char> silence(len, 0);
         m_audioDev->write(silence.data(), len);
+        // 观测点（规格第 5 节 / 票面 #56）：静音填充次数记在当前曲目的解码器上。
+        // 只记账、不改任何分支；解码器只统计静默窗口内的调用，
+        // 所以稳态播放期间这个数恒为 0（判据的口径是「稳态窗口静音填充为零」）。
+        MusicPropertiesPtr cur;
+        {
+            std::lock_guard<std::mutex> lock(m_curMusicMutex);
+            cur = m_curMusicProperties;
+        }
+        if (cur != nullptr && cur->streamDecoder != nullptr) {
+            cur->streamDecoder->noteSilenceFill();
+        }
         return;
     }
 

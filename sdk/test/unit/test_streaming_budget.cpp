@@ -64,8 +64,20 @@ TEST_SUITE("StreamingBudget")
             return decoder.state() == StreamDecoderState::SEEKING;
         }
 
+        // 一次播放的可选驱动参数。
+        struct PlaybackPlan {
+            // 消费端取走这么多字节后发起一次 seek；0 表示不 seek。
+            // 用已交付字节而不是 positionMs()：positionMs() 只在 seek 路径上被赋值，
+            // 稳态播放期间恒为 0（现状口径，见 AudioStreamDecoder::positionMs）。
+            size_t seekAfterBytes   = 0;
+            uint64_t seekTargetMs   = 0;
+            // 在非静默窗口里故意记一次「静音填充」：用来锁住计数器只覆盖静默窗口。
+            bool probeOutsideWindow = false;
+        };
+
         PlaybackObservation playWholeTrack(const std::string &mediaDir, const std::string &fileName,
-                                          const char *extension, int timeoutMs)
+                                          const char *extension, int timeoutMs,
+                                          const PlaybackPlan &plan = PlaybackPlan())
         {
             PlaybackObservation observation;
             const std::string path = mediaDir + "/" + fileName;
@@ -91,12 +103,18 @@ TEST_SUITE("StreamingBudget")
             observation.opened = true;
 
             std::vector<char> buf(kChunkBytes);
-            int elapsed = 0;
+            bool probed  = false;
+            bool seeked  = false;
+            int elapsed  = 0;
             while (elapsed <= timeoutMs) {
                 if (isSilenceWindow(decoder)) {
                     // 静默窗口里消费端交付静音：交给解码器记账（与生产同一个计数入口）。
                     decoder.noteSilenceFill();
                 } else {
+                    if (plan.probeOutsideWindow && !probed) {
+                        probed = true;
+                        decoder.noteSilenceFill();
+                    }
                     while (ring.availableRead() > 0) {
                         size_t once = std::min(buf.size(), ring.availableRead());
                         size_t got  = ring.read(buf.data(), once);
@@ -105,6 +123,12 @@ TEST_SUITE("StreamingBudget")
                         }
                         observation.bytes += got;
                     }
+                }
+
+                if (!seeked && plan.seekAfterBytes > 0
+                    && observation.bytes >= plan.seekAfterBytes) {
+                    seeked = true;
+                    decoder.seekToMs(plan.seekTargetMs);
                 }
 
                 StreamDecoderState state = decoder.state();
@@ -157,5 +181,35 @@ TEST_SUITE("StreamingBudget")
                     << ", silenceFills " << observation.metrics.silenceFills
                     << ", deliveredBytes " << observation.bytes);
         }
+    }
+
+    TEST_CASE("silence fill counter only covers the silence windows")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists(kShortOgg)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", kShortOgg);
+            return;
+        }
+
+        // 稳态窗口：消费端没有欠流，计数必须是 0。
+        // 顺带在 DECODING 里故意记一次「静音填充」——静默窗口之外的记账不许进计数器，
+        // 否则计数器会退化成「消费端调了几次接口」而不是「窗口内交付了几块静音」。
+        PlaybackPlan steady;
+        steady.probeOutsideWindow = true;
+        PlaybackObservation steadyRun
+            = playWholeTrack(fixture.mediaDir(), kShortOgg, ".ogg", 60000, steady);
+        REQUIRE(steadyRun.opened);
+        CHECK_MESSAGE(steadyRun.metrics.silenceFills == 0,
+                      "稳态窗口之外的静音记账被计进了计数器");
+
+        // seek 窗口：解码器进入 SEEKING，消费端在这段时间交付静音，计数必须动。
+        PlaybackPlan seeking;
+        seeking.seekAfterBytes = 65536; // ≈ 0.37 s 的 PCM
+        seeking.seekTargetMs   = 1500;
+        PlaybackObservation seekRun
+            = playWholeTrack(fixture.mediaDir(), kShortOgg, ".ogg", 60000, seeking);
+        REQUIRE(seekRun.opened);
+        CHECK_MESSAGE(seekRun.metrics.silenceFills > 0, "SEEKING 窗口里的静音填充没有计数");
+        CHECK_MESSAGE(seekRun.bytes > 0, "seek 之后没有继续交付 PCM");
     }
 }

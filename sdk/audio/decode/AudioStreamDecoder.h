@@ -55,6 +55,7 @@ public:
     StreamMetrics metrics() const;
     // 消费端在静默窗口交付一块静音时调用，供 metrics().silenceFills 记账。
     // 生产消费端（MusicPlayer::Impl::consumeAudioData）与判据套件的消费端走同一个入口。
+    // 只有解码器自己看得见的静默窗口（SEEKING / 已请求停止 / 已置取消位）里的调用才计数。
     void noteSilenceFill();
 
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：

@@ -243,6 +243,14 @@ StreamMetrics AudioStreamDecoder::metrics() const
 
 void AudioStreamDecoder::noteSilenceFill()
 {
+    // 只统计**静默窗口内**的静音填充（规格第 5 节 / 票面 #56）。
+    // 窗口的判据来自解码器自己看得见的三类信号：SEEKING、已请求停止、已置取消位。
+    // 窗口之外的记账一律丢弃——否则计数器会退化成「消费端调了几次接口」，
+    // 而判据要的「稳态窗口静音填充为零」就再也判不出来了。
+    const StreamDecoderState current = m_state.load();
+    if (current != StreamDecoderState::SEEKING && !m_stopRequest.load() && !m_abortDecode.load()) {
+        return;
+    }
     m_silenceFills.fetch_add(1, std::memory_order_relaxed);
 }
 
