@@ -10,7 +10,9 @@
 #include "Lazy.hpp"
 #include "NonCopyable.hpp"
 #include "Optional.hpp"
+#include "StreamMetrics.h"
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -47,6 +49,14 @@ public:
     sdk::ErrorCode errorCode() const;
     std::string errorDetail() const;
 
+    // 四个观测点的快照（规格第 5 节 / 票面 #56）。它们是仪表，不是判据：
+    // 本票只要求可读、可复现，不在这里对任何数值判红绿。
+    // 线程安全：可从消费线程读取，不影响解码线程。
+    StreamMetrics metrics() const;
+    // 消费端在静默窗口交付一块静音时调用，供 metrics().silenceFills 记账。
+    // 生产消费端（MusicPlayer::Impl::consumeAudioData）与判据套件的消费端走同一个入口。
+    void noteSilenceFill();
+
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
     // 通用路径又一次性解完整段。结果是 `while (ret != EOS)` 在 FLAC/OGG 上永不终止。
@@ -80,6 +90,8 @@ private:
     // 记一次「这一帧/这一包解不出，跳过继续」（规格 4.1 / F1）。
     // 不立即置 ERROR：坏帧的处置是播到结尾再汇总一条 DataCorrupted。
     void noteSkippedFrame(uint64_t count = 1);
+    // 分配记账：把「此刻为当前曲目持有多少字节」喂给峰值（只增不减，见 StreamMetrics.h）。
+    void noteHeldBytes(size_t bytes);
     // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
     void setError(sdk::ErrorCode code, const char *detail);
 
@@ -127,6 +139,15 @@ private:
     // flac 的 STREAMINFO MD5 不符（条目 10）。截断同样会让 MD5 不符，所以只在
     // 「解到标称长度」时才当作坏帧，解不到长度的交给 DataTruncated（4.1）。
     bool m_md5Mismatch;
+
+    // 四个观测点：全部是「本次播放任务」的口径，start() 清零后重新累积。
+    // 消费线程会写 silenceFills，所以用原子量；其余只在解码线程写、任意线程读。
+    std::atomic<size_t> m_peakHeldBytes;
+    std::atomic<size_t> m_silenceFills;
+    std::atomic<uint64_t> m_startToFirstPcmUs;
+    std::atomic<uint64_t> m_initScanUs;
+    std::chrono::steady_clock::time_point m_startClock;
+    bool m_firstPcmNoted;
 
     std::thread m_thread;
 };

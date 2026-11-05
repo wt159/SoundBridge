@@ -150,6 +150,7 @@ set(UNIT_TEST_SOURCES
     unit/test_resample_formats.cpp
     unit/test_media_coverage.cpp
     unit/test_bad_input.cpp
+    unit/test_streaming_budget.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})

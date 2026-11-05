@@ -47,6 +47,12 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_pendingFrameSkip(false)
     , m_frameSkipWithDataAfter(false)
     , m_md5Mismatch(false)
+    , m_peakHeldBytes(0)
+    , m_silenceFills(0)
+    , m_startToFirstPcmUs(0)
+    , m_initScanUs(0)
+    , m_startClock()
+    , m_firstPcmNoted(false)
     , m_thread()
 {
 }
@@ -94,6 +100,15 @@ bool AudioStreamDecoder::deviceSpecSupportsResample() const
 sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool startThread)
 {
     stop();
+    // 观测点从这个时刻起算（= start() 的入口）。放在 stop() 之后，
+    // 免得把上一次任务的 join 时间算进首播延迟。
+    m_startClock = std::chrono::steady_clock::now();
+    m_peakHeldBytes.store(0);
+    m_silenceFills.store(0);
+    m_startToFirstPcmUs.store(0);
+    m_initScanUs.store(0);
+    m_firstPcmNoted = false;
+
     m_errorCode.store(sdk::ErrorCode::Ok);
     {
         std::lock_guard<std::mutex> lock(m_errorMutex);
@@ -207,6 +222,29 @@ std::string AudioStreamDecoder::errorDetail() const
 {
     std::lock_guard<std::mutex> lock(m_errorMutex);
     return m_errorDetail;
+}
+
+StreamMetrics AudioStreamDecoder::metrics() const
+{
+    StreamMetrics out;
+    out.peakHeldBytes       = m_peakHeldBytes.load();
+    out.silenceFills        = m_silenceFills.load();
+    out.startToFirstPcmUs   = m_startToFirstPcmUs.load();
+    out.initScanUs          = m_initScanUs.load();
+    return out;
+}
+
+void AudioStreamDecoder::noteSilenceFill()
+{
+    m_silenceFills.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteHeldBytes(size_t bytes)
+{
+    size_t peak = m_peakHeldBytes.load(std::memory_order_relaxed);
+    while (bytes > peak
+           && !m_peakHeldBytes.compare_exchange_weak(peak, bytes, std::memory_order_relaxed)) {
+    }
 }
 
 void AudioStreamDecoder::finishAtEndOfStream()
@@ -680,6 +718,16 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
             continue;
         }
         written += got;
+    }
+
+    // 观测点：start() → 首次把 PCM 交给消费端（ring 写入成功）。
+    // 只记第一次；seek 之后的重新起算不属于首播延迟（规格第 5 节）。
+    if (!m_firstPcmNoted && written > 0) {
+        m_firstPcmNoted = true;
+        const std::chrono::steady_clock::duration elapsed
+            = std::chrono::steady_clock::now() - m_startClock;
+        m_startToFirstPcmUs.store(static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()));
     }
 
     m_processedBytes += (pcmSize - skipped);
