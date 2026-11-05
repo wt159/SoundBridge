@@ -101,12 +101,17 @@ TEST_SUITE("PacketSupply")
             CHECK_MESSAGE(wholeView.measuredMs == packetIteration.measuredMs,
                           name << ": legacy vs packet iteration duration, " << wholeView.measuredMs
                                << "ms vs " << packetIteration.measuredMs << "ms");
-            // 新路径确实逐包走过：包数等于旧逐包表（没有逐包表时为 1 整块）。
+            // 新路径确实逐包走过：有旧逐包表时逐项一致；没有时允许 #62 起的
+            // 「播放期按 offset 现场切包」（mp3 / aac 逐帧）——它不建旧包表，
+            // 但包数必须 ≥1，且上面的 PCM / 时长等价性仍然成立。
             const size_t legacyPackets = extractor->getPacketizedMetaData().size();
-            const size_t expectedPackets = legacyPackets > 0 ? legacyPackets : 1;
-            CHECK_MESSAGE(packetIteration.packetCount == expectedPackets,
-                          name << ": packet iteration fed " << packetIteration.packetCount
-                               << " packets, legacy view has " << expectedPackets);
+            CHECK_MESSAGE(packetIteration.packetCount >= 1,
+                          name << ": packet iteration fed no packet at all");
+            if (legacyPackets > 0) {
+                CHECK_MESSAGE(packetIteration.packetCount == legacyPackets,
+                              name << ": packet iteration fed " << packetIteration.packetCount
+                                   << " packets, legacy view has " << legacyPackets);
+            }
         }
     }
 }
