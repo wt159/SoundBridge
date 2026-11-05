@@ -58,6 +58,9 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
 //     ape/wmav2/alac/pcm 没有）。没有 parser 时解码器「一个 packet 出有限帧」，
 //     把整段音频当成一个 packet 送进去只能解出开头——APE 曾因此 4.6s/24.9s。
 //     边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
+//   - 单包面（#57）：packetCount() / packetAt() 加 PacketCursor 是层间单元的新形状，
+//     解码侧逐包 pull、零复制；旧的两个整块视图在 expand 阶段继续可用，调用方不用迁移。
+//     逐格式迁移见 #60 起的票，旧形式退场归 #66 的 contract 票。
 class ExtractorHelper {
 public:
     virtual ~ExtractorHelper() { }
