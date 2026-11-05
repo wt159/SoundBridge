@@ -411,6 +411,7 @@ int AudioDecode::Impl::decodePacket(const AudioBuffer::AudioBufferPtr &packet)
 
 int AudioDecode::Impl::flushDecode()
 {
+    // 序列耗尽：把编解码器内部延迟的帧取干净（有损格式的尾部要靠这一步）。
     m_pkt->data = nullptr;
     m_pkt->size = 0;
     int ret     = decode(m_ctx, m_pkt, m_frame);

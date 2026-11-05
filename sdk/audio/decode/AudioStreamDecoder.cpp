@@ -250,6 +250,8 @@ StreamMetrics AudioStreamDecoder::metrics() const
     out.initScanUs             = m_initScanUs.load();
     out.packetsPulled          = m_packetsPulled.load();
     out.packetsPulledAtFirstPcm = m_packetsPulledAtFirstPcm.load();
+    // 现场重算包边界的 CPU 成本是提取器侧的独立指标（只记录、不设阈值）。
+    out.packetBoundaryMicros = m_extractor != nullptr ? m_extractor->packetBoundaryMicros() : 0;
     return out;
 }
 
@@ -560,18 +562,6 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
-    // mp3 / aac 的增量分支（#62）：包工厂逐帧交包，ffmpeg 编解码器在解码线程里
-    // 跨整个任务存活，逐包喂、逐帧写 ring。只有「提取器能产包」时才走这里；
-    // 否则落到下面旧的整块 runDecode()（expand 阶段的回退口，batch 之间还能绿）。
-    if ((m_codecID == AUDIO_CODEC_ID_MP3 || m_codecID == AUDIO_CODEC_ID_AAC)
-        && m_extractor->packetCount() != 0) {
-        runFfmpegPacketLoop();
-        if (m_stopRequest.load()) {
-            m_state.store(StreamDecoderState::IDLE);
-        }
-        return;
-    }
-
     if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
         VorbisDecode vorbis(this);
         vorbis.setAbortFlag(&m_abortDecode);
@@ -699,6 +689,21 @@ void AudioStreamDecoder::threadFunc()
             }
         }
 
+        if (m_stopRequest.load()) {
+            m_state.store(StreamDecoderState::IDLE);
+        }
+        return;
+    }
+
+    // ffmpeg 逐包分支（#62 mp3/aac + #63 现场重算包边界的提取器）：包边界在播放期
+    // 现场重算的提取器用 kUnknownPacketCount 表示总数（mkv 走这条），mp3 / aac 的
+    // 帧边界由各自的帧读取器给出。两条判据是「或」：任一成立就逐包 pull，否则落到
+    // 下面的整块 runDecode()（expand 阶段的回退口，batch 之间还能绿）。
+    // wav / aiff 与 FLAC / Vorbis 各有自己的分支，已在上面返回。
+    if (m_extractor->packetCount() == ExtractorHelper::kUnknownPacketCount
+        || ((m_codecID == AUDIO_CODEC_ID_MP3 || m_codecID == AUDIO_CODEC_ID_AAC)
+            && m_extractor->packetCount() != 0)) {
+        runFfmpegPacketLoop();
         if (m_stopRequest.load()) {
             m_state.store(StreamDecoderState::IDLE);
         }

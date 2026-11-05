@@ -36,4 +36,8 @@ struct StreamMetrics {
     size_t packetsPulled = 0;
     // 首帧交付那一刻已拉到的包数。0 表示这次播放根本没走包工厂（旧的全量供给形式）。
     size_t packetsPulledAtFirstPcm = 0;
+    // 6) 现场重算包边界的 CPU 成本（微秒，累计）。包边界按 offset 重算的格式（mkv 起）
+    //    每次拉包都要 demux 现场解析 cluster / block 头，这份成本只记独立指标、
+    //    不设阈值、不参与任何判据（规格第 5 节末段）。其余格式恒为 0。
+    uint64_t packetBoundaryMicros = 0;
 };
