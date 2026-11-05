@@ -164,6 +164,11 @@ public:
     // 与索引结构一起加上。固定容量对象（256 KB ring、AVIO 缓冲）不在这个口径里。
     virtual size_t heldPayloadBytes() const { return bufferBytes(m_joinedMetaBuf); }
 
+    // 现场重算包边界的 CPU 成本（微秒，规格第 5 节末段）：只记独立指标、不设阈值，
+    // 也不参与任何判据的接受 / 拒绝。只有包边界在播放期按 offset 重算的格式会记账
+    // （#63 起的 mkv；m4a / ape / asf 归 #64），其余格式恒为 0。
+    virtual uint64_t packetBoundaryMicros() const { return 0; }
+
     // 提取器**能确定**文件被截断时返回 true，与 AudioSpec 一样是事实上报、不是处置：
     // 典型是 wav/aiff「声明的数据长度 > 文件实际剩余」，短读在字节层面可判定，
     // 但这种量级的缺口（128 字节 ≈ 0.016%）低于 T4 的 5pp 阈值，不能靠时长比对发现。
