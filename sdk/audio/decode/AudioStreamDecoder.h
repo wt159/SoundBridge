@@ -40,7 +40,11 @@ public:
     void seekToMs(uint64_t targetMs);
 
     StreamDecoderState state() const;
+    // 播放位置 = (segmentBaseBytes + ring 段内已读字节) / bytesPerMs（规格 #55 第 3 节）。
+    // 段基准在 seek / 切歌（start）时更新；durationMs 为 0（未知）时位置照常按已消费 PCM 报，
+    // 不凭空推算总长、也不把位置夹到 [0, duration] 之外。
     uint64_t positionMs() const;
+    // 提取器 init 期给出的标称时长，播放期间不变；0 表示未知。
     uint64_t durationMs() const;
     bool canDecode() const;
 
@@ -72,6 +76,11 @@ protected:
 
 private:
     size_t calculateMinWriteSpace(AudioCodecID codecId) const;
+    // 与 ring 内容同一档的 bytesPerMs：重采样生效时是设备格式，否则是源格式。
+    // 段基准与 ring 段内计数都以这一档字节记账，不能混用 seek 丢弃用的源字节口径。
+    uint64_t positionBytesPerMs() const;
+    // 把 seek 目标写成段基准；字节口径未知（首帧之前）时寄存目标，首帧后补算。
+    void applySegmentBase(uint64_t targetMs);
 
     // runDecode() 一次性解完整个 payload，成功即「流已耗尽」，不存在「还有数据」的中间态。
     // 用枚举而不是 0/-1，避免再把「成功」映射成「还有进度」而看不出矛盾。
@@ -118,12 +127,19 @@ private:
     std::atomic<int64_t> m_seekRequestMs;
     size_t m_seekDiscardBytes;
     size_t m_processedBytes;
-    std::atomic<uint64_t> m_consumedBytes;
+    // 段基准（消费端 O(1)，不是 ring 成员）：seek / 切歌时更新。
+    // ring 的 reset() 会把段内读计数归零，所以基准必须存在 ring 之外，
+    // 否则位置会随 seek 跳回 0。单位与 ring 内容一致（见 positionBytesPerMs）。
+    std::atomic<uint64_t> m_segmentBaseBytes;
+    // 首帧之前还不知道 PCM 格式（mp3 / aac 等容器头不声明 bytesPerSample），
+    // 此时算不出段基准的字节数。先把 seek 目标寄存在这里，首帧确定字节口径后补算。
+    uint64_t m_pendingSeekBaseMs;
     uint64_t m_bytesPerMs;
     std::atomic<bool> m_abortDecode;
 
     // EOS 汇总的计量：解码产出的**源格式**帧数与采样率。
-    // 刻意复用 positionMs()/m_consumedBytes 之外的计数器——那两处只在 seek 路径被赋值（#34 findings 1）。
+    // 刻意不复用 positionMs() 背后的段基准 / ring 读计数——那两处只回答「消费端走到哪」，
+    // 而 EOS 比的是「解码器产出多少」（#34 findings 1）。
     uint64_t m_decodedFrames;
     uint32_t m_decodedRate;
     size_t m_pcmFrameBytes;

@@ -142,6 +142,7 @@ set(UNIT_TEST_SOURCES
     unit/test_decode.cpp
     unit/test_stream_decoder.cpp
     unit/test_stream_decoder_contract.cpp
+    unit/test_playback_position.cpp
     unit/test_playlist.cpp
     unit/test_playlist_advance.cpp
     unit/test_player.cpp

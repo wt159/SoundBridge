@@ -21,6 +21,10 @@ public:
     size_t read(char *data, size_t len);
     size_t availableRead() const;
 
+    // 本段内已被消费端取走的字节数（从 reset() 起算）。
+    // 播放位置 = 消费端段基准 + 本值；段基准不在 ring 里，因为 reset() 会把它归零。
+    uint64_t readPos() const { return m_readPos.load(std::memory_order_acquire); }
+
     void reset();
 
     size_t capacity() const { return m_capacity; }

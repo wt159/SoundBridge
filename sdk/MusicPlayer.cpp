@@ -345,11 +345,8 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         return;
     }
 
-    AudioSpec &spec     = m_devSpec;
-    uint64_t bytesPerMs = static_cast<uint64_t>(spec.sampleRate)
-        * static_cast<uint64_t>(spec.numChannel) * static_cast<uint64_t>(spec.bytesPerSample)
-        / 1000;
-    cur->signalProperties.curDataOffset.store(static_cast<off64_t>(pos * bytesPerMs));
+    // 位置只有一个来源：解码器的段基准 + ring 段内读计数（见 AudioStreamDecoder::positionMs）。
+    // 消费端不再自己维护字节偏移，避免 seek 目标与播放进度两套口径互相打架。
     cur->signalProperties.curPositionMs = pos;
     cur->streamDecoder->seekToMs(pos);
     m_listener->onMusicPlayerPositionChanged(pos);
@@ -476,17 +473,12 @@ void MusicPlayer::Impl::consumeAudioData()
     if (got > 0) {
         m_audioDev->write(buf.data(), got);
 
+        // 单一位置来源：解码器按「段基准 + ring 段内已读字节」换算。
+        // 消费端只负责告知时间，不再累计自己的字节偏移（seek / 切歌时两套计数会漂移）。
         SignalProperties &signalProperties = cur->signalProperties;
-        AudioSpec &spec                    = m_devSpec;
-        signalProperties.curDataOffset.fetch_add(static_cast<off64_t>(got),
-                                                 std::memory_order_relaxed);
-        uint64_t consumed   = static_cast<uint64_t>(signalProperties.curDataOffset.load());
-        uint64_t bytesPerMs = static_cast<uint64_t>(spec.sampleRate)
-            * static_cast<uint64_t>(spec.numChannel) * static_cast<uint64_t>(spec.bytesPerSample)
-            / 1000;
-        signalProperties.curPositionMs = (bytesPerMs > 0) ? (consumed / bytesPerMs) : 0;
+        const uint64_t curPositionMs       = cur->streamDecoder->positionMs();
+        signalProperties.curPositionMs     = curPositionMs;
 
-        uint64_t curPositionMs = signalProperties.curPositionMs;
         if (!isShuttingDown()) {
             m_workQueue.asyncRunTask([this, curPositionMs]() {
                 if (!isShuttingDown()) {
