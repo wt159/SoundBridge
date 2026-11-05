@@ -45,12 +45,17 @@ private:
     status_t m_initCheck;
     int m_skippedPackets;
     int m_consecutiveFailures;
+    // 增量面用的输入暂存：ffmpeg 要求包尾有 AV_INPUT_BUFFER_PADDING_SIZE 的零填充，
+    // 包工厂交出的包不带。复用同一块缓冲，容量随最大包 O(1)，不按包数增长。
+    std::vector<uint8_t> m_scratch;
 
 public:
     Impl(AudioCodecID codec, AudioDecodeCallback *callback, const AudioCodecConfig &config);
     ~Impl();
     int decode(const char *data, ssize_t size);
     int decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets);
+    int decodePacket(const AudioBuffer::AudioBufferPtr &packet);
+    int flushDecode();
     status_t initCheck() { return m_initCheck; }
     int skippedPacketCount() const { return m_skippedPackets; }
 
@@ -375,8 +380,50 @@ int AudioDecode::Impl::decodePackets(const std::vector<AudioBuffer::AudioBufferP
     return 0;
 }
 
-char *AudioDecode::Impl::getAVErrorString(int errnum)
+int AudioDecode::Impl::decodePacket(const AudioBuffer::AudioBufferPtr &packet)
 {
+    if (!packet || packet->size() == 0) {
+        return 0;
+    }
+
+    // ffmpeg 的输入要求尾部零填充；包工厂的包是精确的容器块长度，这里补一份。
+    // m_scratch 复用，容量只随最大包变化（O(1)），不做每包分配。
+    const size_t size = packet->size();
+    m_scratch.resize(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    std::memcpy(m_scratch.data(), packet->data(), size);
+    std::memset(m_scratch.data() + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+    m_pkt->data = m_scratch.data();
+    m_pkt->size = static_cast<int>(size);
+    int ret     = decode(m_ctx, m_pkt, m_frame);
+    m_pkt->data = nullptr;
+    m_pkt->size = 0;
+    if (ret < 0) {
+        // 单包坏：记一次跳过并继续（规格 4.1：坏帧之后还有数据）。
+        if (skipFailedPacket(ret)) {
+            return 0;
+        }
+        LOG_ERROR(LOG_TAG, "decode packet failed: %s", getAVErrorString(ret));
+        return ret;
+    }
+    m_consecutiveFailures = 0;
+    return 0;
+}
+
+int AudioDecode::Impl::flushDecode()
+{
+    // 序列耗尽：把编解码器内部延迟的帧取干净（有损格式的尾部要靠这一步）。
+    m_pkt->data = nullptr;
+    m_pkt->size = 0;
+    int ret     = decode(m_ctx, m_pkt, m_frame);
+    if (ret < 0) {
+        LOG_ERROR(LOG_TAG, "decode flush failed: %s", getAVErrorString(ret));
+        return ret;
+    }
+    return 0;
+}
+
+char *AudioDecode::Impl::getAVErrorString(int errnum){
     av_strerror(errnum, m_error, sizeof(m_error));
     return m_error;
 }
@@ -460,6 +507,16 @@ int AudioDecode::decode(const char *data, ssize_t size)
 int AudioDecode::decodePackets(const std::vector<AudioBuffer::AudioBufferPtr> &packets)
 {
     return m_impl->decodePackets(packets);
+}
+
+int AudioDecode::decodePacket(const AudioBuffer::AudioBufferPtr &packet)
+{
+    return m_impl->decodePacket(packet);
+}
+
+int AudioDecode::flushDecode()
+{
+    return m_impl->flushDecode();
 }
 
 int AudioDecode::skippedPacketCount() const

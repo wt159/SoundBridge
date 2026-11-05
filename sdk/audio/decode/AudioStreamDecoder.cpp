@@ -250,6 +250,8 @@ StreamMetrics AudioStreamDecoder::metrics() const
     out.initScanUs             = m_initScanUs.load();
     out.packetsPulled          = m_packetsPulled.load();
     out.packetsPulledAtFirstPcm = m_packetsPulledAtFirstPcm.load();
+    // 现场重算包边界的 CPU 成本是提取器侧的独立指标（只记录、不设阈值）。
+    out.packetBoundaryMicros = m_extractor != nullptr ? m_extractor->packetBoundaryMicros() : 0;
     return out;
 }
 
@@ -629,6 +631,18 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
+    // 包边界在播放期现场重算的提取器（#63 / ADR 0003）：总数用 kUnknownPacketCount 表示，
+    // 「有包就逐包 pull」是供给形式的判据——没有这条哨兵值才退到下面的整块视图
+    // （expand 阶段的回退口，batch 之间还能绿）。FLAC / Vorbis 有自己的解码器分支，
+    // 已在上面返回；这里接的是 ffmpeg 解得的编解码器（mkv 的内层 codec 会落在这里）。
+    if (m_extractor->packetCount() == ExtractorHelper::kUnknownPacketCount) {
+        runFfmpegPacketLoop();
+        if (m_stopRequest.load()) {
+            m_state.store(StreamDecoderState::IDLE);
+        }
+        return;
+    }
+
     for (;;) {
         // 取走即清空：本分支处理 seek 的整段时间里（12 ms 静默窗口 + 重放）到达的新目标
         // 会留在槽里，处理完由下面的 `m_seekRequestMs >= 0` 接住，不会被这次处理抹掉。
@@ -981,4 +995,120 @@ AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
         return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
     }
     return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
+}
+
+std::unique_ptr<AudioDecode> AudioStreamDecoder::createFfmpegPacketDecoder()
+{
+    AudioCodecConfig config;
+    config.sampleRate    = m_srcSpec.sampleRate;
+    config.channels      = m_srcSpec.numChannel;
+    config.bitsPerSample = m_srcSpec.bitsPerSample;
+    config.bitRate       = m_extractor != nullptr ? m_extractor->getBitRate() : 0;
+    config.blockAlign    = m_extractor != nullptr ? m_extractor->getBlockAlign() : 0;
+    config.extraData     = m_extractor != nullptr ? m_extractor->getCodecExtraData() : nullptr;
+
+    std::unique_ptr<AudioDecode> decode(new AudioDecode(m_codecID, this, config));
+    if (decode->initCheck() != sdk_utils::OK) {
+        LOGE("ffmpeg packet decoder init failed, codec=%#x", m_codecID);
+        return std::unique_ptr<AudioDecode>();
+    }
+    return decode;
+}
+
+void AudioStreamDecoder::runFfmpegPacketLoop()
+{
+    // 编解码器跨整个播放任务存活（规格 4.3 所有权清单）；包工厂的 demux 面同样创建在
+    // 解码线程里、随本任务退出释放。
+    std::unique_ptr<AudioDecode> decode = createFfmpegPacketDecoder();
+    if (decode == nullptr) {
+        setError(sdk::ErrorCode::DecodeInitFailed, "ffmpeg packet decoder init failed");
+        return;
+    }
+
+    // 新任务从序列起点开始：提取器可能还停在上一任务读到的位置（提取器跨任务存活）。
+    m_extractor->seekPacketByte(0);
+    std::unique_ptr<PacketCursor> cursor(new PacketCursor(m_extractor));
+
+    for (;;) {
+        const int64_t seekMs = m_seekRequestMs.exchange(-1);
+        if (seekMs >= 0) {
+            m_state.store(StreamDecoderState::SEEKING);
+            std::this_thread::sleep_for(std::chrono::milliseconds(12));
+            applySegmentBase(static_cast<uint64_t>(seekMs));
+            m_ring->reset();
+            m_processedBytes   = 0;
+            m_seekDiscardBytes = (m_bytesPerMs == 0)
+                ? 0
+                : static_cast<size_t>(seekMs) * m_bytesPerMs;
+            m_decodedFrames = 0;
+            m_seekBaseMs    = static_cast<uint64_t>(seekMs);
+            m_abortDecode.store(false);
+            m_state.store(StreamDecoderState::DECODING);
+
+            // 顺序重放（#49 第二档）：重建编解码器，从包序列起点重新迭代到目标，
+            // 目标之前的 PCM 由 writeDecodedBytes 丢弃。峰值不随目标位置增长。
+            m_extractor->seekPacketByte(0);
+            cursor.reset(new PacketCursor(m_extractor));
+            decode = createFfmpegPacketDecoder();
+            if (decode == nullptr) {
+                setError(sdk::ErrorCode::DataCorrupted, "ffmpeg packet decoder reinit failed");
+                return;
+            }
+            continue;
+        }
+
+        if (m_stopRequest.load()) {
+            break;
+        }
+        // 取消位已置但还没取到 seek 目标：要么是 stop（上面已处理），要么新 seek 正在路上。
+        if (m_abortDecode.load()) {
+            if (m_seekRequestMs.load() >= 0) {
+                continue;
+            }
+            break;
+        }
+
+        // 背压只停在解码线程：ring 写不下就暂停拉包（连带暂停 demux）。
+        if (m_ring->availableWrite() < calculateMinWriteSpace(m_codecID)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        AudioBuffer::AudioBufferPtr packet;
+        if (!cursor->nextPacket(packet)) {
+            // 序列耗尽：先清掉编解码器内部延迟，再做 EOS 汇总。
+            const int flushRet = decode->flushDecode();
+            if (m_stopRequest.load()) {
+                break;
+            }
+            if (m_seekRequestMs.load() >= 0) {
+                m_abortDecode.store(false);
+                continue;
+            }
+            if (flushRet < 0) {
+                setError(sdk::ErrorCode::DataCorrupted, "decode flush failed");
+                break;
+            }
+            finishAtEndOfStream();
+            break;
+        }
+
+        // 分配记账挂在 alloc/free 事件上（规格第 5 节）：同一时刻只为一首曲目持一包。
+        onPacketAcquired(packet->size());
+        onPacketPulled(cursor->packetsProduced());
+        const int ret = decode->decodePacket(packet);
+        onPacketReleased(packet->size());
+
+        if (ret < 0) {
+            if (m_stopRequest.load()) {
+                break;
+            }
+            if (m_seekRequestMs.load() >= 0) {
+                m_abortDecode.store(false);
+                continue;
+            }
+            setError(sdk::ErrorCode::DataCorrupted, "decode failed");
+            break;
+        }
+    }
 }
