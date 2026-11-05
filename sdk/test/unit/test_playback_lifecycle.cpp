@@ -91,6 +91,45 @@ bool waitUntil(const std::function<bool()> &predicate, int timeoutMs)
     return predicate();
 }
 
+// 播放列表侧的接缝：不接设备、不进 10 ms push，只看任务所有权。
+struct RecordingPlayListCallback : public sdk::MusicPlayListCallback {
+    int currentBufCount  = 0;
+    int lastCurrentIndex = -1;
+
+    void putMusicPlayListCurBuf(sdk::MusicPropertiesPtr property) override
+    {
+        ++currentBufCount;
+        lastCurrentIndex = property ? static_cast<int>(property->index) : -1;
+    }
+    void updateMusicList(std::vector<sdk::MusicPropertiesPtr> &) override { }
+    void onMusicPlayListError(sdk::ErrorCode, const std::string &, int,
+                              const std::string &) override
+    {
+    }
+};
+
+// 设备规格 = 源规格（48 kHz 单声道 S16）：不触发重采样，ring 里的字节可以直接对源偏移。
+AudioSpec makeDeviceSpec()
+{
+    AudioSpec spec = makeSpec(0);
+    return spec;
+}
+
+std::shared_ptr<sdk::MusicPlayList> makePlayList(RecordingPlayListCallback &callback,
+                                                 WorkQueue &workQueue,
+                                                 const std::vector<std::string> &paths)
+{
+    AudioSpec devSpec = makeDeviceSpec();
+    std::shared_ptr<sdk::MusicPlayList> playlist
+        = std::make_shared<sdk::MusicPlayList>(&callback, &workQueue, devSpec);
+    for (size_t i = 0; i < paths.size(); ++i) {
+        std::promise<void> done;
+        playlist->addMusicWithNotify(paths[i], [&done]() { done.set_value(); });
+        done.get_future().wait();
+    }
+    return playlist;
+}
+
 } // namespace
 
 TEST_SUITE("PlaybackLifecycle")
@@ -132,5 +171,51 @@ TEST_SUITE("PlaybackLifecycle")
                              static_cast<unsigned char>(patternByteAt(expectedOffset))));
 
         decoder.stop();
+    }
+
+    TEST_CASE("switching tracks releases the previous task instead of reusing it")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+
+        RecordingPlayListCallback callback;
+        WorkQueue workQueue;
+        const std::string path = fixture.mediaPath("music.wav");
+        std::shared_ptr<sdk::MusicPlayList> playlist
+            = makePlayList(callback, workQueue, { path, path });
+        REQUIRE(playlist->getMusicCount() == 2);
+
+        // 扫描只留元数据：进列表不等于进播放任务。
+        CHECK_MESSAGE(playlist->currentTask() == nullptr, "扫描阶段就建了播放任务（预缓冲持有 ring）");
+
+        REQUIRE(playlist->startCurrentTask());
+        sdk::PlaybackTaskPtr first = playlist->currentTask();
+        REQUIRE(first != nullptr);
+        CHECK(first->trackIndex == 0);
+        REQUIRE_MESSAGE(waitUntil([&first]() { return first->ring->availableRead() > 0; }, 5000),
+                        "任务启动后 ring 里没有 PCM");
+
+        std::weak_ptr<AudioRingBuffer> weakOldRing       = first->ring;
+        std::weak_ptr<AudioStreamDecoder> weakOldDecoder = first->decoder;
+        AudioRingBuffer *oldRingAddress                  = first->ring.get();
+        first.reset(); // 测试不再持有旧任务
+
+        // 切歌 = 换一个播放任务：新 ring、新 decoder、位置从 0 起算。
+        REQUIRE(playlist->setCurrentIndexSync(1));
+        sdk::PlaybackTaskPtr second = playlist->currentTask();
+        REQUIRE(second != nullptr);
+        CHECK(second->trackIndex == 1);
+        CHECK_MESSAGE(second->ring.get() != oldRingAddress, "切歌复用了上一首的 ring 实例");
+        CHECK_MESSAGE(second->ring->readPos() == 0, "新任务的 ring 段内读计数没有归零");
+        CHECK_MESSAGE(second->decoder->positionMs() == 0, "新任务的位置没有从 0 起算");
+
+        // 旧任务必须在新任务启动前就被销毁：ring 不可复用，decode 线程也必须已经 join
+        // （否则销毁 ring 就是让后台线程写已释放内存，这条断言会以崩溃或写穿的形式失败）。
+        CHECK_MESSAGE(weakOldRing.expired(), "旧任务的 ring 没有在切歌时释放");
+        CHECK_MESSAGE(weakOldDecoder.expired(), "旧任务的 decoder 没有在切歌时销毁（join 未完成）");
+
+        playlist->stopCurrentTask();
     }
 }

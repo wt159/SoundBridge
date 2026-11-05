@@ -32,10 +32,14 @@ public:
     AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &devSpec);
     ~AudioStreamDecoder();
 
+    // 启动一次播放任务：先 stop() + join 上一次任务，再起一个新的解码线程。
+    // 每次 start() 必定是新线程；join 由调用线程在起线程之前完成，禁止 detach / 后台 join。
+    // 新任务自带新的 ring（规格 4.3），所以这里不清 ring：reset() 由新解码线程的第一件事做。
     sdk_utils::status_t start(ExtractorHelper *extractor);
     // startThread=false 只做初始化（供只检查状态/生命周期的场合），不会产出任何数据：
     // 同步解码入口已按 #18 删除，解码只能由 threadFunc 驱动。
     sdk_utils::status_t start(ExtractorHelper *extractor, bool startThread);
+    // 置取消位并 join。幂等；join 只在调用它的线程上发生。
     void stop();
     void seekToMs(uint64_t targetMs);
 

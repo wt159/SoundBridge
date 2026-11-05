@@ -182,7 +182,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_decodedRate   = static_cast<uint32_t>(m_srcSpec.sampleRate);
     m_pcmFrameBytes = static_cast<size_t>(m_srcSpec.numChannel)
         * static_cast<size_t>(m_srcSpec.bytesPerSample);
-    m_ring->reset();
+    // 这里刻意**不**清 ring：reset() 只能由解码线程发起（规格 4.4），
+    // 新段的清零由 threadFunc() 的第一件事完成。生产链每次播放任务都用新 ring，
+    // 所以控制线程返回时消费端不可能从这颗 ring 里读到上一首的 PCM。
     if (startThread) {
         m_state.store(StreamDecoderState::DECODING);
         m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
@@ -433,6 +435,12 @@ void AudioStreamDecoder::threadFunc()
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;
     }
+
+    // 新段起点的清零只在这一处：解码线程是 ring 的唯一生产者，也是唯一能 reset 的人
+    // （规格 4.4）。顺序不可反——段基准先归零，再清 ring；消费端此刻处于
+    // switching / SEEKING 静默窗口，不读 ring。
+    applySegmentBase(0);
+    m_ring->reset();
 
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flac(this);
