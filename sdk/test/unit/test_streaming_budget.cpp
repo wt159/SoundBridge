@@ -401,21 +401,34 @@ TEST_SUITE("StreamingBudget")
             return;
         }
 
-        const PlaybackObservation observation
-            = playWholeTrack(fixture.mediaDir(), name, ".flac", 300000);
-        REQUIRE(observation.opened);
-        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
-                      "FLAC 没有走到 EOS，状态 " << static_cast<int>(observation.endState));
+        // 提取器跨任务存活（MusicPlayList 按曲目持有它），所以同一个提取器要连播两次：
+        // 第二次必须仍从流头开始——包序列的起点不能停在上一任务读到的位置。
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".flac", source, extractor));
+        REQUIRE(extractor != nullptr);
+
+        const PlaybackObservation first = playWithExtractor(extractor.get(), 300000);
+        REQUIRE(first.opened);
+        CHECK_MESSAGE(first.endState == StreamDecoderState::EOS,
+                      "FLAC 没有走到 EOS，状态 " << static_cast<int>(first.endState));
         // STREAMINFO totalSamples 13128276 × 2 声道 × 2 字节
-        CHECK(observation.bytes == 52513104);
+        CHECK(first.bytes == 52513104);
         // 逐包供给的证据：一首 297 s 的曲目要拉上千包，不是「整首一包」。
-        CHECK(observation.metrics.packetsPulled > 1000);
-        MESSAGE(name << ": packets " << observation.metrics.packetsPulled
-                     << ", peakHeldBytes " << observation.metrics.peakHeldBytes
-                     << ", startToFirstPcmUs " << observation.metrics.startToFirstPcmUs
-                     << ", deliveredBytes " << observation.bytes << ", error "
-                     << static_cast<int>(observation.error) << " (" << observation.errorDetail
-                     << ")");
+        CHECK(first.metrics.packetsPulled > 1000);
+
+        const PlaybackObservation second = playWithExtractor(extractor.get(), 300000);
+        REQUIRE(second.opened);
+        CHECK(second.endState == StreamDecoderState::EOS);
+        CHECK(second.bytes == 52513104);
+        CHECK(second.metrics.packetsPulled == first.metrics.packetsPulled);
+
+        MESSAGE(name << ": packets " << first.metrics.packetsPulled
+                     << ", peakHeldBytes " << first.metrics.peakHeldBytes
+                     << ", startToFirstPcmUs " << first.metrics.startToFirstPcmUs
+                     << ", deliveredBytes " << first.bytes << ", replay bytes "
+                     << second.bytes << ", error " << static_cast<int>(first.error) << " ("
+                     << first.errorDetail << ")");
     }
 
     TEST_CASE("silence fill counter only covers the silence windows")
