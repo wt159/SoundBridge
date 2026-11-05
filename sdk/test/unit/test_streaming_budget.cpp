@@ -212,4 +212,52 @@ TEST_SUITE("StreamingBudget")
         CHECK_MESSAGE(seekRun.metrics.silenceFills > 0, "SEEKING 窗口里的静音填充没有计数");
         CHECK_MESSAGE(seekRun.bytes > 0, "seek 之后没有继续交付 PCM");
     }
+
+    TEST_CASE("instrument readings are reproducible across two runs")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists(kShortOgg) || !fixture.exists(kLongWma)) {
+            std::printf("[SKIP] %s / %s (素材未随仓库下发)\n", kShortOgg, kLongWma);
+            return;
+        }
+
+        const struct {
+            const char *fileName;
+            const char *extension;
+            int timeoutMs;
+        } tracks[] = {
+            { kShortOgg, ".ogg", 60000 },
+            { kLongWma, ".wma", 180000 },
+        };
+
+        for (size_t i = 0; i < sizeof(tracks) / sizeof(tracks[0]); ++i) {
+            INFO(std::string(tracks[i].fileName));
+            const PlaybackObservation first
+                = playWholeTrack(fixture.mediaDir(), tracks[i].fileName, tracks[i].extension,
+                                 tracks[i].timeoutMs);
+            const PlaybackObservation second
+                = playWholeTrack(fixture.mediaDir(), tracks[i].fileName, tracks[i].extension,
+                                 tracks[i].timeoutMs);
+            REQUIRE(first.opened);
+            REQUIRE(second.opened);
+
+            // 计数型仪表必须逐位可复现；计时型只要求两次都记上了（时长受机器负载影响）。
+            CHECK_MESSAGE(first.metrics.peakHeldBytes == second.metrics.peakHeldBytes,
+                          "分配记账峰值两次不一致: " << first.metrics.peakHeldBytes << " vs "
+                                                    << second.metrics.peakHeldBytes);
+            CHECK_MESSAGE(first.metrics.silenceFills == second.metrics.silenceFills,
+                          "静音填充次数两次不一致");
+            CHECK(first.metrics.startToFirstPcmUs > 0);
+            CHECK(second.metrics.startToFirstPcmUs > 0);
+            CHECK(first.metrics.initScanUs > 0);
+            CHECK(second.metrics.initScanUs > 0);
+
+            MESSAGE(tracks[i].fileName << ": peakHeldBytes " << first.metrics.peakHeldBytes << " / "
+                                       << second.metrics.peakHeldBytes << ", initScanUs "
+                                       << first.metrics.initScanUs << " / "
+                                       << second.metrics.initScanUs << ", startToFirstPcmUs "
+                                       << first.metrics.startToFirstPcmUs << " / "
+                                       << second.metrics.startToFirstPcmUs);
+        }
+    }
 }
