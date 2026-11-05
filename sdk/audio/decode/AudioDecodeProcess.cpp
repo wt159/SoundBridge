@@ -62,6 +62,26 @@ void AudioDecodeProcess::mergeDecodeBuffer(AudioBufferPtr &outBuf,
 status_t AudioDecodeProcess::init()
 {
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
+        // 原始 PCM 不需要解码。包工厂有包就逐包拼出整段（#61：wav / aiff 的 init
+        // 不再持有整首 payload，整块视图也就没有来源），没有包才退回旧形式。
+        // 仪器拼整段是它的职责；生产链不这么做（规格第 3 节 / ADR 0003）。
+        if (m_extractor->packetCount() != 0) {
+            PacketCursor cursor(m_extractor);
+            AudioBuffer::AudioBufferPtr packet;
+            while (cursor.nextPacket(packet)) {
+                m_decBufVec.push_back(packet);
+                ++m_payloadPacketCount;
+            }
+            if (m_decBufVec.empty()) {
+                LOGE("packet supply yielded no payload");
+                return INVALID_OPERATION;
+            }
+            mergeDecodeBuffer(m_decBuf, m_decBufVec);
+            m_decBufVec.clear();
+            m_decSize = m_decBuf->size();
+            return NO_ERROR;
+        }
+
         AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
         if (extPtr == nullptr) {
             LOGE("getMetaData failed");

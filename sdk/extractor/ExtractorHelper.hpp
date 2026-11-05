@@ -78,14 +78,16 @@ public:
     // —— 包工厂的单包面（expand 阶段，#57 / ADR 0003）——
     // 解码侧按需 pull 单包，整块视图只是按需拼合的产物；两个方法必须 O(1)：
     // 不允许为了「交出第 i 包」复制包表、拼合负载或重建索引。
-    // 默认实现把**按需拼合的整块视图**当作一整包：wav / mp3 / flac / ogg / aiff / aac
-    // 这些提取器本来就只持有整块 payload，边界就是整块本身，与旧路径 decode(data, size)
+    // 默认实现把**按需拼合的整块视图**当作一整包：mp3 / ogg / aac 这些尚未迁移的提取器
+    // 本来就只持有整块 payload，边界就是整块本身，与旧路径 decode(data, size)
     // 完全一致。持有逐包表的提取器（ape / asf / m4a / mkv）覆写这两个方法，零复制交出旧边界，
-    // 调用方因此不需要迁移任何东西。
+    // 调用方因此不需要迁移任何东西。wav / aiff 与 FLAC 已在播放期现场切片（#60 / #61），
+    // 不经过整块视图。
     //
-    // 未知总数（#60 起）：包边界在播放期按 offset 现场重算的格式（FLAC 的帧扫描）事先
-    // 不知道有多少包。这类提取器让 packetCount() 返回 kUnknownPacketCount，序列以
-    // packetAt() 返回 nullptr 结束——「读完为止」，不建任何随包数增长的索引。
+    // 未知总数（#60 起）：包边界在播放期按 offset 现场重算的格式（FLAC 的帧扫描、
+    // wav / aiff 的定长切片）事先不知道有多少包。这类提取器让 packetCount() 返回
+    // kUnknownPacketCount，序列以 packetAt() 返回 nullptr 结束——「读完为止」，
+    // 不建任何随包数增长的索引。
     static const size_t kUnknownPacketCount = static_cast<size_t>(-1);
 
     virtual size_t packetCount() { return getMetaData() == nullptr ? 0 : 1; }

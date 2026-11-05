@@ -22,6 +22,38 @@
 
 namespace {
 
+// AIFF 的 PCM 是大端，读取口径：从 FORM 之后按块走，SSND 块的数据在块头 + 8
+// （chunk id / size / offset / blockSize）之后。判据用它当独立预言机，
+// 证明提取器逐包交出之前做了字节序转换（整块视图时代是整段换一次）。
+std::vector<char> readAiffSoundData(const std::string &path)
+{
+    std::vector<char> sound;
+    FileSource source(path.c_str());
+    off64_t size = 0;
+    if (source.initCheck() != sdk_utils::OK || source.getSize(&size) != sdk_utils::OK
+        || size <= 0) {
+        return sound;
+    }
+    std::vector<char> file(static_cast<size_t>(size));
+    if (source.readAt(0, file.data(), file.size()) != static_cast<ssize_t>(size)) {
+        return sound;
+    }
+
+    size_t offset = 12;
+    while (offset + 8 <= file.size()) {
+        const unsigned char *head = reinterpret_cast<const unsigned char *>(file.data() + offset);
+        const uint32_t chunkSize = (static_cast<uint32_t>(head[4]) << 24)
+            | (static_cast<uint32_t>(head[5]) << 16) | (static_cast<uint32_t>(head[6]) << 8)
+            | static_cast<uint32_t>(head[7]);
+        if (std::memcmp(head, "SSND", 4) == 0 && offset + 16 <= file.size()) {
+            sound.assign(file.begin() + static_cast<std::ptrdiff_t>(offset + 16), file.end());
+            return sound;
+        }
+        offset += 8 + chunkSize + (chunkSize & 1);
+    }
+    return sound;
+}
+
 // 包工厂替身：同时给出「逐包表」与「整块视图」两种旧形式，
 // 用来锁住「游标按包走」和「没有包表时整块就是一包」两条契约。
 class PacketTableExtractor : public ExtractorHelper {
@@ -307,5 +339,128 @@ TEST_SUITE("PacketFactory")
         CHECK(packet->size() == joined->size());
         CHECK(std::memcmp(packet->data(), joined->data(), joined->size()) == 0);
         CHECK(cursor.nextPacket(packet) == false);
+    }
+
+    // wav / aiff 的增量包面（票面 #61 / 规格第 9 节 E8）。
+    //
+    // 原始 PCM 没有帧头可认，包边界只能是「定长切片」，长度对齐到帧（声道 × 字节宽）：
+    // 每包都是整数帧，逐包拼接与旧整块视图逐位一致。init 期只留 O(1) 摘要
+    //（spec / 标称时长 / 数据起点与长度 / 截断标志），不读负载、不建索引；
+    // 总数事先未知（读到为止），与 FLAC 一样用 kUnknownPacketCount 表示。
+    TEST_CASE("wav and aiff packet factory yields pcm slices without holding the payload")
+    {
+        RealMediaFixture fixture;
+        const struct {
+            const char *name;
+            const char *extension;
+        } cases[] = {
+            { "music.wav", ".wav" },
+            { "俱乐部音乐循环-Freesound.aiff", ".aiff" },
+        };
+
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            const std::string name(cases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            std::shared_ptr<FileSource> source;
+            std::unique_ptr<ExtractorHelper> extractor;
+            REQUIRE(fixture.create(name, cases[i].extension, source, extractor));
+            REQUIRE(extractor != nullptr);
+            REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+            const AudioSpec spec = extractor->getAudioSpec();
+            REQUIRE(spec.sampleRate > 0);
+            REQUIRE(spec.numChannel > 0);
+            REQUIRE(spec.bytesPerSample > 0);
+            const size_t frameBytes = static_cast<size_t>(spec.numChannel)
+                * static_cast<size_t>(spec.bytesPerSample);
+            const size_t payloadBytes = static_cast<size_t>(spec.samples) * frameBytes;
+            REQUIRE(payloadBytes > 0);
+
+            // init 只留 O(1) 摘要：构造完成时提取器不持有任何 payload 或索引。
+            CHECK(extractor->heldPayloadBytes() == 0);
+            // 未知总数用哨兵表示；0 的含义是「没有包」，那会让解码侧退回全量形式。
+            CHECK(extractor->packetCount() != 0);
+
+            PacketCursor cursor(extractor.get());
+            AudioBuffer::AudioBufferPtr packet;
+            size_t count          = 0;
+            size_t totalBytes     = 0;
+            size_t maxPacketBytes = 0;
+            size_t heldAfterFirst = 0;
+            bool wholeFrames      = true;
+            bool contiguous       = true;
+            off64_t expectedStart = -1;
+            std::vector<char> firstPacket;
+
+            while (cursor.nextPacket(packet)) {
+                REQUIRE(packet != nullptr);
+                REQUIRE(packet->size() > 0);
+                // 切片首尾相接：本包的起点就是上一包的终点（位置只增不减，O(1) 一个偏移）。
+                const off64_t end = extractor->packetBytePosition();
+                const off64_t start = end - static_cast<off64_t>(packet->size());
+                if (expectedStart >= 0 && start != expectedStart) {
+                    contiguous = false;
+                }
+                expectedStart = end;
+                if (count == 0) {
+                    firstPacket.assign(packet->data(), packet->data() + packet->size());
+                    heldAfterFirst = extractor->heldPayloadBytes();
+                }
+                ++count;
+                totalBytes += packet->size();
+                maxPacketBytes = std::max(maxPacketBytes, packet->size());
+                if (packet->size() % frameBytes != 0) {
+                    wholeFrames = false;
+                }
+            }
+            const size_t heldAtEnd = extractor->heldPayloadBytes();
+
+            // 一包一片：绝不是「整首一包」（wav 795 KB / aiff 4.8 MB 都远大于 64 KB）。
+            CHECK(count > 1);
+            CHECK(wholeFrames);
+            CHECK(contiguous);
+            CHECK(maxPacketBytes <= 64 * 1024);
+            // 覆盖整段负载：切片首尾相接，拼起来就是整首 PCM。
+            CHECK(totalBytes == payloadBytes);
+            // 持有量不随包数增长：第 1 包之后与序列末尾都是 0（包归解码侧记账）。
+            CHECK(heldAfterFirst == 0);
+            CHECK(heldAtEnd == 0);
+
+            // 提取器跨任务存活：重新遍历必须回到数据起点，给出同一段负载。
+            PacketCursor replay(extractor.get());
+            size_t replayCount = 0;
+            size_t replayBytes = 0;
+            while (replay.nextPacket(packet)) {
+                ++replayCount;
+                replayBytes += packet->size();
+            }
+            CHECK(replayCount == count);
+            CHECK(replayBytes == totalBytes);
+
+            // aiff 的 PCM 是大端：必须在交出之前换成主机字节序（旧形式是整段换一次）。
+            if (std::string(cases[i].extension) == ".aiff") {
+                const std::vector<char> raw = readAiffSoundData(fixture.mediaPath(name));
+                REQUIRE(raw.size() >= firstPacket.size());
+                bool hostEndian = true;
+                for (size_t k = 0; k + static_cast<size_t>(spec.bytesPerSample) <= firstPacket.size();
+                     k += static_cast<size_t>(spec.bytesPerSample)) {
+                    for (int b = 0; b < spec.bytesPerSample; ++b) {
+                        if (firstPacket[k + static_cast<size_t>(b)]
+                            != raw[k + static_cast<size_t>(spec.bytesPerSample - 1 - b)]) {
+                            hostEndian = false;
+                        }
+                    }
+                }
+                CHECK_MESSAGE(hostEndian, "aiff 首包没有换成主机字节序");
+            }
+
+            MESSAGE(name << ": packets " << count << ", totalBytes " << totalBytes
+                         << ", maxPacketBytes " << maxPacketBytes << ", held " << heldAtEnd);
+        }
     }
 }

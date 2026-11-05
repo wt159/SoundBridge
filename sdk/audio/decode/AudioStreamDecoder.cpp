@@ -629,6 +629,70 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
+    if (m_codecID == AUDIO_CODEC_ID_NONE && m_extractor->packetCount() != 0) {
+        // 逐包供给（#61）：wav / aiff 的负载是原始 PCM，不需要解码，包边界由提取器
+        // 按 offset 现场切片。与 FLAC 分支同形——包游标在解码线程里创建、随任务退出释放
+        // （规格 4.3）；「有包就逐包 pull」是供给形式的判据，没有包才退回下面的整块视图
+        // （expand 阶段的回退口，batch 之间还能绿）。
+        PacketCursor cursor(m_extractor);
+        AudioBuffer::AudioBufferPtr packet;
+        while (!m_stopRequest.load()) {
+            const int64_t seekMs = m_seekRequestMs.exchange(-1);
+            if (seekMs >= 0) {
+                m_state.store(StreamDecoderState::SEEKING);
+                std::this_thread::sleep_for(std::chrono::milliseconds(12));
+                // 位置口径与丢弃口径与通用分支一致：ring 里放的是「写进去的那一档」PCM，
+                // m_seekDiscardBytes 数的是重采样之前的源格式 PCM，两者不互相换算。
+                applySegmentBase(static_cast<uint64_t>(seekMs));
+                m_ring->reset();
+                m_processedBytes = 0;
+                m_seekDiscardBytes
+                    = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
+                m_decodedFrames = 0;
+                m_seekBaseMs    = static_cast<uint64_t>(seekMs);
+                m_abortDecode.store(false);
+                // 顺序重放档（规格第 6 节）：包序列回到起点，目标之前的 PCM
+                // 由 writeDecodedBytes 逐字节丢掉——不新建整首 payload 缓存。
+                cursor.rewind();
+                m_state.store(StreamDecoderState::DECODING);
+                continue;
+            }
+
+            // 背压停在解码线程：ring 写不下就先不拉下一包（连带暂停提取器）。
+            if (m_ring->availableWrite() < calculateMinWriteSpace(m_codecID)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+
+            if (!cursor.nextPacket(packet)) {
+                finishAtEndOfStream();
+                break;
+            }
+            // 记账挂在 alloc / free 两个事件上（#60 的口径）：同一时刻只为一首曲目持有一包。
+            onPacketAcquired(packet->size());
+            onPacketPulled(cursor.packetsProduced());
+            const bool written = writeDecodedBytes(packet->data(), packet->size());
+            onPacketReleased(packet->size());
+            packet.reset();
+
+            if (!written) {
+                if (m_stopRequest.load()) {
+                    break;
+                }
+                if (m_seekRequestMs.load() >= 0) {
+                    continue;
+                }
+                setError(sdk::ErrorCode::DataCorrupted, "decode failed");
+                break;
+            }
+        }
+
+        if (m_stopRequest.load()) {
+            m_state.store(StreamDecoderState::IDLE);
+        }
+        return;
+    }
+
     for (;;) {
         // 取走即清空：本分支处理 seek 的整段时间里（12 ms 静默窗口 + 重放）到达的新目标
         // 会留在槽里，处理完由下面的 `m_seekRequestMs >= 0` 接住，不会被这次处理抹掉。

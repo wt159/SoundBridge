@@ -59,12 +59,53 @@ WAVExtractor::WAVExtractor(DataSourceBase *source)
     , m_dataSize(0)
     , m_audioSpec()
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
-    , m_metaBuf()
+    , m_reader()
+    , m_nextPacketIndex(0)
 {
     m_initCheck = init();
 }
 
 WAVExtractor::~WAVExtractor() { }
+
+PcmPacketReader *WAVExtractor::reader()
+{
+    if (m_reader == nullptr && m_dataSource != nullptr) {
+        const size_t frameBytes = static_cast<size_t>(m_audioSpec.numChannel)
+            * static_cast<size_t>(m_audioSpec.bytesPerSample);
+        m_reader.reset(new PcmPacketReader(m_dataSource, m_dataOffset,
+                                           static_cast<off64_t>(m_dataSize), frameBytes));
+        m_nextPacketIndex = 0;
+    }
+    return m_reader.get();
+}
+
+AudioBuffer::AudioBufferPtr WAVExtractor::packetAt(size_t index)
+{
+    PcmPacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return nullptr;
+    }
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到数据块起点重来
+    //（新任务与顺序重放 seek 都从这里起）。其余跳跃不接受。
+    if (index == 0) {
+        packetReader->rewind();
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
+    }
+
+    AudioBuffer::AudioBufferPtr packet;
+    if (!packetReader->nextPacket(packet)) {
+        return nullptr;
+    }
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+off64_t WAVExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
+}
 
 status_t WAVExtractor::init()
 {
@@ -255,12 +296,8 @@ status_t WAVExtractor::init()
                 }
 
                 m_audioCodecID = AUDIO_CODEC_ID_NONE;
-                m_metaBuf      = AudioBuffer::AudioBufferPtr(new AudioBuffer(m_dataSize));
-                if (m_dataSource->readAt(m_dataOffset, m_metaBuf->data(), m_dataSize)
-                    < (ssize_t)m_dataSize) {
-                    LOG_ERROR(LOG_TAG, "readAt failed");
-                    return NO_INIT;
-                }
+                // payload 不再在 init 期整首装载（ADR 0003：只留 O(1) 摘要），
+                // 负载由 packetAt() 在播放期按 offset 现场切片读出。
                 normalizeAudioSpec(m_audioSpec);
                 return OK;
             }
