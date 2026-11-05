@@ -119,6 +119,8 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder start with null ring or extractor");
         return sdk_utils::INVALID_OPERATION;
     }
+    // 观测点：提取器 init（只读扫描）耗时由工厂量好，这里抄进本任务的仪表。
+    m_initScanUs.store(m_extractor->initScanMicros());
 
     m_srcSpec    = m_extractor->getAudioSpec();
     m_codecID    = m_extractor->getAudioCodecID();

@@ -5,6 +5,7 @@
 #include "ByteUtils.h"
 #include "DataSource.hpp"
 #include "ErrorUtils.h"
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -115,6 +116,13 @@ public:
     virtual off64_t getDataSize() { return 0; }
     virtual off64_t getAudioDataOffset() { return 0; }
 
+    // 观测点（规格第 5 节 / 票面 #56）：提取器 init 的只读扫描耗时，单位微秒。
+    // 由 ExtractorFactory 在构造后回填（构造就是 init），解码器在 start() 时抄进 StreamMetrics。
+    // 已知代价：当前 init 仍是「全量装载 payload」，所以这个数现在等于「启动开销」，
+    // 不是纯粹的只读扫描；E2 把 init 改成只读扫描 + O(1) 摘要后，同一测量点自动变准。
+    void setInitScanMicros(uint64_t micros) { m_initScanMicros = micros; }
+    uint64_t initScanMicros() const { return m_initScanMicros; }
+
     // 提取器**能确定**文件被截断时返回 true，与 AudioSpec 一样是事实上报、不是处置：
     // 典型是 wav/aiff「声明的数据长度 > 文件实际剩余」，短读在字节层面可判定，
     // 但这种量级的缺口（128 字节 ≈ 0.016%）低于 T4 的 5pp 阈值，不能靠时长比对发现。
@@ -137,4 +145,6 @@ private:
 
     // getMetaData() 的拼接缓存：只有被请求过才分配，提取器自己不保存副本。
     AudioBuffer::AudioBufferPtr m_joinedMetaBuf;
+    // init 只读扫描耗时（观测点，见上）。
+    uint64_t m_initScanMicros = 0;
 };

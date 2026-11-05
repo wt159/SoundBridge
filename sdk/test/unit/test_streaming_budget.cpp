@@ -122,18 +122,39 @@ TEST_SUITE("StreamingBudget")
         }
     } // namespace
 
-    TEST_CASE("start-to-first-pcm timestamp is readable on the playback path")
+    TEST_CASE("instruments are readable on the playback path for short and long tracks")
     {
         RealMediaFixture fixture;
-        if (!fixture.exists(kShortOgg)) {
-            std::printf("[SKIP] %s (素材未随仓库下发)\n", kShortOgg);
+        if (!fixture.exists(kShortOgg) || !fixture.exists(kLongWma)) {
+            std::printf("[SKIP] %s / %s (素材未随仓库下发)\n", kShortOgg, kLongWma);
             return;
         }
 
-        PlaybackObservation observation
-            = playWholeTrack(fixture.mediaDir(), kShortOgg, ".ogg", 60000);
-        REQUIRE(observation.opened);
-        CHECK(observation.bytes > 0);
-        CHECK(observation.metrics.startToFirstPcmUs > 0);
+        const struct {
+            const char *fileName;
+            const char *extension;
+            int timeoutMs;
+        } tracks[] = {
+            { kShortOgg, ".ogg", 60000 },  // 3.7 s
+            { kLongWma, ".wma", 180000 },  // 259 s，约 70 倍
+        };
+
+        for (size_t i = 0; i < sizeof(tracks) / sizeof(tracks[0]); ++i) {
+            INFO(std::string(tracks[i].fileName));
+            PlaybackObservation observation
+                = playWholeTrack(fixture.mediaDir(), tracks[i].fileName, tracks[i].extension,
+                                 tracks[i].timeoutMs);
+            REQUIRE(observation.opened);
+            CHECK_MESSAGE(observation.bytes > 0, "消费端没有拿到任何 PCM");
+            CHECK_MESSAGE(observation.metrics.startToFirstPcmUs > 0,
+                          "start→首帧时间戳没有记上");
+            CHECK_MESSAGE(observation.metrics.initScanUs > 0, "init 只读扫描耗时没有记上");
+            MESSAGE(tracks[i].fileName
+                    << ": initScanUs " << observation.metrics.initScanUs
+                    << ", startToFirstPcmUs " << observation.metrics.startToFirstPcmUs
+                    << ", peakHeldBytes " << observation.metrics.peakHeldBytes
+                    << ", silenceFills " << observation.metrics.silenceFills
+                    << ", deliveredBytes " << observation.bytes);
+        }
     }
 }
