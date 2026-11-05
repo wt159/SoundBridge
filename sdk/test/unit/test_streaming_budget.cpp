@@ -59,7 +59,31 @@ TEST_SUITE("StreamingBudget")
             sdk::ErrorCode error         = sdk::ErrorCode::Ok;
             std::string errorDetail;
             StreamMetrics metrics        = {};
+            // seek 精度（#61）：seek 之后的交付量单独记账，不与 seek 之前的字节混在一起。
+            // 目标是「期望的已消费 PCM 时间」（与 positionMs 同源），所以量的是消费端拿到的 PCM。
+            bool seekIssued                  = false;
+            bool seekCompleted               = false;
+            uint64_t firstPcmMsAfterSeek     = 0;
+            size_t bytesAfterSeek            = 0;
         };
+
+        // 把 ring 里可读的 PCM 全部取走；counter 非空时累加取走的字节数。
+        size_t drainRing(AudioRingBuffer &ring, std::vector<char> &buf, size_t *counter)
+        {
+            size_t total = 0;
+            while (ring.availableRead() > 0) {
+                size_t once = std::min(buf.size(), ring.availableRead());
+                size_t got  = ring.read(buf.data(), once);
+                if (got == 0) {
+                    break;
+                }
+                total += got;
+            }
+            if (counter != nullptr) {
+                *counter += total;
+            }
+            return total;
+        }
         // 静默窗口：生产消费端（MusicPlayer::Impl::shouldFillSilence）在其中写静音而不是读 ring。
         // 套件只负责认这个窗口，静音计数由解码器自己的仪表记账。
         bool isSilenceWindow(const AudioStreamDecoder &decoder)
@@ -81,8 +105,11 @@ TEST_SUITE("StreamingBudget")
         // 把一次播放跑到底：解码器 + ring + 消费端，与生产链同一个接缝。
         // 提取器由调用方给出（生命周期由调用方保证），这样可以拿同一个解码器去跑
         // 两种供给形式（逐包 / 整块），按判据对照。
+        // devSpec 默认是 44.1 kHz / 2ch / S16（与 FLAC 素材一致，不重采样）；
+        // 素材规格不同时由调用方传入源规格，判据才能直接按字节数比对交付量。
         PlaybackObservation playWithExtractor(ExtractorHelper *extractor, int timeoutMs,
-                                              const PlaybackPlan &plan = PlaybackPlan())
+                                              const PlaybackPlan &plan = PlaybackPlan(),
+                                              const AudioSpec &devSpec    = makeDevSpec())
         {
             PlaybackObservation observation;
             if (extractor == nullptr || extractor->initCheck() != sdk_utils::OK) {
@@ -90,7 +117,7 @@ TEST_SUITE("StreamingBudget")
             }
 
             AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
-            AudioStreamDecoder decoder(&ring, makeDevSpec());
+            AudioStreamDecoder decoder(&ring, devSpec);
             if (decoder.start(extractor) != sdk_utils::OK) {
                 observation.endState = decoder.state();
                 observation.metrics  = decoder.metrics();
@@ -103,9 +130,30 @@ TEST_SUITE("StreamingBudget")
             std::vector<char> buf(kChunkBytes);
             bool probed  = false;
             bool seeked  = false;
-            int elapsed  = 0;
+            // seek 落地之前一律不读 ring：旧段的残留由解码线程 reset() 丢弃，
+            // 不计入「seek 之后交付了多少」。落地信号 = 位置回到目标（段基准 + 段内读计数归零）。
+            const bool hasSeek = plan.seekAfterBytes > 0;
+            bool counting      = true;
+            int elapsed        = 0;
             while (elapsed <= timeoutMs) {
-                if (isSilenceWindow(decoder)) {
+                if (!seeked && hasSeek && observation.bytes >= plan.seekAfterBytes) {
+                    seeked                 = true;
+                    counting               = false;
+                    observation.seekIssued = true;
+                    decoder.seekToMs(plan.seekTargetMs);
+                }
+
+                if (!counting) {
+                    if (isSilenceWindow(decoder)) {
+                        decoder.noteSilenceFill();
+                    }
+                    if (decoder.positionMs() == plan.seekTargetMs) {
+                        // 首帧时间：ring 已被解码线程 reset，此刻的位置就是目标段起点。
+                        counting                        = true;
+                        observation.seekCompleted       = true;
+                        observation.firstPcmMsAfterSeek = decoder.positionMs();
+                    }
+                } else if (isSilenceWindow(decoder)) {
                     // 静默窗口里消费端交付静音：交给解码器记账（与生产同一个计数入口）。
                     decoder.noteSilenceFill();
                 } else {
@@ -113,20 +161,10 @@ TEST_SUITE("StreamingBudget")
                         probed = true;
                         decoder.noteSilenceFill();
                     }
-                    while (ring.availableRead() > 0) {
-                        size_t once = std::min(buf.size(), ring.availableRead());
-                        size_t got  = ring.read(buf.data(), once);
-                        if (got == 0) {
-                            break;
-                        }
-                        observation.bytes += got;
-                    }
-                }
-
-                if (!seeked && plan.seekAfterBytes > 0
-                    && observation.bytes >= plan.seekAfterBytes) {
-                    seeked = true;
-                    decoder.seekToMs(plan.seekTargetMs);
+                    // 只有「seek 已发出且已落地」之后读到的字节才算 seek 后的交付量。
+                    size_t *afterSeek
+                        = (seeked && counting) ? &observation.bytesAfterSeek : nullptr;
+                    observation.bytes += drainRing(ring, buf, afterSeek);
                 }
 
                 StreamDecoderState state = decoder.state();
@@ -144,14 +182,8 @@ TEST_SUITE("StreamingBudget")
             if (observation.endState == StreamDecoderState::EOS) {
                 // EOS 只是「解码侧不再产出」，ring 里可能还有没被消费掉的尾巴：
                 // 判据要比「整首解出多少字节」，就把尾巴一起排掉。
-                while (ring.availableRead() > 0) {
-                    size_t once = std::min(buf.size(), ring.availableRead());
-                    size_t got  = ring.read(buf.data(), once);
-                    if (got == 0) {
-                        break;
-                    }
-                    observation.bytes += got;
-                }
+                size_t *afterSeek = (seeked && counting) ? &observation.bytesAfterSeek : nullptr;
+                observation.bytes += drainRing(ring, buf, afterSeek);
             }
             decoder.stop();
             return observation;
@@ -159,7 +191,8 @@ TEST_SUITE("StreamingBudget")
 
         PlaybackObservation playWholeTrack(const std::string &mediaDir, const std::string &fileName,
                                           const char *extension, int timeoutMs,
-                                          const PlaybackPlan &plan = PlaybackPlan())
+                                          const PlaybackPlan &plan = PlaybackPlan(),
+                                          const AudioSpec &devSpec = makeDevSpec())
         {
             const std::string path = mediaDir + "/" + fileName;
 
@@ -170,7 +203,7 @@ TEST_SUITE("StreamingBudget")
             // source 的生命周期必须覆盖整个解码过程：提取器只持它的裸指针。
             std::shared_ptr<ExtractorHelper> extractor(
                 ExtractorFactory::createExtractor(&source, extension, true));
-            return playWithExtractor(extractor.get(), timeoutMs, plan);
+            return playWithExtractor(extractor.get(), timeoutMs, plan, devSpec);
         }
     } // namespace
 
@@ -230,7 +263,8 @@ TEST_SUITE("StreamingBudget")
         };
 
         // 只量包形状，不解码：P 必须来自该素材的实测，不能写死常量。
-        PacketProfile measurePacketProfile(const std::string &mediaDir, const char *name)
+        PacketProfile measurePacketProfile(const std::string &mediaDir, const char *name,
+                                           const char *extension)
         {
             PacketProfile profile;
             FileSource source((mediaDir + "/" + name).c_str());
@@ -238,7 +272,7 @@ TEST_SUITE("StreamingBudget")
                 return profile;
             }
             std::shared_ptr<ExtractorHelper> extractor(
-                ExtractorFactory::createExtractor(&source, ".flac", true));
+                ExtractorFactory::createExtractor(&source, extension, true));
             if (extractor == nullptr || extractor->initCheck() != sdk_utils::OK) {
                 return profile;
             }
@@ -251,11 +285,42 @@ TEST_SUITE("StreamingBudget")
             return profile;
         }
 
-        // 旧全量供给形式（反例）：整首压缩负载常驻、一次性交给解码器。
+        // 素材的 O(1) 摘要（spec + 可播 PCM 字节数）：判据要拿它当「覆盖度基线」，
+        // 不额外合成素材、也不从文件长度反推格式头。
+        struct TrackFacts {
+            AudioSpec spec;
+            size_t payloadBytes = 0;
+            bool ok             = false;
+        };
+
+        TrackFacts probeTrack(const std::string &mediaDir, const char *name, const char *extension)
+        {
+            TrackFacts facts;
+            FileSource source((mediaDir + "/" + name).c_str());
+            if (source.initCheck() != sdk_utils::OK) {
+                return facts;
+            }
+            std::shared_ptr<ExtractorHelper> extractor(
+                ExtractorFactory::createExtractor(&source, extension, true));
+            if (extractor == nullptr || extractor->initCheck() != sdk_utils::OK) {
+                return facts;
+            }
+            facts.spec = extractor->getAudioSpec();
+            const size_t frameBytes = static_cast<size_t>(facts.spec.numChannel)
+                * static_cast<size_t>(facts.spec.bytesPerSample);
+            if (frameBytes == 0) {
+                return facts;
+            }
+            facts.payloadBytes = static_cast<size_t>(facts.spec.samples) * frameBytes;
+            facts.ok           = facts.payloadBytes > 0;
+            return facts;
+        }
+
+        // 旧全量供给形式（反例）：整首负载（压缩或 PCM）常驻、一次性交给解码器。
         // 它必须被两条判据同时判红，否则判据不能区分新旧实现。
-        class WholeViewFlacExtractor : public ExtractorHelper {
+        class WholeViewExtractor : public ExtractorHelper {
         public:
-            WholeViewFlacExtractor(ExtractorHelper *inner, const std::string &path)
+            WholeViewExtractor(ExtractorHelper *inner, const std::string &path)
                 : m_inner(inner)
             {
                 FileSource source(path.c_str());
@@ -317,7 +382,7 @@ TEST_SUITE("StreamingBudget")
             return;
         }
 
-        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), kFlac);
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), kFlac, ".flac");
         REQUIRE(profile.count > 1000);
         REQUIRE(profile.maxPacketBytes > 0);
         // 增量实现下「一包」就是一帧：远小于整首 32 MB。
@@ -361,7 +426,7 @@ TEST_SUITE("StreamingBudget")
         REQUIRE(fixture.create(kFlac, ".flac", source, inner));
         REQUIRE(inner != nullptr);
 
-        WholeViewFlacExtractor wholeView(inner.get(), fixture.mediaPath(kFlac));
+        WholeViewExtractor wholeView(inner.get(), fixture.mediaPath(kFlac));
         REQUIRE(wholeView.initCheck() == sdk_utils::OK);
 
         const PlaybackObservation observation = playWithExtractor(&wholeView, 300000);
@@ -370,7 +435,7 @@ TEST_SUITE("StreamingBudget")
         // 解出来的 PCM 与增量形式逐字节相同：两条判据判的不是解码结果，是供给形式。
         CHECK(observation.bytes == 52513104);
 
-        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), kFlac);
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), kFlac, ".flac");
         const size_t upper          = AudioRingBuffer::kDefaultCapacity
             + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
         CHECK_MESSAGE(observation.metrics.peakHeldBytes > upper,
@@ -506,6 +571,231 @@ TEST_SUITE("StreamingBudget")
                                        << second.metrics.initScanUs << ", startToFirstPcmUs "
                                        << first.metrics.startToFirstPcmUs << " / "
                                        << second.metrics.startToFirstPcmUs);
+        }
+    }
+
+    // —— wav / aiff 的增量切片（票面 #61 / 规格第 9 节 E8）——
+    //
+    // 原始 PCM 没有帧头可认，包边界只能是「定长切片」（对齐到帧），解码侧逐包写 ring。
+    // 两条判据与前两条同源：常驻上界（262144 + P + 64KB + O(1)）与并行（首帧时序列未耗尽）。
+    // 这两种素材的规格不是 44.1 kHz / 2ch，所以把源规格当设备规格传入：不重采样，
+    // 交付的 PCM 字节数与素材的可播字节逐位相等，「覆盖度基线」因此可以按字节断言。
+    namespace
+    {
+        struct PcmCase {
+            const char *name;
+            const char *extension;
+        };
+
+        const PcmCase kPcmCases[] = {
+            { "music.wav", ".wav" },                          // 16 kHz / 单声道 / 16 bit，24.9 s
+            { "俱乐部音乐循环-Freesound.aiff", ".aiff" },     // 44.1 kHz / 双声道 / 16 bit，27.4 s
+        };
+        const size_t kPcmCaseCount = sizeof(kPcmCases) / sizeof(kPcmCases[0]);
+    } // namespace
+
+    TEST_CASE("wav and aiff stay inside the held bytes cap and decode in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+
+        for (size_t i = 0; i < kPcmCaseCount; ++i) {
+            const std::string name(kPcmCases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            const TrackFacts facts = probeTrack(fixture.mediaDir(), name.c_str(),
+                                                kPcmCases[i].extension);
+            REQUIRE_MESSAGE(facts.ok, name << ": 提取器没有给出可播负载");
+            const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), name.c_str(),
+                                                               kPcmCases[i].extension);
+            REQUIRE(profile.count > 1);
+            REQUIRE(profile.maxPacketBytes > 0);
+            // 单包是定长切片，不是「整首一包」：P 由切片长度决定，与素材时长无关。
+            REQUIRE(profile.maxPacketBytes <= 64 * 1024);
+
+            const PlaybackObservation observation = playWholeTrack(
+                fixture.mediaDir(), name, kPcmCases[i].extension, 120000, PlaybackPlan(),
+                facts.spec);
+            REQUIRE(observation.opened);
+            REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                            name << ": 没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                 << "，错误 " << static_cast<int>(observation.error) << " ("
+                                 << observation.errorDetail << ")");
+
+            const size_t packetBudget = profile.maxPacketBytes * 2;
+            const size_t upper        = AudioRingBuffer::kDefaultCapacity + packetBudget
+                + kAvioHeadroomBytes;
+            CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                          name << ": 常驻峰值 " << observation.metrics.peakHeldBytes
+                               << " 超过上界 " << upper);
+
+            // 并行：首帧交付时至少拉过一包，且序列尚未耗尽（不是先整段读完才交付）。
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm >= 1,
+                          name << ": 首帧交付时供给序列还没开始");
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm
+                              < observation.metrics.packetsPulled,
+                          name << ": 首帧交付时供给序列已经耗尽：解码与消费没有并行");
+            // 整段按包走完：拉到的包数与包形状实测一致。
+            CHECK_MESSAGE(observation.metrics.packetsPulled == profile.count,
+                          name << ": 拉到 " << observation.metrics.packetsPulled << " 包，实测 "
+                               << profile.count << " 包");
+            // 覆盖度基线：未压缩，交付的字节数必须与素材的可播字节逐位相等。
+            CHECK_MESSAGE(observation.bytes == facts.payloadBytes,
+                          name << ": 交付 " << observation.bytes << " 字节，覆盖度基线 "
+                               << facts.payloadBytes);
+
+            MESSAGE(name << ": packets " << profile.count << ", maxPacket "
+                         << profile.maxPacketBytes << " -> upper " << upper << ", peak "
+                         << observation.metrics.peakHeldBytes << "; firstPcm packets "
+                         << observation.metrics.packetsPulledAtFirstPcm << "/"
+                         << observation.metrics.packetsPulled << ", delivered "
+                         << observation.bytes);
+        }
+    }
+
+    // 反例（判据的区分度）：整块供给的 wav 必须被常驻上界与并行同时判红。
+    TEST_CASE("whole view supply of wav is red under the held bytes cap")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        const TrackFacts facts = probeTrack(fixture.mediaDir(), name, ".wav");
+        REQUIRE(facts.ok);
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> inner;
+        REQUIRE(fixture.create(name, ".wav", source, inner));
+        REQUIRE(inner != nullptr);
+
+        WholeViewExtractor wholeView(inner.get(), fixture.mediaPath(name));
+        REQUIRE(wholeView.initCheck() == sdk_utils::OK);
+
+        const PlaybackObservation observation
+            = playWithExtractor(&wholeView, 120000, PlaybackPlan(), facts.spec);
+        REQUIRE(observation.opened);
+        REQUIRE(observation.endState == StreamDecoderState::EOS);
+        // 整块替身从文件偏移 0 喂（wav 的 RIFF 头也在里面），所以交付量比 payload 多一个头长；
+        // 判据判的不是解码结果，而是供给形式——下面两条才是这条用例的目的。
+        CHECK(observation.bytes >= facts.payloadBytes);
+
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), name, ".wav");
+        const size_t upper          = AudioRingBuffer::kDefaultCapacity
+            + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+        CHECK_MESSAGE(observation.metrics.peakHeldBytes > upper,
+                      "整块供给没有被常驻上界判红：peak " << observation.metrics.peakHeldBytes
+                                                          << " <= upper " << upper);
+        CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm == 1,
+                      "整块供给没有被并行判据判红：firstPcm 拉到的包数 "
+                          << observation.metrics.packetsPulledAtFirstPcm);
+    }
+
+    // 生产链的设备规格通常不是素材规格（16 kHz 单声道 wav → 44.1 kHz 双声道设备）。
+    // 增量路径与旧形式共用同一条「PCM → 重采样 → 写 ring」的口径，这里用默认设备规格
+    // 跑一遍，确认逐包供给下重采样照常工作、EOS 照常收口。
+    TEST_CASE("wav plays through the incremental path with device resampling")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music.wav";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        const TrackFacts facts = probeTrack(fixture.mediaDir(), name, ".wav");
+        REQUIRE(facts.ok);
+        REQUIRE(facts.spec.sampleRate != makeDevSpec().sampleRate);
+
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".wav", 120000);
+        REQUIRE(observation.opened);
+        REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                        "重采样路径没有走到 EOS，状态 " << static_cast<int>(observation.endState));
+
+        // 重采样只改 PCM 的密度：输出帧数按采样率比例放大，帧长取设备规格。
+        const AudioSpec dev        = makeDevSpec();
+        const uint64_t frames      = static_cast<uint64_t>(facts.spec.samples);
+        const uint64_t expected    = frames * dev.sampleRate * dev.numChannel * dev.bytesPerSample
+            / static_cast<uint64_t>(facts.spec.sampleRate);
+        const uint64_t tolerance   = expected / 100; // 1%，覆盖重采样的帧数截断
+        CHECK_MESSAGE(observation.bytes + tolerance >= expected,
+                      "重采样后的交付量 " << observation.bytes << " 少于期望 " << expected);
+        CHECK_MESSAGE(observation.bytes <= expected + tolerance,
+                      "重采样后的交付量 " << observation.bytes << " 多于期望 " << expected);
+
+        MESSAGE(name << ": resampled delivered " << observation.bytes << " / expected "
+                     << expected << ", packets " << observation.metrics.packetsPulled);
+    }
+
+    // 顺序重放档的 seek（规格第 6 节 / #49）：重启包序列、从起点按包迭代到目标、
+    // 丢掉目标前的 PCM。精度沿用既有口径 max(target × 1%, 150ms)——不新造数值。
+    TEST_CASE("sequential replay seek lands on the target for wav and aiff")
+    {
+        RealMediaFixture fixture;
+
+        for (size_t i = 0; i < kPcmCaseCount; ++i) {
+            const std::string name(kPcmCases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            const TrackFacts facts = probeTrack(fixture.mediaDir(), name.c_str(),
+                                                kPcmCases[i].extension);
+            REQUIRE(facts.ok);
+            REQUIRE(facts.spec.durationMs > 0);
+
+            PlaybackPlan plan;
+            plan.seekAfterBytes = facts.payloadBytes / 4;
+            plan.seekTargetMs   = facts.spec.durationMs / 2;
+
+            const PlaybackObservation observation = playWholeTrack(
+                fixture.mediaDir(), name, kPcmCases[i].extension, 120000, plan, facts.spec);
+            REQUIRE(observation.opened);
+            REQUIRE_MESSAGE(observation.seekCompleted,
+                            name << ": seek 没有落地，状态 "
+                                 << static_cast<int>(observation.endState) << "，错误 "
+                                 << static_cast<int>(observation.error));
+            REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                            name << ": seek 之后没有走到 EOS，状态 "
+                                 << static_cast<int>(observation.endState));
+
+            const uint64_t toleranceMs = std::max<uint64_t>(plan.seekTargetMs / 100, 150);
+            const uint64_t firstMs     = observation.firstPcmMsAfterSeek;
+            CHECK_MESSAGE(firstMs + toleranceMs >= plan.seekTargetMs,
+                          name << ": seek 后首帧时间 " << firstMs << " ms 早于目标 "
+                               << plan.seekTargetMs << " ms 超过 " << toleranceMs << " ms");
+            CHECK_MESSAGE(firstMs <= plan.seekTargetMs + toleranceMs,
+                          name << ": seek 后首帧时间 " << firstMs << " ms 晚于目标 "
+                               << plan.seekTargetMs << " ms 超过 " << toleranceMs << " ms");
+
+            // 交付字节数：从目标点到结尾的期望字节数（按与解码器同一口径换算）。
+            const uint64_t bytesPerMs = static_cast<uint64_t>(facts.spec.sampleRate)
+                * static_cast<uint64_t>(facts.spec.numChannel)
+                * static_cast<uint64_t>(facts.spec.bytesPerSample) / 1000;
+            REQUIRE(bytesPerMs > 0);
+            const uint64_t targetBytes  = plan.seekTargetMs * bytesPerMs;
+            const size_t expectedAfter  = facts.payloadBytes - static_cast<size_t>(targetBytes);
+            const size_t toleranceBytes = static_cast<size_t>(toleranceMs * bytesPerMs);
+            const size_t delivered      = observation.bytesAfterSeek;
+            CHECK_MESSAGE(delivered + toleranceBytes >= expectedAfter,
+                          name << ": seek 后交付 " << delivered << " 字节，少于期望 " << expectedAfter
+                               << "（容差 " << toleranceBytes << "）");
+            CHECK_MESSAGE(delivered <= expectedAfter + toleranceBytes,
+                          name << ": seek 后交付 " << delivered << " 字节，多于期望 " << expectedAfter
+                               << "（容差 " << toleranceBytes << "）");
+
+            MESSAGE(name << ": seek " << plan.seekTargetMs << " ms, firstPcm " << firstMs
+                         << " ms, delivered after seek " << delivered << " / expected "
+                         << expectedAfter << ", total " << observation.bytes << ", packets "
+                         << observation.metrics.packetsPulled);
         }
     }
 }
