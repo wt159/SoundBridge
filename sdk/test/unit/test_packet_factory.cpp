@@ -347,7 +347,7 @@ TEST_SUITE("PacketFactory")
         // 单块远小于整份 payload（789 KB）；上界只用来防整首一包的退化。
         CHECK(maxPacketBytes < 64 * 1024);
         CHECK(monotonicPosition);
-        // 持有量不随包数增长：第 100 包之后与序列末尾的读数必须相同。
+        // 持有量不随包数增长：第 10 包之后与序列末尾的读数必须相同。
         CHECK(heldAfterMuchLater == heldAtEnd);
         // 常驻只有 AVIO 缓冲（判据公式里的独立项），提取器自己不记 payload。
         CHECK(heldAtEnd == 0);
