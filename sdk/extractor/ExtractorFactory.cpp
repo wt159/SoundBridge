@@ -20,6 +20,9 @@
 
 #define LOG_TAG "ExtractorFactory"
 
+// 类内初始化的 static const 成员在被 odr-used（例如断言里按引用捕获）时需要类外定义。
+const size_t ExtractorHelper::kUnknownPacketCount;
+
 namespace {
 
 std::string normalizeExtension(const std::string &extensionName)
