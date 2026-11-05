@@ -182,7 +182,6 @@ bool MusicPlayList::skipToNextPlayable()
             continue;
         }
         releaseDecodedBuffersExcept(candidate->index, prevIndex);
-        candidate->signalProperties.curDataOffset = 0;
         candidate->signalProperties.curPositionMs = 0;
         m_selectMusicProperties                   = candidate;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -287,7 +286,6 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         MetricTags { currentTraceId(), musicPath, static_cast<int>(musicProperties->index) });
     processProperties.extractor    = extractor;
     signalProperties.curPositionMs = 0;
-    signalProperties.curDataOffset = 0;
     signalProperties.spec          = extractor->getAudioSpec();
     signalProperties.durationMs    = signalProperties.spec.durationMs;
     signalProperties.dataSize      = 0;
@@ -317,7 +315,6 @@ bool MusicPlayList::selectTrack(size_t index)
         return false;
     }
     releaseDecodedBuffersExcept(next->index, prevIndex);
-    next->signalProperties.curDataOffset = 0;
     next->signalProperties.curPositionMs = 0;
     m_selectMusicProperties              = next;
     m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -391,7 +388,6 @@ void MusicPlayList::releaseDecodedBuffersExcept(size_t keepIndex, size_t keepInd
         }
         item->streamDecoder.reset();
         item->ringBuffer.reset();
-        item->signalProperties.curDataOffset = 0;
         item->signalProperties.curPositionMs = 0;
         item->signalProperties.dataSize      = 0;
     }

@@ -54,9 +54,9 @@ struct FileProperties {
 struct SignalProperties {
     AudioSpec spec;
     uint64_t durationMs;
+    // 唯一位置口径：来自 AudioStreamDecoder::positionMs()（段基准 + ring 段内读计数）。
     std::atomic<uint64_t> curPositionMs;
     off64_t dataSize;
-    std::atomic<off64_t> curDataOffset;
 };
 
 struct ProcessProperties {
