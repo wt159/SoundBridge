@@ -29,149 +29,31 @@ bool MP3Extractor::sniff(DataSourceBase *source)
     return (buf[0] == 0xFF && (buf[1] & 0xE0) == 0xE0);
 }
 
-// Everything must match except for
-// protection, bitrate, padding, private bits, mode, mode extension,
-// copyright bit, original bit and emphasis.
-// Yes ... there are things that must indeed match...
-static const uint32_t kMask = 0xfffe0c00;
+// 帧头码表搬到 MP3FrameReader.cpp：init 期的 Resync 与播放期的包工厂共用
+// 同一份解析（mp3::parseFrameHeader），「什么算合法帧头」不会出现第二套解释。
+// 同一码流里 version / layer / sampleRate 必须一致，比对掩码仍是 mp3::kFrameHeaderMask。
+using mp3::kFrameHeaderMask;
+using mp3::FrameInfo;
 
 static bool GetMPEGAudioFrameSize(uint32_t header, size_t *frame_size,
                                   int *out_sampling_rate = NULL, int *out_channels = NULL,
                                   int *out_bitrate = NULL, int *out_num_samples = NULL)
 {
-    *frame_size = 0;
-
+    const FrameInfo info = mp3::parseFrameHeader(header);
+    *frame_size          = info.frameSize;
     if (out_sampling_rate) {
-        *out_sampling_rate = 0;
+        *out_sampling_rate = info.sampleRate;
     }
-
     if (out_channels) {
-        *out_channels = 0;
+        *out_channels = info.channels;
     }
-
     if (out_bitrate) {
-        *out_bitrate = 0;
+        *out_bitrate = info.bitrateKbps;
     }
-
     if (out_num_samples) {
-        *out_num_samples = 1152;
+        *out_num_samples = info.samplesPerFrame;
     }
-
-    if ((header & 0xffe00000) != 0xffe00000) {
-        return false;
-    }
-
-    unsigned version = (header >> 19) & 3;
-
-    if (version == 0x01) {
-        return false;
-    }
-
-    unsigned layer = (header >> 17) & 3;
-
-    if (layer == 0x00) {
-        return false;
-    }
-
-    unsigned protection __unused = (header >> 16) & 1;
-
-    unsigned bitrate_index = (header >> 12) & 0x0f;
-
-    if (bitrate_index == 0 || bitrate_index == 0x0f) {
-        // Disallow "free" bitrate.
-        return false;
-    }
-
-    unsigned sampling_rate_index = (header >> 10) & 3;
-
-    if (sampling_rate_index == 3) {
-        return false;
-    }
-
-    static const int kSamplingRateV1[] = { 44100, 48000, 32000 };
-    int sampling_rate                  = kSamplingRateV1[sampling_rate_index];
-    if (version == 2 /* V2 */) {
-        sampling_rate /= 2;
-    } else if (version == 0 /* V2.5 */) {
-        sampling_rate /= 4;
-    }
-
-    unsigned padding = (header >> 9) & 1;
-
-    if (layer == 3) {
-        // layer I
-
-        static const int kBitrateV1[]
-            = { 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448 };
-
-        static const int kBitrateV2[]
-            = { 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256 };
-
-        int bitrate = (version == 3 /* V1 */) ? kBitrateV1[bitrate_index - 1]
-                                              : kBitrateV2[bitrate_index - 1];
-
-        if (out_bitrate) {
-            *out_bitrate = bitrate;
-        }
-
-        *frame_size = (12000 * bitrate / sampling_rate + padding) * 4;
-
-        if (out_num_samples) {
-            *out_num_samples = 384;
-        }
-    } else {
-        // layer II or III
-
-        static const int kBitrateV1L2[]
-            = { 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384 };
-
-        static const int kBitrateV1L3[]
-            = { 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320 };
-
-        static const int kBitrateV2[]
-            = { 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160 };
-
-        int bitrate;
-        if (version == 3 /* V1 */) {
-            bitrate = (layer == 2 /* L2 */) ? kBitrateV1L2[bitrate_index - 1]
-                                            : kBitrateV1L3[bitrate_index - 1];
-
-            if (out_num_samples) {
-                *out_num_samples = 1152;
-            }
-        } else {
-            // V2 (or 2.5)
-
-            bitrate = kBitrateV2[bitrate_index - 1];
-            if (out_num_samples) {
-                *out_num_samples = (layer == 1 /* L3 */) ? 576 : 1152;
-            }
-        }
-
-        if (out_bitrate) {
-            *out_bitrate = bitrate;
-        }
-
-        if (version == 3 /* V1 */) {
-            *frame_size = 144000 * bitrate / sampling_rate + padding;
-        } else {
-            // V2 or V2.5
-            size_t tmp  = (layer == 1 /* L3 */) ? 72000 : 144000;
-            *frame_size = tmp * bitrate / sampling_rate + padding;
-        }
-    }
-
-    if (out_sampling_rate) {
-        *out_sampling_rate = sampling_rate;
-    }
-
-    if (out_channels) {
-        int channel_mode = (header >> 6) & 3;
-
-        *out_channels = (channel_mode == 3) ? 1 : 2;
-    }
-
-    return true;
+    return info.valid;
 }
 
 static bool Resync(DataSourceBase *source, uint32_t match_header, off64_t *inout_pos,
@@ -277,7 +159,8 @@ static bool Resync(DataSourceBase *source, uint32_t match_header, off64_t *inout
 
         uint32_t header = U32_AT(tmp);
 
-        if (match_header != 0 && (header & kMask) != (match_header & kMask)) {
+        if (match_header != 0
+            && (header & kFrameHeaderMask) != (match_header & kFrameHeaderMask)) {
             ++pos;
             ++tmp;
             --remainingBytes;
@@ -312,7 +195,7 @@ static bool Resync(DataSourceBase *source, uint32_t match_header, off64_t *inout
 
             LOGV("subsequent header is %08x", test_header);
 
-            if ((test_header & kMask) != (header & kMask)) {
+            if ((test_header & kFrameHeaderMask) != (header & kFrameHeaderMask)) {
                 valid = false;
                 break;
             }
@@ -349,8 +232,17 @@ static bool Resync(DataSourceBase *source, uint32_t match_header, off64_t *inout
 MP3Extractor::MP3Extractor(DataSourceBase *source)
     : m_initCheck(NO_INIT)
     , m_dataSource(source)
+    , m_audioCodecID(AUDIO_CODEC_ID_NONE)
+    , m_metaBuf(nullptr)
+    , m_validFormat(false)
+    , m_spec()
     , m_firstFramePos(-1)
     , m_fixedHeader(0)
+    , m_dataSize(0)
+    , m_audioEnd(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
+    , m_sequenceOffset(0)
 {
     off64_t pos = 0;
     off64_t post_id3_pos;
@@ -490,12 +382,101 @@ MP3Extractor::MP3Extractor(DataSourceBase *source)
 
     m_audioCodecID = AUDIO_CODEC_ID_MP3;
 
+    // init 只留 O(1) 摘要：不读整首 payload，也不建任何随包数增长的表。
+    // 标称时长仍用首帧码率估算（与旧实现逐位相同，覆盖度基线不动）。
     off64_t fileSize = 0;
-    m_dataSource->getSize(&fileSize);
-    fileSize  -= m_firstFramePos;
-    m_metaBuf  = std::make_shared<AudioBuffer>(fileSize);
-    if (m_dataSource->readAt(m_firstFramePos, m_metaBuf->data(), fileSize) < 0) {
-        LOGE("readAt failed");
+    if (m_dataSource->getSize(&fileSize) == OK) {
+        m_dataSize = fileSize;
     }
-    LOGI("m_metaBuf->data(): %p, size: %llu", m_metaBuf->data(), m_metaBuf->size());
+    m_audioEnd = m_dataSize;
+    // 尾部 128 字节 ID3v1 尾标不是音频：包序列不把它当坏数据交给解码器，
+    // 否则「切在 ID3v1 里」会被误报成坏帧（规格 3.2 P0 要求完全静默）。
+    if (m_dataSize >= 128) {
+        uint8_t tail[3] = { 0 };
+        if (m_dataSource->readAt(m_dataSize - 128, tail, sizeof(tail))
+                == static_cast<ssize_t>(sizeof(tail))
+            && memcmp(tail, "TAG", 3) == 0) {
+            m_audioEnd = m_dataSize - 128;
+        }
+    }
+    if (m_audioEnd < m_firstFramePos) {
+        m_audioEnd = m_firstFramePos;
+    }
+    m_sequenceOffset = m_firstFramePos;
+    LOGI("dataSize: %lld, firstFramePos: %lld, audioEnd: %lld", (long long)m_dataSize,
+         (long long)m_firstFramePos, (long long)m_audioEnd);
+}
+
+MP3FrameReader *MP3Extractor::reader()
+{
+    if (m_reader == nullptr && m_dataSource != nullptr) {
+        m_reader.reset(new MP3FrameReader(m_dataSource, m_firstFramePos, m_audioEnd));
+        m_nextPacketIndex = 0;
+        m_sequenceOffset  = m_firstFramePos;
+    }
+    return m_reader.get();
+}
+
+AudioBuffer::AudioBufferPtr MP3Extractor::packetAt(size_t index)
+{
+    // 解复用面在播放期（解码线程第一次拉包时）创建，init 期只有 O(1) 摘要。
+    MP3FrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return nullptr;
+    }
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到本段起点重来。
+    if (index == 0) {
+        frameReader->seekTo(m_sequenceOffset);
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
+    }
+
+    AudioBuffer::AudioBufferPtr packet;
+    if (!frameReader->nextPacket(packet)) {
+        return nullptr;
+    }
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+bool MP3Extractor::seekPacketByte(off64_t offset)
+{
+    MP3FrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return false;
+    }
+    // 0 在调用方语境里是「流头」；mp3 的流头是 ID3v2 之后的第一个音频帧。
+    if (offset < m_firstFramePos) {
+        offset = m_firstFramePos;
+    }
+    frameReader->seekTo(offset);
+    m_sequenceOffset  = offset;
+    m_nextPacketIndex = 0;
+    return true;
+}
+
+off64_t MP3Extractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
+}
+
+AudioBuffer::AudioBufferPtr MP3Extractor::getMetaData()
+{
+    // 旧整块视图（expand 阶段的回退口 / 量测仪器）：只在被请求时按需读取，
+    // 语义与改造前一致——从第一个音频帧到文件尾（含 ID3v1 尾标）。
+    if (m_metaBuf == nullptr && m_dataSource != nullptr && m_firstFramePos >= 0
+        && m_dataSize > m_firstFramePos) {
+        const off64_t length = m_dataSize - m_firstFramePos;
+        AudioBuffer::AudioBufferPtr buffer
+            = std::make_shared<AudioBuffer>(static_cast<size_t>(length));
+        if (m_dataSource->readAt(m_firstFramePos, buffer->data(),
+                                 static_cast<size_t>(length))
+            == static_cast<ssize_t>(length)) {
+            m_metaBuf = buffer;
+        } else {
+            LOGE("readAt failed for the legacy whole view");
+        }
+    }
+    return m_metaBuf;
 }

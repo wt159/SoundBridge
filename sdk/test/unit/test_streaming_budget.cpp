@@ -205,6 +205,31 @@ TEST_SUITE("StreamingBudget")
                 ExtractorFactory::createExtractor(&source, extension, true));
             return playWithExtractor(extractor.get(), timeoutMs, plan, devSpec);
         }
+
+        // ring 里是设备格式（makeDevSpec）的字节，换算成毫秒。
+        uint64_t devBytesToMs(size_t bytes)
+        {
+            const AudioSpec spec = makeDevSpec();
+            const uint64_t denom = static_cast<uint64_t>(spec.sampleRate) * spec.numChannel
+                * spec.bytesPerSample;
+            return denom == 0 ? 0 : static_cast<uint64_t>(bytes) * 1000 / denom;
+        }
+
+        // 提取器 init 期给出的标称时长（播放前即可得）。
+        uint64_t declaredDurationMs(const std::string &mediaDir, const std::string &fileName,
+                                    const char *extension)
+        {
+            FileSource source((mediaDir + "/" + fileName).c_str());
+            if (source.initCheck() != sdk_utils::OK) {
+                return 0;
+            }
+            std::shared_ptr<ExtractorHelper> extractor(
+                ExtractorFactory::createExtractor(&source, extension, true));
+            if (extractor == nullptr) {
+                return 0;
+            }
+            return extractor->getAudioSpec().durationMs;
+        }
     } // namespace
 
     TEST_CASE("instruments are readable on the playback path for short and long tracks")
@@ -264,7 +289,7 @@ TEST_SUITE("StreamingBudget")
 
         // 只量包形状，不解码：P 必须来自该素材的实测，不能写死常量。
         PacketProfile measurePacketProfile(const std::string &mediaDir, const char *name,
-                                           const char *extension)
+                                           const char *extension = ".flac")
         {
             PacketProfile profile;
             FileSource source((mediaDir + "/" + name).c_str());
@@ -494,6 +519,182 @@ TEST_SUITE("StreamingBudget")
                      << ", deliveredBytes " << first.bytes << ", replay bytes "
                      << second.bytes << ", error " << static_cast<int>(first.error) << " ("
                      << first.errorDetail << ")");
+    }
+
+    // mp3 的增量切片（票面 #62 / 规格第 9 节 E9）。判据与 FLAC 同形：
+    // 包工厂逐帧供给、首帧交付时序列未耗尽（并行），峰值落在上界内。
+    TEST_CASE("mp3 plays to end through packet iteration")
+    {
+        RealMediaFixture fixture;
+        const char *name = "小镇姑娘-陶喆.128.mp3";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), name, ".mp3");
+        REQUIRE(profile.count > 5000); // 逐帧，比 FLAC 高一个量级
+        REQUIRE(profile.maxPacketBytes > 0);
+        REQUIRE(profile.maxPacketBytes < 8 * 1024);
+
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".mp3", 300000);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "mp3 没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                                << " / " << observation.errorDetail);
+
+        const size_t upper = AudioRingBuffer::kDefaultCapacity
+            + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+        CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                      "常驻峰值 " << observation.metrics.peakHeldBytes << " 超过上界 " << upper);
+        CHECK(observation.metrics.packetsPulled >= 5000);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm >= 1);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm
+              < observation.metrics.packetsPulled);
+
+        const uint64_t declaredMs = declaredDurationMs(fixture.mediaDir(), name, ".mp3");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        const uint64_t tolerance
+            = std::max<uint64_t>(declaredMs / 100, 150);
+        REQUIRE(declaredMs > 0);
+        CHECK_MESSAGE(deliveredMs + tolerance >= declaredMs,
+                      "交付时长 " << deliveredMs << "ms 短于标称 " << declaredMs << "ms");
+        CHECK_MESSAGE(deliveredMs <= declaredMs + tolerance,
+                      "交付时长 " << deliveredMs << "ms 超过标称 " << declaredMs << "ms");
+
+        MESSAGE("mp3: packets " << observation.metrics.packetsPulled << " (maxPacket "
+                                 << profile.maxPacketBytes << ") peak "
+                                 << observation.metrics.peakHeldBytes << " / upper " << upper
+                                 << ", firstPcm packets "
+                                 << observation.metrics.packetsPulledAtFirstPcm
+                                 << ", delivered " << deliveredMs << "ms / declared "
+                                 << declaredMs << "ms");
+    }
+
+    // aac 的增量切片（票面 #62）：每个 ADTS 帧一包。
+    TEST_CASE("aac plays to end through packet iteration")
+    {
+        RealMediaFixture fixture;
+        const char *name = "WavinFlag.aac";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), name, ".aac");
+        REQUIRE(profile.count > 5000);
+        REQUIRE(profile.maxPacketBytes > 0);
+        REQUIRE(profile.maxPacketBytes < 16 * 1024);
+
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".aac", 300000);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "aac 没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                                << " / " << observation.errorDetail);
+
+        const size_t upper = AudioRingBuffer::kDefaultCapacity
+            + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+        CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                      "常驻峰值 " << observation.metrics.peakHeldBytes << " 超过上界 " << upper);
+        CHECK(observation.metrics.packetsPulled >= 5000);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm >= 1);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm
+              < observation.metrics.packetsPulled);
+
+        const uint64_t declaredMs = declaredDurationMs(fixture.mediaDir(), name, ".aac");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        const uint64_t tolerance
+            = std::max<uint64_t>(declaredMs / 100, 150);
+        REQUIRE(declaredMs > 0);
+        CHECK_MESSAGE(deliveredMs + tolerance >= declaredMs,
+                      "交付时长 " << deliveredMs << "ms 短于标称 " << declaredMs << "ms");
+        CHECK_MESSAGE(deliveredMs <= declaredMs + tolerance,
+                      "交付时长 " << deliveredMs << "ms 超过标称 " << declaredMs << "ms");
+
+        MESSAGE("aac: packets " << observation.metrics.packetsPulled << " (maxPacket "
+                                 << profile.maxPacketBytes << ") peak "
+                                 << observation.metrics.peakHeldBytes << " / upper " << upper
+                                 << ", firstPcm packets "
+                                 << observation.metrics.packetsPulledAtFirstPcm
+                                 << ", delivered " << deliveredMs << "ms / declared "
+                                 << declaredMs << "ms");
+    }
+
+    // ogg（Vorbis）的增量路径（票面 #62）：init 不再保留页表，解码仍由
+    // libvorbisfile 经 DataSource 回调推进，ov_time_seek 的 native RA 保持不变。
+    TEST_CASE("ogg vorbis plays to end without a page table")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists(kShortOgg)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", kShortOgg);
+            return;
+        }
+
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), kShortOgg, ".ogg", 60000);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "ogg 没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                                << " / " << observation.errorDetail);
+        CHECK(observation.bytes > 0);
+        // ogg 不走包工厂（native RA 由 libvorbisfile 负责），常驻只剩解码器的固定缓冲，
+        // 远小于 ring + AVIO 这两项判据里的独立项。
+        const size_t upper = AudioRingBuffer::kDefaultCapacity + kAvioHeadroomBytes;
+        CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                      "ogg 常驻峰值 " << observation.metrics.peakHeldBytes << " 超过 " << upper);
+
+        const uint64_t declaredMs
+            = declaredDurationMs(fixture.mediaDir(), kShortOgg, ".ogg");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        const uint64_t tolerance   = std::max<uint64_t>(declaredMs / 100, 150);
+        REQUIRE(declaredMs > 0);
+        CHECK(deliveredMs + tolerance >= declaredMs);
+        CHECK(deliveredMs <= declaredMs + tolerance);
+
+        MESSAGE("ogg: peak " << observation.metrics.peakHeldBytes << " / upper " << upper
+                             << ", delivered " << deliveredMs << "ms / declared " << declaredMs
+                             << "ms, packetsPulled "
+                             << observation.metrics.packetsPulled);
+    }
+
+    // mp3 / aac 的 seek 走「顺序重放」档（#49 第二档）：重建解码器，从包序列起点
+    // 重新迭代到目标、丢弃目标前的 PCM。峰值不随目标位置增长，native RA 只留给
+    // FLAC / Vorbis。这条用例锁住重放分支不会把 seek 后的交付弄丢。
+    TEST_CASE("aac seek replays from the stream head and keeps delivering")
+    {
+        RealMediaFixture fixture;
+        const char *name = "48000_fltp_1.aac";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        PlaybackPlan plan;
+        plan.seekAfterBytes = 65536; // ≈ 0.37 s 的设备 PCM
+        plan.seekTargetMs   = 3000;
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".aac", 60000, plan);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "seek 之后没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                                     << " / " << observation.errorDetail);
+        CHECK(observation.bytes > 0);
+
+        // seek 生效的直接证据：目标之前的 PCM 被丢弃，交付时长明显短于整首。
+        // （静默窗口的计数在 SEEKING 用例里判；Windows 的 5ms 轮询粒度可能整段错过
+        //   12ms 窗口，拿它当 seek 证据会假红。）
+        const uint64_t declaredMs = declaredDurationMs(fixture.mediaDir(), name, ".aac");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        REQUIRE(declaredMs > 3000);
+        CHECK_MESSAGE(deliveredMs + 1000 <= declaredMs,
+                      "seek 到 3000ms 之后仍交付了 " << deliveredMs << "ms / 标称 " << declaredMs
+                                                     << "ms：目标之前的 PCM 没有丢弃");
+
+        MESSAGE("aac seek: delivered " << deliveredMs << "ms / declared " << declaredMs
+                                       << "ms, peak " << observation.metrics.peakHeldBytes
+                                       << ", packets " << observation.metrics.packetsPulled);
     }
 
     TEST_CASE("silence fill counter only covers the silence windows")

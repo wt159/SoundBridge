@@ -314,10 +314,13 @@ TEST_SUITE("PacketFactory")
                      << heldAfterMuchLater);
     }
 
-    TEST_CASE("real single-block file exposes its whole payload as one packet")
+    // mp3 的增量包面（票面 #62 / 规格第 9 节 E9）。
+    // MPEG 帧自带长度字段（码率 / 采样率 / padding），所以边界可以按 offset 现场算出，
+    // 不需要预扫描。init 只留 O(1) 摘要，包数用一个量级更高的「逐帧」粒度表示。
+    TEST_CASE("mp3 packet factory yields frame boundaries without holding the stream")
     {
         RealMediaFixture fixture;
-        const std::string name("像我这样的人-毛不易.128.mp3");
+        const std::string name("小镇姑娘-陶喆.128.mp3");
         if (!fixture.exists(name)) {
             MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
             return;
@@ -326,6 +329,169 @@ TEST_SUITE("PacketFactory")
         std::shared_ptr<FileSource> source;
         std::unique_ptr<ExtractorHelper> extractor;
         REQUIRE(fixture.create(name, ".mp3", source, extractor));
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        // init 只读扫描只留 O(1) 摘要：构造完成时不持有 payload 或包表。
+        CHECK(extractor->heldPayloadBytes() == 0);
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+        CHECK(static_cast<off64_t>(extractor->getAudioDataOffset()) > 0);
+
+        PacketCursor cursor(extractor.get());
+        AudioBuffer::AudioBufferPtr packet;
+        size_t count              = 0;
+        size_t totalBytes         = 0;
+        size_t maxPacketBytes     = 0;
+        size_t heldAfterMuchLater = 0;
+        size_t heldAtEnd          = 0;
+        bool contiguous           = true;
+        bool allFramesStartWithSync = true;
+        off64_t nextOffset        = extractor->getAudioDataOffset();
+
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            REQUIRE(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
+            maxPacketBytes = std::max(maxPacketBytes, packet->size());
+
+            if (nextOffset + static_cast<off64_t>(packet->size())
+                != extractor->packetBytePosition()) {
+                contiguous = false;
+            }
+            nextOffset = extractor->packetBytePosition();
+
+            const unsigned char *head = reinterpret_cast<const unsigned char *>(packet->data());
+            const bool sync           = head[0] == 0xFF && (head[1] & 0xE0) == 0xE0;
+            allFramesStartWithSync    = allFramesStartWithSync && sync;
+
+            if (count == 1000) {
+                heldAfterMuchLater = extractor->heldPayloadBytes();
+            }
+        }
+        heldAtEnd = extractor->heldPayloadBytes();
+
+        CHECK(allFramesStartWithSync);
+        CHECK(contiguous);
+        // 297 s 的 128 kbps 素材 ≈ 11000 帧，比 FLAC 的包数高一个量级。
+        CHECK(count > 5000);
+        CHECK(maxPacketBytes < 8 * 1024);
+        // 持有量不随包数增长：第 1000 包之后与序列末尾的读数必须相同。
+        CHECK(heldAfterMuchLater == heldAtEnd);
+        CHECK(heldAtEnd <= maxPacketBytes * 2 + 16 * 1024);
+        // 包序列从音频数据起点开始，到文件尾（可能差一个 128 字节 ID3v1 尾标）。
+        CHECK(nextOffset + 128 >= extractor->getDataSize());
+        CHECK(static_cast<off64_t>(totalBytes)
+              >= extractor->getDataSize() - extractor->getAudioDataOffset() - 128);
+
+        MESSAGE(name << ": packets " << count << ", totalBytes " << totalBytes
+                     << ", maxPacketBytes " << maxPacketBytes << ", held " << heldAtEnd);
+    }
+
+    // aac 的增量包面（票面 #62）：每个 ADTS 帧是一个包，帧长写在头里。
+    TEST_CASE("aac packet factory yields adts frames without holding the stream")
+    {
+        RealMediaFixture fixture;
+        const std::string name("WavinFlag.aac");
+        if (!fixture.exists(name)) {
+            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".aac", source, extractor));
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        CHECK(extractor->heldPayloadBytes() == 0);
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+
+        PacketCursor cursor(extractor.get());
+        AudioBuffer::AudioBufferPtr packet;
+        size_t count              = 0;
+        size_t totalBytes         = 0;
+        size_t maxPacketBytes     = 0;
+        size_t heldAfterMuchLater = 0;
+        size_t heldAtEnd          = 0;
+        bool contiguous           = true;
+        bool allFramesStartWithSync = true;
+        off64_t nextOffset        = extractor->getAudioDataOffset();
+
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            REQUIRE(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
+            maxPacketBytes = std::max(maxPacketBytes, packet->size());
+
+            if (nextOffset + static_cast<off64_t>(packet->size())
+                != extractor->packetBytePosition()) {
+                contiguous = false;
+            }
+            nextOffset = extractor->packetBytePosition();
+
+            const unsigned char *head = reinterpret_cast<const unsigned char *>(packet->data());
+            const bool sync           = head[0] == 0xFF && (head[1] & 0xF0) == 0xF0;
+            allFramesStartWithSync    = allFramesStartWithSync && sync;
+
+            if (count == 1000) {
+                heldAfterMuchLater = extractor->heldPayloadBytes();
+            }
+        }
+        heldAtEnd = extractor->heldPayloadBytes();
+
+        CHECK(allFramesStartWithSync);
+        CHECK(contiguous);
+        // 221 s 的素材每帧 1024 采样 ≈ 10000 帧。
+        CHECK(count > 5000);
+        CHECK(maxPacketBytes < 16 * 1024);
+        CHECK(heldAfterMuchLater == heldAtEnd);
+        CHECK(heldAtEnd <= maxPacketBytes * 2 + 16 * 1024);
+        CHECK(static_cast<off64_t>(totalBytes) == extractor->getDataSize());
+
+        MESSAGE(name << ": packets " << count << ", totalBytes " << totalBytes
+                     << ", maxPacketBytes " << maxPacketBytes << ", held " << heldAtEnd);
+    }
+
+    // ogg 的 init 扫描（票面 #62）：只留标称时长与 codec/spec 摘要，不留页表。
+    // Vorbis 的解码走 libvorbisfile 的 DataSource 回调与 ov_time_seek（native RA），
+    // 页表从来不是解码必需的常驻结构。
+    TEST_CASE("ogg init scan keeps only an O(1) summary")
+    {
+        RealMediaFixture fixture;
+        const std::string name("Ringtones-耳聆网.ogg");
+        if (!fixture.exists(name)) {
+            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".ogg", source, extractor));
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        // init 期扫完整份文件只为拿末页 granule，读过的字节不许留下来。
+        CHECK(extractor->heldPayloadBytes() == 0);
+        const AudioSpec spec = extractor->getAudioSpec();
+        CHECK(spec.sampleRate > 0);
+        CHECK(spec.numChannel > 0);
+        CHECK(spec.durationMs > 0);
+    }
+
+    TEST_CASE("real single-block file exposes its whole payload as one packet")
+    {
+        RealMediaFixture fixture;
+        const std::string name("music.wav");
+        if (!fixture.exists(name)) {
+            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".wav", source, extractor));
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
