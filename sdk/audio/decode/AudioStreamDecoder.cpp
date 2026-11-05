@@ -234,10 +234,10 @@ std::string AudioStreamDecoder::errorDetail() const
 StreamMetrics AudioStreamDecoder::metrics() const
 {
     StreamMetrics out;
-    out.peakHeldBytes       = m_peakHeldBytes.load();
-    out.silenceFills        = m_silenceFills.load();
-    out.startToFirstPcmUs   = m_startToFirstPcmUs.load();
-    out.initScanUs          = m_initScanUs.load();
+    out.peakHeldBytes     = m_peakHeldBytes.load();
+    out.silenceFills      = m_silenceFills.load();
+    out.startToFirstPcmUs = m_startToFirstPcmUs.load();
+    out.initScanUs        = m_initScanUs.load();
     return out;
 }
 
