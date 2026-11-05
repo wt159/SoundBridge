@@ -172,6 +172,31 @@ TEST_SUITE("StreamingBudget")
                 ExtractorFactory::createExtractor(&source, extension, true));
             return playWithExtractor(extractor.get(), timeoutMs, plan);
         }
+
+        // ring 里是设备格式（makeDevSpec）的字节，换算成毫秒。
+        uint64_t devBytesToMs(size_t bytes)
+        {
+            const AudioSpec spec = makeDevSpec();
+            const uint64_t denom = static_cast<uint64_t>(spec.sampleRate) * spec.numChannel
+                * spec.bytesPerSample;
+            return denom == 0 ? 0 : static_cast<uint64_t>(bytes) * 1000 / denom;
+        }
+
+        // 提取器 init 期给出的标称时长（播放前即可得）。
+        uint64_t declaredDurationMs(const std::string &mediaDir, const std::string &fileName,
+                                    const char *extension)
+        {
+            FileSource source((mediaDir + "/" + fileName).c_str());
+            if (source.initCheck() != sdk_utils::OK) {
+                return 0;
+            }
+            std::shared_ptr<ExtractorHelper> extractor(
+                ExtractorFactory::createExtractor(&source, extension, true));
+            if (extractor == nullptr) {
+                return 0;
+            }
+            return extractor->getAudioSpec().durationMs;
+        }
     } // namespace
 
     TEST_CASE("instruments are readable on the playback path for short and long tracks")
@@ -230,7 +255,8 @@ TEST_SUITE("StreamingBudget")
         };
 
         // 只量包形状，不解码：P 必须来自该素材的实测，不能写死常量。
-        PacketProfile measurePacketProfile(const std::string &mediaDir, const char *name)
+        PacketProfile measurePacketProfile(const std::string &mediaDir, const char *name,
+                                           const char *extension = ".flac")
         {
             PacketProfile profile;
             FileSource source((mediaDir + "/" + name).c_str());
@@ -238,7 +264,7 @@ TEST_SUITE("StreamingBudget")
                 return profile;
             }
             std::shared_ptr<ExtractorHelper> extractor(
-                ExtractorFactory::createExtractor(&source, ".flac", true));
+                ExtractorFactory::createExtractor(&source, extension, true));
             if (extractor == nullptr || extractor->initCheck() != sdk_utils::OK) {
                 return profile;
             }
@@ -431,8 +457,127 @@ TEST_SUITE("StreamingBudget")
                      << first.errorDetail << ")");
     }
 
-    TEST_CASE("silence fill counter only covers the silence windows")
+    // mkv 的增量切片（票面 #63 / 规格第 9 节 E10）。mkv 走 ffmpeg demux，包边界在
+    // **播放期**按 offset 现场重算：init 只读扫描取标称时长后就把 demux 关掉，
+    // 播放时重开一个、逐块拉、逐块丢，不保留逐包时间轴 / 页表 / seek 表。
+    // 判据与 FLAC 同形：常驻上界 + 并行。
+    TEST_CASE("mkv stays inside the held bytes cap and decodes in parallel with delivery")
     {
+        RealMediaFixture fixture;
+        const char *name = "music-mkv.mkv";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        const PacketProfile profile = measurePacketProfile(fixture.mediaDir(), name, ".mkv");
+        REQUIRE(profile.count > 10);
+        REQUIRE(profile.maxPacketBytes > 0);
+        // 一块一包：远小于整份 payload（789 KB），绝不是「整首一包」。
+        REQUIRE(profile.maxPacketBytes < 64 * 1024);
+
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".mkv", 120000);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "mkv 没有走到 EOS，状态 " << static_cast<int>(observation.endState) << " / "
+                                                << observation.errorDetail);
+        CHECK(observation.bytes > 0);
+
+        const size_t upper = AudioRingBuffer::kDefaultCapacity
+            + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+        CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                      "常驻峰值 " << observation.metrics.peakHeldBytes << " 超过上界 " << upper);
+
+        // 并行：首帧时至少拉过一包，且序列尚未耗尽（不是先解完才交付）。
+        CHECK(observation.metrics.packetsPulled >= profile.count);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm >= 1);
+        CHECK(observation.metrics.packetsPulledAtFirstPcm < observation.metrics.packetsPulled);
+
+        // 标称时长与覆盖度基线一致：容器声明字段写错（393.216 s）时不能改口径，
+        // 交付时长必须落在 24.576 s 的双向容差内（MediaCoverage 的同一判据）。
+        const uint64_t declaredMs = declaredDurationMs(fixture.mediaDir(), name, ".mkv");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        const uint64_t tolerance   = std::max<uint64_t>(declaredMs / 100, 150);
+        REQUIRE(declaredMs == 24576);
+        CHECK_MESSAGE(deliveredMs + tolerance >= declaredMs,
+                      "交付时长 " << deliveredMs << "ms 短于标称 " << declaredMs << "ms");
+        CHECK_MESSAGE(deliveredMs <= declaredMs + tolerance,
+                      "交付时长 " << deliveredMs << "ms 超过标称 " << declaredMs << "ms");
+
+        // 现场重算的 CPU 成本是独立指标（不设阈值），只要求确实记上了。
+        CHECK(observation.metrics.packetBoundaryMicros > 0);
+
+        MESSAGE("mkv: packets " << observation.metrics.packetsPulled << " (maxPacket "
+                                << profile.maxPacketBytes << "), peak "
+                                << observation.metrics.peakHeldBytes << " / upper " << upper
+                                << ", firstPcm packets "
+                                << observation.metrics.packetsPulledAtFirstPcm << ", delivered "
+                                << deliveredMs << "ms / declared " << declaredMs
+                                << "ms, boundaryMicros "
+                                << observation.metrics.packetBoundaryMicros);
+    }
+
+    // 提取器跨任务存活（MusicPlayList 按曲目持有它）：同一个提取器连播两次，第二次必须
+    // 仍从流头开始——包序列的起点不能停在上一任务读到的位置。
+    TEST_CASE("mkv replays from the stream head for a second playback task")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-mkv.mkv";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".mkv", source, extractor));
+        REQUIRE(extractor != nullptr);
+
+        const PlaybackObservation first = playWithExtractor(extractor.get(), 120000);
+        REQUIRE(first.opened);
+        CHECK(first.endState == StreamDecoderState::EOS);
+        CHECK(first.bytes > 0);
+
+        const PlaybackObservation second = playWithExtractor(extractor.get(), 120000);
+        REQUIRE(second.opened);
+        CHECK(second.endState == StreamDecoderState::EOS);
+        CHECK(second.bytes == first.bytes);
+        CHECK(second.metrics.packetsPulled == first.metrics.packetsPulled);
+    }
+
+    // mkv 的 seek 走「顺序重放」档（#49 第二档）：重建解码器、从包序列起点重新迭代到目标，
+    // 目标之前的 PCM 由解码器丢弃。峰值不随目标位置增长，也不新建整首 payload 缓存。
+    TEST_CASE("mkv seek replays from the stream head and keeps delivering")
+    {
+        RealMediaFixture fixture;
+        const char *name = "music-mkv.mkv";
+        if (!fixture.exists(name)) {
+            std::printf("[SKIP] %s (素材未随仓库下发)\n", name);
+            return;
+        }
+
+        PlaybackPlan plan;
+        plan.seekAfterBytes = 65536; // ≈ 0.37 s 的设备 PCM
+        plan.seekTargetMs   = 5000;
+        const PlaybackObservation observation
+            = playWholeTrack(fixture.mediaDir(), name, ".mkv", 120000, plan);
+        REQUIRE(observation.opened);
+        CHECK_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                      "seek 之后没有走到 EOS，状态 " << static_cast<int>(observation.endState)
+                                                     << " / " << observation.errorDetail);
+        CHECK(observation.bytes > 0);
+
+        // seek 生效的直接证据：目标之前的 PCM 被丢弃，交付时长明显短于整首。
+        const uint64_t declaredMs  = declaredDurationMs(fixture.mediaDir(), name, ".mkv");
+        const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+        REQUIRE(declaredMs > 5000);
+        CHECK_MESSAGE(deliveredMs + 1000 <= declaredMs,
+                      "seek 到 5000ms 之后仍交付了 " << deliveredMs << "ms / 标称 " << declaredMs
+                                                     << "ms：目标之前的 PCM 没有丢弃");
+    }
+
+    TEST_CASE("silence fill counter only covers the silence windows")    {
         RealMediaFixture fixture;
         if (!fixture.exists(kShortOgg)) {
             std::printf("[SKIP] %s (素材未随仓库下发)\n", kShortOgg);

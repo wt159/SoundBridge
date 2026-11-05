@@ -282,6 +282,91 @@ TEST_SUITE("PacketFactory")
                      << heldAfterMuchLater);
     }
 
+    // mkv 的增量包面（票面 #63 / 规格第 9 节 E10）。
+    //
+    // mkv 的块边界只有解复用器知道（变长块 + 交错 cluster，字节长度无法从采样数反推），
+    // 所以播放期重开一次 demux、按 offset 顺序读块：每拉一包，边界由 demux 在现场解析
+    // 经过的 cluster / block 头得到，不保留逐包时间轴、不建 seek 表。
+    // init 期只做一次只读扫描取标称时长，留下的全是 O(1) 定长摘要。
+    TEST_CASE("mkv packet factory recomputes block boundaries without holding the container")
+    {
+        RealMediaFixture fixture;
+        const std::string name("music-mkv.mkv");
+        if (!fixture.exists(name)) {
+            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+            return;
+        }
+
+        std::shared_ptr<FileSource> source;
+        std::unique_ptr<ExtractorHelper> extractor;
+        REQUIRE(fixture.create(name, ".mkv", source, extractor));
+        REQUIRE(extractor != nullptr);
+        REQUIRE(extractor->initCheck() == sdk_utils::OK);
+
+        // init 只读扫描：读完全文取标称时长，但不留逐包表、不建索引（读过 ≠ 常驻）。
+        CHECK(extractor->heldPayloadBytes() == 0);
+        // 未知总数用哨兵表示：0 的含义是「没有包」，那会让解码侧退回全量形式。
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+        // 标称时长仍按包时间轴累加。容器声明字段写错（music-mkv.mkv 把 393216 个采样
+        // 当毫秒写成 393.216 s）时不能改口径：24.576 s 与覆盖度基线一致。
+        CHECK(extractor->getAudioSpec().durationMs == 24576);
+
+        PacketCursor cursor(extractor.get());
+        AudioBuffer::AudioBufferPtr packet;
+        size_t count             = 0;
+        size_t totalBytes        = 0;
+        size_t maxPacketBytes    = 0;
+        size_t heldAfterMuchLater = 0;
+        size_t heldAtEnd         = 0;
+        off64_t lastPosition     = 0;
+        bool monotonicPosition   = true;
+
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            REQUIRE(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
+            maxPacketBytes = std::max(maxPacketBytes, packet->size());
+
+            // 边界在播放期按 offset 推进：位置只增不减，且不回读已交出的块。
+            const off64_t position = extractor->packetBytePosition();
+            if (position < lastPosition) {
+                monotonicPosition = false;
+            }
+            lastPosition = position;
+
+            if (count == 10) {
+                heldAfterMuchLater = extractor->heldPayloadBytes();
+            }
+        }
+        heldAtEnd = extractor->heldPayloadBytes();
+
+        // 一块一包：24.5 s 的素材不止十几个块，绝不是「整首一包」。
+        CHECK(count > 10);
+        CHECK(totalBytes > 0);
+        // 单块远小于整份 payload（789 KB）；上界只用来防整首一包的退化。
+        CHECK(maxPacketBytes < 64 * 1024);
+        CHECK(monotonicPosition);
+        // 持有量不随包数增长：第 100 包之后与序列末尾的读数必须相同。
+        CHECK(heldAfterMuchLater == heldAtEnd);
+        // 常驻只有 AVIO 缓冲（判据公式里的独立项），提取器自己不记 payload。
+        CHECK(heldAtEnd == 0);
+
+        // 二次迭代：顺序重放 seek（#49 第二档）依赖「游标回起点后能再走一遍」。
+        cursor.rewind();
+        size_t secondCount = 0;
+        size_t secondBytes = 0;
+        while (cursor.nextPacket(packet)) {
+            ++secondCount;
+            secondBytes += packet->size();
+        }
+        CHECK(secondCount == count);
+        CHECK(secondBytes == totalBytes);
+
+        MESSAGE(name << ": packets " << count << ", totalBytes " << totalBytes
+                     << ", maxPacketBytes " << maxPacketBytes << ", held " << heldAtEnd);
+    }
+
     TEST_CASE("real single-block file exposes its whole payload as one packet")
     {
         RealMediaFixture fixture;
