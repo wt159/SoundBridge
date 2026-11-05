@@ -5,6 +5,7 @@
 #include "AudioCommon.hpp"
 #include "AudioDecode.h"
 #include "AudioRingBuffer.h"
+#include "DecodeSupplyObserver.h"
 #include "ErrorUtils.h"
 #include "ExtractorHelper.hpp"
 #include "Lazy.hpp"
@@ -27,7 +28,9 @@ class VorbisDecode;
 
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
 
-class AudioStreamDecoder : public NonCopyable, public AudioDecodeCallback {
+class AudioStreamDecoder : public NonCopyable,
+                            public AudioDecodeCallback,
+                            public DecodeSupplyObserver {
 public:
     AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &devSpec);
     ~AudioStreamDecoder();
@@ -78,6 +81,13 @@ protected:
     // 单包解不出、已被 ffmpeg 路径跳过：只记账，EOS 时汇总成一条 DataCorrupted。
     void onAudioDecodeSkip() override;
 
+public:
+    // 增量供给的记账钩子（DecodeSupplyObserver，票面 #60）：由解码线程在拉包/放包时调用。
+    // 持有量会先增后减，峰值必须挂在 alloc/free 事件上重新采样，不能只在 start/首帧/EOS 采。
+    void onPacketAcquired(size_t bytes) override;
+    void onPacketReleased(size_t bytes) override;
+    void onPacketPulled(size_t totalPulled) override;
+
 private:
     size_t calculateMinWriteSpace(AudioCodecID codecId) const;
     // 与 ring 内容同一档的 bytesPerMs：重采样生效时是设备格式，否则是源格式。
@@ -107,8 +117,12 @@ private:
     // 记一次「这一帧/这一包解不出，跳过继续」（规格 4.1 / F1）。
     // 不立即置 ERROR：坏帧的处置是播到结尾再汇总一条 DataCorrupted。
     void noteSkippedFrame(uint64_t count = 1);
-    // 分配记账：把「此刻为当前曲目持有多少字节」喂给峰值（只增不减，见 StreamMetrics.h）。
+    // 分配记账：把「此刻为当前曲目持有多少字节」喂给峰值。
+    // 增量供给下持有量会先增后减，所以调用点挂在 alloc/free 事件上（见 refreshHeldPeak）。
     void noteHeldBytes(size_t bytes);
+    // 重新算一次「当前持有量」并喂给峰值：解码侧手上的包 + 提取器的解复用缓冲 + 解码器
+    // 自己那两块固定缓冲（O(1)）。ring 与 AVIO 是判据公式里的独立项，不在这里计。
+    void refreshHeldPeak();
     // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
     void setError(sdk::ErrorCode code, const char *detail);
 
@@ -170,6 +184,11 @@ private:
     std::atomic<size_t> m_silenceFills;
     std::atomic<uint64_t> m_startToFirstPcmUs;
     std::atomic<uint64_t> m_initScanUs;
+    // 解码侧此刻手上的包字节数（alloc/free 增量，只在解码线程读写）。
+    size_t m_packetHeldBytes;
+    // 本任务已拉到的包数，与「首帧那一刻」的快照（并行判据的结构证据）。
+    std::atomic<size_t> m_packetsPulled;
+    std::atomic<size_t> m_packetsPulledAtFirstPcm;
     std::chrono::steady_clock::time_point m_startClock;
     bool m_firstPcmNoted;
 
