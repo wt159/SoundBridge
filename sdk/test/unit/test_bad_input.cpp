@@ -821,7 +821,10 @@ std::vector<char> wrapWithId3(const std::vector<char> &audio, const std::vector<
     return wrapped;
 }
 
-// 提取器给出的 payload（getMetaData）。规格 7.3 M6：跳过 tag 不得改动它。
+// 提取器给出的音频 payload（规格 7.3 M6：跳过 tag 不得改动它）。
+// #66 contract 后 getMetaData() 的整块视图退出生产链（对无 override 的格式返回
+// nullptr），改与 AudioDecodeProcess / 生产链同构地用 PacketCursor 逐包拼出整段；
+// 拼接出的字节序列与旧整块视图等价，M6 的零容差差分覆盖面不受影响。
 std::vector<char> extractorPayload(const std::string &path, const char *extension)
 {
     FileSource source(path.c_str());
@@ -833,11 +836,13 @@ std::vector<char> extractorPayload(const std::string &path, const char *extensio
     if (!extractor || extractor->initCheck() != sdk_utils::OK) {
         return std::vector<char>();
     }
-    AudioBuffer::AudioBufferPtr payload = extractor->getMetaData();
-    if (!payload || payload->size() == 0) {
-        return std::vector<char>();
+    std::vector<char> payload;
+    PacketCursor cursor(extractor.get());
+    AudioBuffer::AudioBufferPtr packet;
+    while (cursor.nextPacket(packet)) {
+        payload.insert(payload.end(), packet->data(), packet->data() + packet->size());
     }
-    return std::vector<char>(payload->data(), payload->data() + payload->size());
+    return payload;
 }
 
 
@@ -1682,8 +1687,12 @@ TEST_SUITE("BadInput")
         CHECK(bad.bytes == 0);
     }
 
-    // 规格 3.2 P2 / T3：ogg 的截断一律拒绝（第三方 demux 的页链校验，自有代码没有
-    // clamp 的着力点，写成已知例外）。ring 累计 0 字节且报错。
+    // 规格第 7 章 / §13（#50，线性四步第 ③ 步）：原 init 期判死的 ogg 页链断改判
+    // 「播放期包耗尽 + ring 累计 0 字节 + EOS 汇总」，属 B1 兜底、不是第二拒绝出口。
+    // 坏文件不在工厂被判死：createExtractor()==nullptr 仍是唯一出口（B2 零改写）。
+    // 判据数值一字不动（ring 累计 0 字节），只把断言位置从工厂移到播放期观测：
+    // rejected() 以 !created || !initOk 判拒绝，与「唯一出口」口径不同，这里直接看
+    // measureStream() 的 opened / bytes / state，不把合法降级误判成拒绝。
     TEST_CASE("ogg truncation is rejected and plays nothing")
     {
         RealMediaFixture fixture;
@@ -1697,13 +1706,19 @@ TEST_SUITE("BadInput")
         std::string badPath = tmp.make(".ogg");
         REQUIRE(writeWholeFile(badPath, keepPercent(good, 60)));
 
-        CHECK(rejected(openExtractor(badPath, ".ogg")));
         StreamMeasurement bad = measureStream(badPath, ".ogg", 10000);
-        CHECK(bad.bytes == 0);
-        CHECK(bad.state != StreamDecoderState::EOS);
+        CHECK(bad.opened);                              // 工厂未拒绝：坏文件进入播放期
+        CHECK(bad.bytes == 0);                          // ring 累计 0 字节（数值不变）
+        CHECK(bad.state == StreamDecoderState::EOS);    // 播放期包耗尽后 EOS 汇总
     }
 
-    // 规格 3.4 #10 / 3.2 P2：m4a 的 moov 在尾部，砍 1KB 把它切断 → 拒绝。
+    // 规格第 7 章 / §13（#50，线性四步第 ③ 步）：moov 断的「工厂拒绝」断言按 B1 兜底
+    // 收口——拒绝的唯一出口仍是 createExtractor()==nullptr（工厂拿不到 moov、spec 硬
+    // 不变量不合格），不在工厂另开「坏文件判死」的第二出口；判据数值（ring 累计 0 字节）
+    // 不变，只把断言从 rejected()（混 initOk）移到播放期观测，避免把合法降级误判成拒绝。
+    // 现状说明：#64 后 moov 仍是 init 期必需结构，读不到即由工厂唯一出口兜底拒绝，
+    // 播放路径未启动、state 停在 IDLE 而非 EOS；按规格完全改成「播放期 EOS 汇总」需后续
+    // effort 改 init 扫描容错，本票只移断言位置、不动其余 53 条原样用例。
     // 素材换成 music-alac.m4a：规格点名的 摇滚乐_Freesound.m4a 其实是 faststart 布局
     // （moov 在前、mdat 在后），砍尾巴砍到的是音频，见 findings-36。
     TEST_CASE("m4a with its trailing moov cut off is rejected")
@@ -1741,9 +1756,9 @@ TEST_SUITE("BadInput")
         std::string badPath = tmp.make(".m4a");
         REQUIRE(writeWholeFile(badPath, dropTailBytes(good, 1024)));
 
-        CHECK(rejected(openExtractor(badPath, ".m4a")));
         StreamMeasurement bad = measureStream(badPath, ".m4a", 10000);
-        CHECK(bad.bytes == 0);
+        CHECK(!bad.opened);      // 播放期包耗尽：唯一出口兜底拒绝后没有产出
+        CHECK(bad.bytes == 0);   // ring 累计 0 字节（数值不变）
     }
 
     // ---- 以下用例来自 #37（坏帧：跳过继续）----
