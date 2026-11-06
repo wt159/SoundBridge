@@ -190,7 +190,9 @@ TEST_SUITE("PacketFactory")
         CHECK(packet->size() == 3);
     }
 
-    TEST_CASE("real packetised file keeps legacy packet boundaries through the cursor")
+    // #64：ape 已迁到增量供给。APE 无 ffmpeg parser，包边界只能由 APEPacketReader
+    // 在播放期现场重算、逐包交给解码器；不再有常驻逐包表，也不建索引（读过 ≠ 常驻）。
+    TEST_CASE("ape packet factory recomputes frame boundaries without holding the stream")
     {
         RealMediaFixture fixture;
         const std::string name("music-ape.ape");
@@ -205,27 +207,35 @@ TEST_SUITE("PacketFactory")
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
-        const std::vector<AudioBuffer::AudioBufferPtr> legacy = extractor->getPacketizedMetaData();
-        REQUIRE(legacy.size() > 1);
+        CHECK(extractor->getPacketizedMetaData().empty());
+        CHECK(extractor->getMetaData() == nullptr);
+        CHECK(extractor->heldPayloadBytes() == 0);
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
 
         PacketCursor cursor(extractor.get());
-        size_t index = 0;
-        std::vector<char> replayed;
         AudioBuffer::AudioBufferPtr packet;
+        size_t count      = 0;
+        size_t totalBytes = 0;
         while (cursor.nextPacket(packet)) {
-            REQUIRE(index < legacy.size());
-            CHECK(packet->size() == legacy[index]->size());
-            CHECK(packet.get() == legacy[index].get());
-            replayed.insert(replayed.end(), packet->data(), packet->data() + packet->size());
-            ++index;
+            REQUIRE(packet != nullptr);
+            REQUIRE(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
         }
-        CHECK(index == legacy.size());
+        CHECK(count > 1);
+        CHECK(totalBytes > 0);
+        CHECK(extractor->heldPayloadBytes() == 0);
 
-        // 整块视图只是拼合产物：游标依次拼起来必须与它逐位一致。
-        AudioBuffer::AudioBufferPtr joined = extractor->getMetaData();
-        REQUIRE(joined != nullptr);
-        REQUIRE(replayed.size() == joined->size());
-        CHECK(std::memcmp(replayed.data(), joined->data(), joined->size()) == 0);
+        // 顺序重放 seek（#49 第二档）：游标回起点后能再走一遍同样的包序列。
+        cursor.rewind();
+        size_t secondCount = 0;
+        size_t secondBytes = 0;
+        while (cursor.nextPacket(packet)) {
+            ++secondCount;
+            secondBytes += packet->size();
+        }
+        CHECK(secondCount == count);
+        CHECK(secondBytes == totalBytes);
     }
 
     // FLAC 的增量包面（票面 #60 / 规格第 9 节 E7）。
@@ -565,7 +575,10 @@ TEST_SUITE("PacketFactory")
         CHECK(spec.durationMs > 0);
     }
 
-    TEST_CASE("real single-block file exposes its whole payload as one packet")
+    // #61 起 wav 按定长切片成多个 PCM 包，不再暴露「整块 = 单包」的旧视图；
+    // 切片对齐与连续性由 "wav and aiff packet factory..." 用例锁定，这里只确认
+    // 旧形式确实退场、包边界改由现场重算给出。
+    TEST_CASE("wav packet cursor yields pcm slices instead of a single joined block")
     {
         RealMediaFixture fixture;
         const std::string name("music.wav");
@@ -580,16 +593,23 @@ TEST_SUITE("PacketFactory")
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
-        AudioBuffer::AudioBufferPtr joined = extractor->getMetaData();
-        REQUIRE(joined != nullptr);
-        CHECK(joined->size() > 0);
+        CHECK(extractor->getMetaData() == nullptr);
+        CHECK(extractor->getPacketizedMetaData().empty());
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+        CHECK(extractor->heldPayloadBytes() == 0);
 
         PacketCursor cursor(extractor.get());
         AudioBuffer::AudioBufferPtr packet;
-        REQUIRE(cursor.nextPacket(packet));
-        CHECK(packet->size() == joined->size());
-        CHECK(std::memcmp(packet->data(), joined->data(), joined->size()) == 0);
-        CHECK(cursor.nextPacket(packet) == false);
+        size_t count      = 0;
+        size_t totalBytes = 0;
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            CHECK(packet->size() > 0);
+            ++count;
+            totalBytes += packet->size();
+        }
+        CHECK(count > 1);
+        CHECK(totalBytes > 0);
     }
 
     // wav / aiff 的增量包面（票面 #61 / 规格第 9 节 E8）。
