@@ -270,9 +270,10 @@ TEST_SUITE("StreamingBudget")
                     << ", deliveredBytes " << observation.bytes);
         }
 
-        // 首播延迟判据（规格第 5 节）：长短素材对 start()→设备首次 write() 的延迟差
-        // ≤ 150ms。init 只读扫描耗时（initScanUs）单独记「启动开销」，不进判据、不设阈值。
-        // 复用上面两个素材已跑完的观测，不新增一次长素材播放（不新增耗时 gate）。
+        // 首播延迟判据（规格第 5 节 / 票面 #67）：长短素材对 start()→设备首次 write()
+        // 的延迟差 ≤ 150ms。素材就是 spec :105 指定的跨格式对（3.7 s ogg ↔ 259 s wma），
+        // 复用上面已跑完的 observations[0]/[1]，不新增一次长素材播放（不新增耗时 gate）。
+        // 首播延迟只反映启动开销、与 codec / 解码器缓冲无关，跨格式可比，故此处判绿。
         const uint64_t shortUs = observations[0].metrics.startToFirstPcmUs;
         const uint64_t longUs  = observations[1].metrics.startToFirstPcmUs;
         const uint64_t gapUs   = shortUs > longUs ? shortUs - longUs : longUs - shortUs;
@@ -282,12 +283,32 @@ TEST_SUITE("StreamingBudget")
         MESSAGE("first-frame latency gap: short " << shortUs << "us, long " << longUs
                                                   << "us, gap " << gapUs << "us (<= 150000us)");
 
-        // 跨素材峰值差 |peak_long − peak_short| ≤ P（规格第 5 节）在本素材矩阵下不可验：
-        // ogg 只有 1 首短素材（3.7 s）、wma 只有 1 首长素材（259 s），没有同格式的长短配对，
-        // 跨格式比较会把 codec / 解码器工作缓冲差异混进峰值差，不能归因于素材时长。
-        // 不伪造素材、不放宽判据：这一条留给后续 effort 补素材。当前用 O(1) 结构性证据
-        // 论证「读过 ≠ 常驻」——绝对上界（peak ≤ ring + P + 64KB + O(1)，见下方各格式用例）、
-        // 并行（首帧时包序列未耗尽）、整块反例被判红、两次运行 peak 逐位复现。
+        // 跨素材峰值差（规格第 5 节 / 票面 #67）：spec :100/:105 字面把
+        // |peak_long − peak_short| ≤ P 绑定在这对跨格式长短素材上——与上面首播延迟差
+        // 是同一对、复用同样两份观测，不再是「一处用跨格式对、一处说跨格式对不可用」。
+        //
+        // 明确承认 spec 口径与实际判据的差异：这对实测峰值差约 28 KB（短 ogg 4608 /
+        // 长 wma 33325），主要来自 wma 的解码器工作缓冲（WMAV2 单包解约 0.7 s PCM），
+        // 数学上不能归因于约 70 倍时长差；按 spec 全局 P（15 行实测最大包 92828 × 2
+        // = 185656）虽数值可过，但该容差比工作缓冲差大一个量级、判据形同虚设，且需
+        // 新增 15 行包形量测或写死常量，超出本票授权。因此本套件按「绝对上界 +
+        // 结构性 O(1) 证据」覆盖同一判据意图：各格式用例的 peak ≤ upper、并行
+        // （首帧时包序列未耗尽）、整块反例被判红、两次运行 peak 逐位复现。
+        // 是否补同格式长短素材、按 spec 字面直接判 ≤ P，留给主 agent 决策。
+        // 下面用同一对观测落成一条真实断言：70 倍时长下常驻峰值没有线性增长（O(1)）。
+        const uint64_t shortPeak = observations[0].metrics.peakHeldBytes;
+        const uint64_t longPeak  = observations[1].metrics.peakHeldBytes;
+        const uint64_t peakGap   = longPeak > shortPeak ? longPeak - shortPeak
+                                                        : shortPeak - longPeak;
+        // 若常驻随素材时长线性增长，259 s 素材的峰值应约为 3.7 s 的 70 倍；增量供给下
+        // 它仍在同一量级（实测 33325 vs 4608），整块反例（约 65 MB）会被这条断言判红。
+        CHECK_MESSAGE(longPeak < shortPeak * 70,
+                      "259 s 素材常驻峰值 " << longPeak << " 相对 3.7 s 的 " << shortPeak
+                      << " 呈线性增长，违背 O(1) 常驻");
+        MESSAGE("held-peak gap (same cross-format pair): short " << shortPeak
+                                                                 << ", long " << longPeak
+                                                                 << ", gap " << peakGap
+                                                                 << "; |Δ| <= spec P not asserted (口径差异见上)");
     }
 
     // —— 常驻上界与并行两条判据（规格第 5 节 / 票面 #60 的验收门禁）——
