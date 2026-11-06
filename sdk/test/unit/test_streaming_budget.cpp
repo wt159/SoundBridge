@@ -1131,6 +1131,146 @@ TEST_SUITE("StreamingBudget")
         }
     }
 
+    // native RA 档的 seek 精度（规格第 6 节 / #49 第一档）：FLAC / Vorbis 由播放期存活的
+    // 解码器实例原地定位，m_seekDiscardBytes 清零，seek 后交付的 PCM 就是「从目标点到结尾」
+    // 的真实字节数。判据与顺序重放档同形、同一容差形式 max(target × 1%, 150ms)；
+    // 不逐位比对 PCM（消费端已丢弃、有损格式会假红）。
+    TEST_CASE("native random access seek lands on the target for flac and vorbis")
+    {
+        RealMediaFixture fixture;
+
+        const struct {
+            const char *name;
+            const char *extension;
+            uint64_t targetMs;
+            int timeoutMs;
+        } raCases[] = {
+            { kFlac, ".flac", 60000, 300000 }, // 297 s，seek 到 60 s
+            { kShortOgg, ".ogg", 1500, 60000 }, // 3.7 s，seek 到 1.5 s
+        };
+
+        for (size_t i = 0; i < sizeof(raCases) / sizeof(raCases[0]); ++i) {
+            const std::string name(raCases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            // Vorbis 走 native RA，提取器规格既不带 samples 也不带 bytesPerSample（由解码首帧回填）；
+            // 整段长度取 init 期给出的标称时长，字节口径取 ring 里的设备格式（makeDevSpec）。
+            const uint64_t declaredMs
+                = declaredDurationMs(fixture.mediaDir(), name, raCases[i].extension);
+            REQUIRE(declaredMs > raCases[i].targetMs);
+
+            PlaybackPlan plan;
+            plan.seekAfterBytes = 65536; // ≈ 0.37 s 的设备 PCM
+            plan.seekTargetMs   = raCases[i].targetMs;
+            const PlaybackObservation observation = playWholeTrack(
+                fixture.mediaDir(), name, raCases[i].extension, raCases[i].timeoutMs, plan);
+            REQUIRE(observation.opened);
+            REQUIRE_MESSAGE(observation.seekCompleted,
+                            name << ": native RA seek 没有落地，状态 "
+                                 << static_cast<int>(observation.endState) << "，错误 "
+                                 << static_cast<int>(observation.error));
+            REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                            name << ": seek 之后没有走到 EOS，状态 "
+                                 << static_cast<int>(observation.endState) << " / "
+                                 << observation.errorDetail);
+
+            const uint64_t targetMs    = raCases[i].targetMs;
+            const uint64_t toleranceMs = std::max<uint64_t>(targetMs / 100, 150);
+            const uint64_t firstMs     = observation.firstPcmMsAfterSeek;
+            CHECK_MESSAGE(firstMs + toleranceMs >= targetMs,
+                          name << ": seek 后首帧时间 " << firstMs << " ms 早于目标 " << targetMs
+                               << " ms 超过 " << toleranceMs << " ms");
+            CHECK_MESSAGE(firstMs <= targetMs + toleranceMs,
+                          name << ": seek 后首帧时间 " << firstMs << " ms 晚于目标 " << targetMs
+                               << " ms 超过 " << toleranceMs << " ms");
+
+            // native RA 不丢弃 PCM（m_seekDiscardBytes 清零），交付量是「目标点到结尾」的真实字节数，
+            // 所以期望值按精确字节率折算；容差折算仍用解码器的整数 bytesPerMs（同一口径）。
+            const AudioSpec dev = makeDevSpec();
+            const uint64_t bytesPerSec = static_cast<uint64_t>(dev.sampleRate)
+                * static_cast<uint64_t>(dev.numChannel)
+                * static_cast<uint64_t>(dev.bytesPerSample);
+            const uint64_t bytesPerMs = bytesPerSec / 1000;
+            REQUIRE(bytesPerMs > 0);
+            const size_t expectedAfter = static_cast<size_t>(
+                (declaredMs - targetMs) * bytesPerSec / 1000);
+            const size_t toleranceBytes = static_cast<size_t>(toleranceMs * bytesPerMs);
+            const size_t delivered      = observation.bytesAfterSeek;
+            CHECK_MESSAGE(delivered + toleranceBytes >= expectedAfter,
+                          name << ": seek 后交付 " << delivered << " 字节，少于期望 "
+                               << expectedAfter << "（容差 " << toleranceBytes << "）");
+            CHECK_MESSAGE(delivered <= expectedAfter + toleranceBytes,
+                          name << ": seek 后交付 " << delivered << " 字节，多于期望 "
+                               << expectedAfter << "（容差 " << toleranceBytes << "）");
+
+            MESSAGE(name << ": seek " << targetMs << " ms, firstPcm " << firstMs
+                         << " ms, delivered after seek " << delivered << " / expected "
+                         << expectedAfter << ", tolerance " << toleranceMs << " ms / "
+                         << toleranceBytes << " bytes, total " << observation.bytes
+                         << ", packets " << observation.metrics.packetsPulled);
+        }
+    }
+
+    // 两类降级之二（规格第 6 节 / #49）：目标超出可解内容 → 不在 seek 入口拒绝，
+    // 由 EOS 汇总按 m_seekBaseMs + 解出时长 与标称时长比，汇总成既有 DataTruncated。
+    // 两档各取一种格式锁定：顺序重放（wav）与 native RA（Vorbis）。
+    TEST_CASE("seek past the end is summarized as DataTruncated at EOS")
+    {
+        RealMediaFixture fixture;
+        const struct {
+            const char *name;
+            const char *extension;
+            bool useSourceSpec;
+        } cases[] = {
+            { "music.wav", ".wav", true },  // 顺序重放档，源规格即设备规格
+            { kShortOgg, ".ogg", false },   // native RA 档，用默认设备规格
+        };
+
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            const std::string name(cases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            AudioSpec devSpec = makeDevSpec();
+            if (cases[i].useSourceSpec) {
+                const TrackFacts facts = probeTrack(fixture.mediaDir(), name.c_str(),
+                                                    cases[i].extension);
+                REQUIRE(facts.ok);
+                devSpec = facts.spec;
+            }
+
+            const uint64_t declaredMs
+                = declaredDurationMs(fixture.mediaDir(), name, cases[i].extension);
+            REQUIRE(declaredMs > 0);
+            PlaybackPlan plan;
+            plan.seekAfterBytes = 65536;
+            plan.seekTargetMs   = declaredMs + 5000; // 明确超出标称时长
+            const PlaybackObservation observation = playWholeTrack(
+                fixture.mediaDir(), name, cases[i].extension, 60000, plan, devSpec);
+            REQUIRE(observation.opened);
+            CHECK_MESSAGE(observation.error == sdk::ErrorCode::DataTruncated,
+                          name << ": 超界 seek 没有汇总成 DataTruncated，错误码 "
+                               << static_cast<int>(observation.error) << " / "
+                               << observation.errorDetail);
+            CHECK_MESSAGE(observation.endState == StreamDecoderState::ERROR,
+                          name << ": 超界 seek 没有在 EOS 汇总处上报错误，末状态 "
+                               << static_cast<int>(observation.endState));
+            CHECK_MESSAGE(!observation.errorDetail.empty(),
+                          name << ": EOS 汇总没有给出错误原因");
+            MESSAGE(name << ": seek " << plan.seekTargetMs << " ms / declared " << declaredMs
+                         << " ms -> error " << static_cast<int>(observation.error) << " ("
+                         << observation.errorDetail << "), delivered after seek "
+                         << observation.bytesAfterSeek << ", total " << observation.bytes);
+        }
+    }
+
     // —— 最后一批「不可增量」格式（票面 #64 / 规格第 9 节 E11）——
     // m4a（AAC + ALAC）/ ape / asf / wma 复用 mkv 的现场重算机制：init 只读扫描只留
     // O(1) 摘要，播放期由各容器的 Reader 重开 demux、按 offset 逐包给出边界。

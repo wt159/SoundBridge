@@ -208,6 +208,51 @@ TEST_SUITE("PlaybackPosition")
         decoder.stop();
     }
 
+    // 两类降级之一（规格第 6 节 / #49 / ADR 0002）：标称时长未知（durationMs == 0）时
+    // 不写「不支持 seek」档、不新增拒绝出口与错误码，seek 照常按已消费 PCM 落到目标
+    // （与 positionMs 同源）；EOS 处 haveNominal=false，不误报 DataTruncated。
+    // 「pos == 0 例外」由既有 seekToMs(0) 用例覆盖；唯一返回 INVALID_OPERATION 的旧形式
+    // ExtractorHelper::seekToMs 不在本接缝内（留给 #66 contract）。
+    TEST_CASE("seek with unknown duration degrades without a new rejection")
+    {
+        AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
+        AudioSpec spec = makeSpec(0); // 0 = 未知时长
+        // PCM 远大于 ring：解码线程在整段写完之前不会走到 EOS，seek 一定能被取走，
+        // 不依赖「抢在 EOS 之前」的时序运气（SEEKING 窗口只有 12 ms）。
+        const size_t totalBytes = pcmBytesForMs(30000);
+        PcmExtractor extractor(spec, totalBytes);
+        AudioStreamDecoder decoder(&ring, spec);
+
+        REQUIRE(decoder.start(&extractor) == sdk_utils::OK);
+        REQUIRE(decoder.durationMs() == 0);
+        REQUIRE(drainBytes(ring, kChunkBytes) == kChunkBytes); // 25 ms
+        REQUIRE(decoder.positionMs() == 25);
+
+        // 未知时长不拒绝：目标照常落地，位置口径与稳态播放同源。
+        decoder.seekToMs(2000);
+        int waited = 0;
+        while (waited <= 5000 && decoder.positionMs() != 2000) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            waited += 2;
+        }
+        REQUIRE(decoder.positionMs() == 2000);
+
+        // seek 之后仍有 PCM 可交付，排空到 EOS。
+        const size_t expectedAfter = totalBytes - pcmBytesForMs(2000);
+        REQUIRE(drainBytes(ring, expectedAfter, 30000) == expectedAfter);
+        waited = 0;
+        while (waited <= 5000 && decoder.state() != StreamDecoderState::EOS
+               && decoder.state() != StreamDecoderState::ERROR) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            waited += 2;
+        }
+        CHECK(decoder.state() == StreamDecoderState::EOS);
+        // haveNominal=false：既不报 DataTruncated，也不新增任何错误码。
+        CHECK(decoder.errorCode() == sdk::ErrorCode::Ok);
+        CHECK(decoder.errorCode() != sdk::ErrorCode::DataTruncated);
+        decoder.stop();
+    }
+
     TEST_CASE("duration comes from the extractor and stays constant while playing")
     {
         AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
