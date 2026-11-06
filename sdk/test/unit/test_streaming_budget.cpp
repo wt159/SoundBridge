@@ -282,6 +282,18 @@ TEST_SUITE("StreamingBudget")
         const char *kFlac = "小镇姑娘-陶喆.flac";
         const size_t kAvioHeadroomBytes = 64 * 1024;
 
+        // spec 5 判据 `peak <= ring + P + 64KB(AVIO) + O(1) 摘要` 里的 O(1) 项。
+        // AudioStreamDecoder::refreshHeldPeak() 把解码器自己的两块工作缓冲
+        // （m_interleaveBuf / m_resampleBuf）计入 peak，这是 #60 起所有走 ffmpeg packet
+        // loop 的格式共享的记账口径：只随单帧 PCM 大小变化，不随素材时长增长，也不是
+        // 提取器侧常驻。既有 helper 的 upper 只写了 ring + P + 64KB，把这块漏了；多数
+        // 格式单帧很小、被余量吸收，因此一直没暴露。
+        // asf 的 WMAV2 一个 ASF data packet 会一次解出约 0.7s PCM（30720 samples ×
+        // 2ch × 4B），两块缓冲实测各 245760、合计 491520 —— 迁移前后都存在，与边解边播
+        // 契约无关（迁移消掉的是随包数增长的整首 payload）。取 2 × ring 容量作名义上界，
+        // 紧覆盖实测值并给单帧大小的小幅波动留余量。
+        const size_t kDecoderWorkspaceBytes = AudioRingBuffer::kDefaultCapacity * 2;
+
         struct PacketProfile {
             size_t count          = 0;
             size_t maxPacketBytes = 0;
@@ -1117,5 +1129,102 @@ TEST_SUITE("StreamingBudget")
                          << expectedAfter << ", total " << observation.bytes << ", packets "
                          << observation.metrics.packetsPulled);
         }
+    }
+
+    // —— 最后一批「不可增量」格式（票面 #64 / 规格第 9 节 E11）——
+    // m4a（AAC + ALAC）/ ape / asf / wma 复用 mkv 的现场重算机制：init 只读扫描只留
+    // O(1) 摘要，播放期由各容器的 Reader 重开 demux、按 offset 逐包给出边界。
+    // 判据与 mkv 用例同形：常驻上界 + 并行 + EOS + 覆盖度 + 现场重算成本。
+    namespace
+    {
+        void checkBoundaryRecomputedFormat(const RealMediaFixture &fixture, const char *name,
+                                          const char *extension, int timeoutMs,
+                                          size_t decoderWorkspaceBytes = 0)
+        {
+            const std::string fileName(name);
+            INFO(fileName);
+            if (!fixture.exists(fileName)) {
+                MESSAGE("[SKIP] " << fileName << " (素材未随仓库下发)");
+                return;
+            }
+
+            const PacketProfile profile
+                = measurePacketProfile(fixture.mediaDir(), name, extension);
+            REQUIRE(profile.count > 1);
+            REQUIRE(profile.maxPacketBytes > 0);
+            MESSAGE(fileName << ": maxPacket " << profile.maxPacketBytes);
+
+            const PlaybackObservation observation
+                = playWholeTrack(fixture.mediaDir(), fileName, extension, timeoutMs);
+            REQUIRE(observation.opened);
+            REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                            fileName << ": 没有走到 EOS，状态 "
+                                     << static_cast<int>(observation.endState) << " / "
+                                     << observation.errorDetail);
+            CHECK(observation.bytes > 0);
+
+            const size_t upper = AudioRingBuffer::kDefaultCapacity
+                + profile.maxPacketBytes * 2 + kAvioHeadroomBytes + decoderWorkspaceBytes;
+            CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                          fileName << ": 常驻峰值 " << observation.metrics.peakHeldBytes
+                                   << " 超过上界 " << upper);
+
+            CHECK(observation.metrics.packetsPulled >= profile.count);
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm >= 1,
+                          fileName << ": 首帧交付时供给序列还没开始");
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm
+                              < observation.metrics.packetsPulled,
+                          fileName << ": 首帧交付时供给序列已经耗尽：解码与消费没有并行");
+            CHECK(observation.metrics.packetBoundaryMicros > 0);
+
+            const uint64_t declaredMs
+                = declaredDurationMs(fixture.mediaDir(), fileName, extension);
+            const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+            const uint64_t tolerance   = RealMediaFixture::coverageToleranceMs(declaredMs);
+            REQUIRE(declaredMs > 0);
+            CHECK(deliveredMs + tolerance >= declaredMs);
+            CHECK(deliveredMs <= declaredMs + tolerance);
+
+            MESSAGE(fileName << ": packets " << profile.count << " (maxPacket "
+                             << profile.maxPacketBytes << "), peak "
+                             << observation.metrics.peakHeldBytes << " / upper " << upper
+                             << ", firstPcm packets "
+                             << observation.metrics.packetsPulledAtFirstPcm << "/"
+                             << observation.metrics.packetsPulled << ", delivered "
+                             << deliveredMs << "ms / declared " << declaredMs
+                             << "ms, boundaryMicros "
+                             << observation.metrics.packetBoundaryMicros);
+        }
+    } // namespace
+
+    TEST_CASE("m4a aac stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "摇滚乐_Freesound.m4a", ".m4a", 120000);
+    }
+
+    TEST_CASE("m4a alac stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "music-alac.m4a", ".m4a", 120000);
+    }
+
+    TEST_CASE("ape stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "music-ape.ape", ".ape", 120000);
+    }
+
+    TEST_CASE("asf stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "萨克斯机.asf", ".asf", 120000,
+                                      kDecoderWorkspaceBytes);
+    }
+
+    TEST_CASE("wma stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "十七岁-陶喆.96.wma", ".wma", 300000);
     }
 }

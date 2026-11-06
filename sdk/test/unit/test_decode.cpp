@@ -391,11 +391,20 @@ TEST_SUITE("AudioDecode")
         AudioDecode decode(extractor->getAudioCodecID(), &callback, config);
         REQUIRE(decode.initCheck() == sdk_utils::OK);
 
-        AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
-        REQUIRE(metaData != nullptr);
-        REQUIRE(metaData->size() > 0);
+        // #64 起 ape 不再有常驻逐包表或整块视图：包边界由 APEPacketReader 现场重算，
+        // 与生产链同构地用 PacketCursor 逐包取齐再 decodePackets（无 parser 的 codec
+        // 必须逐包交付，拼整块只能解出开头）。
+        std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+        if (packets.empty() && extractor->packetCount() != 0) {
+            PacketCursor cursor(extractor.get());
+            AudioBuffer::AudioBufferPtr packet;
+            while (cursor.nextPacket(packet)) {
+                packets.push_back(packet);
+            }
+        }
+        REQUIRE(packets.empty() == false);
 
-        const int result = decode.decode(metaData->data(), static_cast<ssize_t>(metaData->size()));
+        const int result = decode.decodePackets(packets);
         CHECK(result >= 0);
         CHECK(callback.decodeCount > 0);
         CHECK(callback.lastSpec.spec.sampleRate > 0);
@@ -481,7 +490,17 @@ TEST_SUITE("AudioDecode")
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
         REQUIRE(extractor->getAudioCodecID() == AUDIO_CODEC_ID_WMAV2);
 
-        const std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+        // #64 起 asf 的包边界由 ASFPacketReader 在播放期现场重算，旧逐包表为空；
+        // 与生产链同构地用 PacketCursor 逐包取齐（"packetized fallback" 不变，
+        // 只是取包来源从常驻表换成现场重算）。
+        std::vector<AudioBuffer::AudioBufferPtr> packets = copyPacketizedMeta(*extractor);
+        if (packets.empty() && extractor->packetCount() != 0) {
+            PacketCursor cursor(extractor.get());
+            AudioBuffer::AudioBufferPtr packet;
+            while (cursor.nextPacket(packet)) {
+                packets.push_back(packet);
+            }
+        }
         REQUIRE(packets.empty() == false);
 
         std::vector<AudioBuffer::AudioBufferPtr> frames;

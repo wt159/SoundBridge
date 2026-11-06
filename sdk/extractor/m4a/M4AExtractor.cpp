@@ -1,100 +1,11 @@
 #include "M4AExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
-#include <climits>
 #include <cstring>
-#include <vector>
-extern "C" {
-#include "libavformat/avformat.h"
-#include "libavutil/avutil.h"
-}
 
 #define LOG_TAG "M4AExtractor"
 
 using namespace sdk_utils;
-
-static int sampleRateToIndex(int sampleRate)
-{
-    static const int kSampleRates[] = { 96000, 88200, 64000, 48000, 44100, 32000, 24000,
-                                        22050, 16000, 12000, 11025, 8000,  7350 };
-    for (int i = 0; i < (int)(sizeof(kSampleRates) / sizeof(kSampleRates[0])); ++i) {
-        if (kSampleRates[i] == sampleRate) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static bool parseAudioSpecificConfig(const uint8_t *data, int size, int &audioObjectType,
-                                     int &sampleRateIndex, int &channelConfig)
-{
-    if (!data || size < 2) {
-        return false;
-    }
-    int bitpos   = 0;
-    auto getBits = [&](int n) -> int {
-        int out = 0;
-        for (int i = 0; i < n; ++i) {
-            int byte = (bitpos >> 3);
-            int bit  = 7 - (bitpos & 7);
-            if (byte >= size) {
-                return -1;
-            }
-            out = (out << 1) | ((data[byte] >> bit) & 1);
-            bitpos++;
-        }
-        return out;
-    };
-
-    int aot = getBits(5);
-    if (aot < 0) {
-        return false;
-    }
-    if (aot == 31) {
-        int ext = getBits(6);
-        if (ext < 0) {
-            return false;
-        }
-        aot = 32 + ext;
-    }
-    int srIndex = getBits(4);
-    if (srIndex < 0) {
-        return false;
-    }
-    if (srIndex == 0x0F) {
-        int sr = getBits(24);
-        if (sr < 0) {
-            return false;
-        }
-        srIndex = sampleRateToIndex(sr);
-    }
-    int ch = getBits(4);
-    if (ch < 0) {
-        return false;
-    }
-
-    audioObjectType = aot;
-    sampleRateIndex = srIndex;
-    channelConfig   = ch;
-    return true;
-}
-
-static void buildAdtsHeader(uint8_t *out, int profile, int sampleRateIndex, int channelConfig,
-                            int frameLen)
-{
-    // profile: 0 = Main, 1 = LC, 2 = SSR, 3 = LTP
-    if (profile < 0) {
-        profile = 1;
-    }
-    out[0] = 0xFF;
-    out[1] = 0xF1;
-    out[2] = (uint8_t)(((profile & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2)
-                       | ((channelConfig >> 2) & 0x01));
-    out[3] = (uint8_t)(((channelConfig & 0x03) << 6) | ((frameLen >> 11) & 0x03));
-    out[4] = (uint8_t)((frameLen >> 3) & 0xFF);
-    out[5] = (uint8_t)(((frameLen & 0x07) << 5) | 0x1F);
-    out[6] = 0xFC;
-}
 
 static bool readHeader(DataSourceBase *source, uint8_t *buf, size_t size)
 {
@@ -118,69 +29,73 @@ M4AExtractor::M4AExtractor(DataSourceBase *source)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
     , m_codecExtraData(nullptr)
     , m_initCheck(NO_INIT)
-    , m_validFormat(false)
     , m_audioSpec()
     , m_bitRate(0)
     , m_blockAlign(0)
+    , m_fileSize(0)
+    , m_audioPacketCount(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
+    , m_sequenceOffset(0)
 {
     m_initCheck = initWithFFmpegDemux();
 }
 
 M4AExtractor::~M4AExtractor() { }
 
-int M4AExtractor::avioRead(void *opaque, uint8_t *buf, int buf_size)
+M4APacketReader *M4AExtractor::reader()
 {
-    if (!opaque || !buf || buf_size <= 0) {
-        return AVERROR_EOF;
+    // 解复用面在播放期（解码线程第一次拉包时）创建：init 期的 demux 在扫描结束后已经关掉了。
+    if (m_reader == nullptr && m_dataSource != nullptr && m_fileSize > 0) {
+        m_reader.reset(new M4APacketReader(m_dataSource, m_fileSize));
+        m_nextPacketIndex = 0;
+        m_sequenceOffset  = 0;
     }
-    AvioData *ctx = reinterpret_cast<AvioData *>(opaque);
-    if (!ctx->source) {
-        return AVERROR_EOF;
-    }
-    ssize_t n = ctx->source->readAt(ctx->pos, buf, static_cast<size_t>(buf_size));
-    if (n <= 0) {
-        return AVERROR_EOF;
-    }
-    ctx->pos += n;
-    return static_cast<int>(n);
+    return m_reader.get();
 }
 
-int64_t M4AExtractor::avioSeek(void *opaque, int64_t offset, int whence)
+AudioBuffer::AudioBufferPtr M4AExtractor::packetAt(size_t index)
 {
-    if (!opaque) {
-        return -1;
+    M4APacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return nullptr;
     }
-    AvioData *ctx = reinterpret_cast<AvioData *>(opaque);
-    if (!ctx->source) {
-        return -1;
-    }
-    if (whence == AVSEEK_SIZE) {
-        return ctx->size;
-    }
-
-    int64_t newPos = ctx->pos;
-    switch (whence & ~AVSEEK_FORCE) {
-    case SEEK_SET:
-        newPos = offset;
-        break;
-    case SEEK_CUR:
-        newPos = ctx->pos + offset;
-        break;
-    case SEEK_END:
-        newPos = ctx->size + offset;
-        break;
-    default:
-        return -1;
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到本段起点重来
+    // （新任务从流头开始，顺序重放 seek 之后同样回到流头）。其余跳跃不接受。
+    if (index == 0) {
+        if (!packetReader->seekTo(m_sequenceOffset)) {
+            return nullptr;
+        }
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
     }
 
-    if (newPos < 0) {
-        newPos = 0;
+    AudioBuffer::AudioBufferPtr packet;
+    if (!packetReader->nextPacket(packet)) {
+        return nullptr;
     }
-    if (ctx->size >= 0 && newPos > ctx->size) {
-        newPos = ctx->size;
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+bool M4AExtractor::seekPacketByte(off64_t offset)
+{
+    M4APacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return false;
     }
-    ctx->pos = newPos;
-    return ctx->pos;
+    if (!packetReader->seekTo(offset)) {
+        return false;
+    }
+    m_sequenceOffset  = offset;
+    m_nextPacketIndex = 0;
+    return true;
+}
+
+off64_t M4AExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
 }
 
 status_t M4AExtractor::initWithFFmpegDemux()
@@ -191,182 +106,70 @@ status_t M4AExtractor::initWithFFmpegDemux()
         LOGW("initWithFFmpegDemux invalid file size");
         return NO_INIT;
     }
+    m_fileSize = fileSize;
 
-    AvioData ioCtxData;
-    ioCtxData.source = m_dataSource;
-    ioCtxData.pos    = 0;
-    ioCtxData.size   = static_cast<int64_t>(fileSize);
-
-    const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
-    if (!ioBuffer) {
-        LOGE("initWithFFmpegDemux av_malloc failed");
-        return NO_MEMORY;
-    }
-
-    AVIOContext *avioCtx
-        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &M4AExtractor::avioRead,
-                             nullptr, &M4AExtractor::avioSeek);
-    if (!avioCtx) {
-        av_free(ioBuffer);
-        LOGE("initWithFFmpegDemux avio_alloc_context failed");
-        return NO_MEMORY;
-    }
-
-    AVFormatContext *fmt = avformat_alloc_context();
-    if (!fmt) {
-        avio_context_free(&avioCtx);
-        LOGE("initWithFFmpegDemux avformat_alloc_context failed");
-        return NO_MEMORY;
-    }
-    fmt->pb     = avioCtx;
-    fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
-
-    int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
-    if (ret < 0) {
-        LOGW("initWithFFmpegDemux avformat_open_input failed: %d", ret);
-        avformat_free_context(fmt);
-        avio_context_free(&avioCtx);
+    // init 期的 demux 只服务这一次**只读扫描**，结束时整个关掉（ADR 0003：只留 O(1) 摘要）。
+    M4APacketReader scanner(m_dataSource, fileSize);
+    if (!scanner.open()) {
+        LOGW("initWithFFmpegDemux demux open failed");
         return NO_INIT;
     }
 
-    ret = avformat_find_stream_info(fmt, nullptr);
-    if (ret < 0) {
-        LOGW("initWithFFmpegDemux avformat_find_stream_info failed: %d", ret);
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_INIT;
-    }
-
-    int audioIndex = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    if (audioIndex < 0) {
-        LOGW("initWithFFmpegDemux no audio stream");
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_INIT;
-    }
-
-    AVStream *audioStream = fmt->streams[audioIndex];
-    if (!audioStream || !audioStream->codecpar) {
+    M4AStreamInfo info;
+    if (!scanner.streamInfo(info)) {
         LOGW("initWithFFmpegDemux invalid audio stream");
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
         return NO_INIT;
     }
 
-    AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate = par->sample_rate;
-    m_audioSpec.numChannel = par->channels;
+    m_audioCodecID         = static_cast<AudioCodecID>(info.codecId);
+    m_audioSpec.sampleRate = info.sampleRate;
+    m_audioSpec.numChannel = info.channels;
     m_audioSpec.bitsPerSample
-        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+        = info.bitsPerCodedSample > 0 ? info.bitsPerCodedSample : info.bitsPerRawSample;
     m_audioSpec.bytesPerSample
         = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate          = static_cast<int>(par->bit_rate);
-    m_blockAlign       = static_cast<int>(par->block_align);
-    if (par->extradata && par->extradata_size > 0) {
-        m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
-        memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
+    m_bitRate          = info.bitRate;
+    m_blockAlign       = info.blockAlign;
+    if (!info.extradata.empty()) {
+        m_codecExtraData = std::make_shared<AudioBuffer>(info.extradata.size());
+        memcpy(m_codecExtraData->data(), info.extradata.data(), info.extradata.size());
     }
 
-    AVPacket *pkt = av_packet_alloc();
-    if (!pkt) {
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_MEMORY;
-    }
-
-    bool useAdts = (par->codec_id == AV_CODEC_ID_AAC);
-    int aot      = 2;
-    int srIndex  = sampleRateToIndex(par->sample_rate);
-    int chCfg    = par->channels;
-    if (useAdts && par->extradata && par->extradata_size > 0) {
-        int paot = 0, psr = -1, pch = 0;
-        if (parseAudioSpecificConfig(par->extradata, par->extradata_size, paot, psr, pch)) {
-            aot = paot;
-            if (psr >= 0) {
-                srIndex = psr;
-            }
-            if (pch > 0) {
-                chCfg = pch;
-            }
-        }
-    }
-    if (useAdts && srIndex < 0) {
-        useAdts = false;
-    }
-
-    // 逐包累加时长（#39 / 规格 6.2 S1）：包时长来自 stts 解出的时间轴，不受
-    // mdhd/mvhd 里那个声明值污染；本就在遍历全部包，零额外 IO。抄 MKV 的既有做法。
+    // 只读扫描：逐包走完整份文件，只为按**包时间轴**累加标称时长，逐包丢掉负载。
+    // 时长归属（#15 / #39）：以逐包 duration 累加为准，mdhd/mvhd 的声明值只作兜底；
+    // 包时长来自 stts 解出的时间轴，不受容器脏字段污染。moov 即便在尾部也只是被读一遍，
+    // 不留下任何随包数增长的索引 / 逐包时间轴 / seek 表（ADR 0003「读过 ≠ 常驻」）。
     int64_t totalPktDuration = 0;
-    while (av_read_frame(fmt, pkt) >= 0) {
-        if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            // 每个解复用包当一个 payload：ADTS 包装也按包做，边界天然对齐（#17）。
-            size_t frameSize = static_cast<size_t>(pkt->size);
-            if (useAdts) {
-                frameSize += 7;
-            }
-            AudioBuffer::AudioBufferPtr packet = std::make_shared<AudioBuffer>(frameSize);
-            size_t fill                        = 0;
-            if (useAdts) {
-                int profile = aot - 1;
-                if (aot == 5 || aot == 29) {
-                    profile = 1; // use AAC LC in ADTS
-                }
-                uint8_t adts[7];
-                buildAdtsHeader(adts, profile, srIndex, chCfg, static_cast<int>(frameSize));
-                memcpy(packet->data(), adts, 7);
-                fill = 7;
-            }
-            memcpy(packet->data() + fill, pkt->data, static_cast<size_t>(pkt->size));
-            m_packetizedMetaBuf.push_back(packet);
-
-            if (pkt->duration > 0) {
-                totalPktDuration += pkt->duration;
-            }
+    AudioBuffer::AudioBufferPtr packet;
+    while (scanner.nextPacket(packet)) {
+        ++m_audioPacketCount;
+        if (scanner.lastPacketDuration() > 0) {
+            totalPktDuration += scanner.lastPacketDuration();
         }
-        av_packet_unref(pkt);
+        packet.reset();
     }
-    av_packet_free(&pkt);
+    const uint64_t measuredMs = (totalPktDuration > 0 && info.timeBaseMs > 0)
+        ? static_cast<uint64_t>(totalPktDuration * info.timeBaseMs + 0.5)
+        : 0;
+    const int64_t declaredUs = scanner.declaredDurationUs();
 
-    uint64_t measuredMs = 0;
-    if (totalPktDuration > 0) {
-        const double scale = av_q2d(audioStream->time_base) * 1000.0;
-        if (scale > 0) {
-            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
-        }
-    }
-    const uint64_t declaredMs
-        = fmt->duration > 0 ? static_cast<uint64_t>(fmt->duration / 1000) : 0;
+    // demux 到此为止：播放期会按需重开一个（规格 4.3 所有权清单）。
+    scanner.close();
+
     if (measuredMs > 0) {
         m_audioSpec.durationMs = measuredMs;
-        // S5：只打一条日志，不新增错误码、不进 UI——音频本身是完好的，报错是误伤。
-        const uint64_t diff
-            = declaredMs > measuredMs ? declaredMs - measuredMs : measuredMs - declaredMs;
-        if (declaredMs > 0 && diff * 100 > declaredMs) {
-            LOGW("declared duration %llu ms disagrees with packet timeline %llu ms (using packet "
-                 "timeline)",
-                 static_cast<unsigned long long>(declaredMs),
-                 static_cast<unsigned long long>(measuredMs));
-        }
-    } else if (declaredMs > 0) {
-        m_audioSpec.durationMs = declaredMs;
-        LOGW("no packet timeline, fall back to container duration %llu ms",
-             static_cast<unsigned long long>(declaredMs));
+    } else if (declaredUs > 0) {
+        m_audioSpec.durationMs = static_cast<uint64_t>(declaredUs / 1000);
     }
 
-    avformat_close_input(&fmt);
-    avio_context_free(&avioCtx);
-
-    if (m_packetizedMetaBuf.empty()) {
-        LOGW("initWithFFmpegDemux no audio payload collected");
+    if (m_audioPacketCount == 0) {
+        LOGW("initWithFFmpegDemux no audio payload found");
         return NO_INIT;
     }
 
-    m_validFormat = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
-         m_packetizedMetaBuf.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, audioPackets=%zu", m_audioCodecID,
+         m_audioPacketCount);
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }
