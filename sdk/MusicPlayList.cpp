@@ -30,7 +30,12 @@ MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, Aud
     LOG_INFO(LOG_TAG, "MusicPlayList construct");
 }
 
-MusicPlayList::~MusicPlayList() { }
+MusicPlayList::~MusicPlayList()
+{
+    // 析构是「join 必须由发起线程完成」的唯一例外（规格 4.4「析构例外」）：
+    // 这里同样只 join、不 detach，销毁顺序是 decoder 先于 ring（见 PlaybackTask）。
+    stopCurrentTask();
+}
 
 void MusicPlayList::addMusic(const std::string &musicPath)
 {
@@ -168,7 +173,6 @@ bool MusicPlayList::skipToNextPlayable()
     }
     size_t count      = m_curIndex.load();
     size_t startIndex = m_selectMusicProperties->index;
-    size_t prevIndex  = startIndex;
     // step 从 1 开始且最多 count-1：本曲已经在播/已失败，绕回它自己就是「同一曲重试第二次」，
     // 也会让两首坏曲互相跳过变成死循环（规格 8.2 / 实现清单 21）。
     for (size_t step = 1; step < count; ++step) {
@@ -177,12 +181,11 @@ bool MusicPlayList::skipToNextPlayable()
         if (isTrackFailed(candidate->index)) {
             continue;
         }
-        if (!startStreaming(candidate)) {
+        if (!replacePlaybackTask(candidate)) {
             markTrackFailed(candidate->index);
             continue;
         }
-        releaseDecodedBuffersExcept(candidate->index, prevIndex);
-        candidate->signalProperties.curDataOffset = 0;
+        resetTrackProgressExcept(candidate->index);
         candidate->signalProperties.curPositionMs = 0;
         m_selectMusicProperties                   = candidate;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -287,7 +290,6 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         MetricTags { currentTraceId(), musicPath, static_cast<int>(musicProperties->index) });
     processProperties.extractor    = extractor;
     signalProperties.curPositionMs = 0;
-    signalProperties.curDataOffset = 0;
     signalProperties.spec          = extractor->getAudioSpec();
     signalProperties.durationMs    = signalProperties.spec.durationMs;
     signalProperties.dataSize      = 0;
@@ -295,9 +297,8 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     m_musicListProperties.push_back(musicProperties);
     m_curIndex++;
     if (m_selectMusicProperties == nullptr) {
-        if (!startStreaming(musicProperties)) {
-            return;
-        }
+        // 只登记「当前曲目」：ring / decoder 是播放任务的资源，在 play 时创建。
+        // 扫描阶段（包括给下一首做预缓冲）不持有任何播放资源（规格 4.3 所有权清单）。
         m_selectMusicProperties = musicProperties;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
     }
@@ -310,14 +311,13 @@ bool MusicPlayList::selectTrack(size_t index)
         return false;
     }
 
-    MusicPropertiesPtr prev = m_selectMusicProperties;
-    size_t prevIndex        = prev ? prev->index : SIZE_MAX;
     MusicPropertiesPtr next = m_musicListProperties.at(index);
-    if (!startStreaming(next)) {
+    // 切歌窗口：旧任务在新任务 start() 之前 stop+join 并销毁旧 ring，
+    // 所以上一首的 PCM 不可能流进下一首（规格 4.1 切歌行）。
+    if (!replacePlaybackTask(next)) {
         return false;
     }
-    releaseDecodedBuffersExcept(next->index, prevIndex);
-    next->signalProperties.curDataOffset = 0;
+    resetTrackProgressExcept(next->index);
     next->signalProperties.curPositionMs = 0;
     m_selectMusicProperties              = next;
     m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -343,55 +343,103 @@ void MusicPlayList::_updateList()
     }
 }
 
-bool MusicPlayList::startStreaming(const MusicPropertiesPtr &musicProperties)
+PlaybackTaskPtr MusicPlayList::currentTask() const
+{
+    std::lock_guard<std::mutex> lock(m_taskMutex);
+    return m_currentTask;
+}
+
+bool MusicPlayList::startCurrentTask()
+{
+    MusicPropertiesPtr current = m_selectMusicProperties;
+    if (current == nullptr) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        // 暂停后恢复、重复 play：同一个任务还活着就沿用，别把已经缓冲好的 PCM 扔掉。
+        // 判据只认 MusicPlayerState 的投影（decoder 状态），不新增状态机。
+        if (m_currentTask != nullptr && m_currentTask->trackIndex == current->index
+            && m_currentTask->decoder != nullptr
+            && m_currentTask->decoder->state() != StreamDecoderState::IDLE
+            && m_currentTask->decoder->state() != StreamDecoderState::ERROR) {
+            return true;
+        }
+    }
+    return replacePlaybackTask(current);
+}
+
+void MusicPlayList::stopCurrentTask()
+{
+    PlaybackTaskPtr task;
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        task.swap(m_currentTask);
+    }
+    if (task == nullptr) {
+        return;
+    }
+    // 在这里 join：发起任务的控制线程自己收尾，禁止 detach / 后台 join。
+    // 已写进 ring 的 PCM 不 drain——任务整体销毁，旧数据随 ring 一起消失。
+    if (task->decoder != nullptr) {
+        task->decoder->stop();
+    }
+    task->decoder.reset();
+    task->ring.reset();
+}
+
+bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicProperties)
 {
     if (musicProperties == nullptr) {
         return false;
     }
-
-    if (musicProperties->streamDecoder != nullptr) {
-        StreamDecoderState state = musicProperties->streamDecoder->state();
-        if (state != StreamDecoderState::IDLE && state != StreamDecoderState::ERROR) {
-            return true;
-        }
-        musicProperties->streamDecoder->stop();
-        musicProperties->streamDecoder.reset();
-        musicProperties->ringBuffer.reset();
-    }
-
     ProcessProperties &processProperties = musicProperties->processProperties;
     if (processProperties.extractor == nullptr) {
         reportError(ErrorCode::ExtractorInitFailed, "extractor is nullptr", musicProperties);
         return false;
     }
 
-    auto ringBuffer         = std::make_shared<AudioRingBuffer>(AudioRingBuffer::kDefaultCapacity);
-    auto decoder            = std::make_shared<AudioStreamDecoder>(ringBuffer.get(), m_devSpec);
+    // 切歌开销：新任务 start() 之前销毁旧任务（join + 丢 ring）的那段时间。
+    // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
+    const auto switchStart = std::chrono::steady_clock::now();
+
+    // 顺序不可交换：先 stop+join 旧任务、旧 ring 引用计数归零，再建新任务。
+    stopCurrentTask();
+
+    std::shared_ptr<AudioRingBuffer> ring
+        = std::make_shared<AudioRingBuffer>(AudioRingBuffer::kDefaultCapacity);
+    std::shared_ptr<AudioStreamDecoder> decoder
+        = std::make_shared<AudioStreamDecoder>(ring.get(), m_devSpec);
+    // start() 内部先 stop/join 自己的旧线程（本实例刚建，无旧线程），再起一个新解码线程。
+    // ring 的 reset() 在新解码线程的第一件事里做（规格 4.4：只有解码线程能 reset）。
     sdk_utils::status_t ret = decoder->start(processProperties.extractor.get());
     if (ret != OK || decoder->state() == StreamDecoderState::ERROR) {
+        decoder->stop();
         return false;
     }
 
-    musicProperties->ringBuffer    = ringBuffer;
-    musicProperties->streamDecoder = decoder;
+    PlaybackTaskPtr task = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->index);
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        m_currentTask = task;
+    }
+
+    const auto switchEnd = std::chrono::steady_clock::now();
+    const auto switchMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              switchEnd - switchStart)
+                              .count();
+    Metrics::RecordTiming("track_switch_ms", static_cast<uint64_t>(switchMs),
+                          MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                                       static_cast<int>(musicProperties->index) });
     return true;
 }
 
-void MusicPlayList::releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2)
+void MusicPlayList::resetTrackProgressExcept(size_t keepIndex)
 {
     for (auto &item : m_musicListProperties) {
-        if (item == nullptr) {
+        if (item == nullptr || item->index == keepIndex) {
             continue;
         }
-        if (item->index == keepIndex || item->index == keepIndex2) {
-            continue;
-        }
-        if (item->streamDecoder != nullptr) {
-            item->streamDecoder->stop();
-        }
-        item->streamDecoder.reset();
-        item->ringBuffer.reset();
-        item->signalProperties.curDataOffset = 0;
         item->signalProperties.curPositionMs = 0;
         item->signalProperties.dataSize      = 0;
     }

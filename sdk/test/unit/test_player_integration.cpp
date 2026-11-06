@@ -6,6 +6,20 @@
 
 using namespace sdk;
 
+namespace {
+// 轮询等状态到位：播放器把控制命令丢进工作队列异步执行，固定 sleep 容易跑在命令前面。
+bool waitForState(MusicPlayer &player, MusicPlayerState want, int timeoutMs = 3000)
+{
+    const int step = 20;
+    for (int waited = 0; waited < timeoutMs; waited += step) {
+        if (player.state() == want)
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(step));
+    }
+    return player.state() == want;
+}
+} // namespace
+
 TEST_SUITE("MusicPlayer State Transitions")
 {
     TEST_CASE("initial state is stopped")
@@ -202,5 +216,45 @@ TEST_SUITE("MusicPlayer Playback Mode")
 
         player.setPlaybackMode(MusicPlaybackMode::Loop);
         CHECK(player.playbackMode() == MusicPlaybackMode::Loop);
+    }
+}
+
+TEST_SUITE("MusicPlayer Interactive Paths")
+{
+    // 回归：暂停只 stop 不 close（恢复时沿用同一个 SDL 设备），若恢复时再 open 一次，
+    // open() 会以 "already open" 失败，被当成 AudioDeviceOpenFailed 并触发自动跳过，
+    // 用户看到的是「点继续播放却跳到下一首」。
+    TEST_CASE("pause then play resumes on the same device")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav"))
+            return;
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+
+        player.addMusicDir(fixture.mediaDir());
+        for (int i = 0; i < 40 && player.getMusicCount() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (player.getMusicCount() == 0)
+            return;
+
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState))
+            return; // 没有可用音频设备：首次 play 就起不来，暂停/恢复无从验证
+
+        const int errors_before = listener.error_count;
+        player.pause();
+        CHECK(waitForState(player, MusicPlayerState::PausedState));
+
+        player.play();
+        CHECK(waitForState(player, MusicPlayerState::PlayingState));
+        CHECK(listener.error_count == errors_before);
+
+        // 等 stop 真正执行完再出作用域：命令是异步排队的，析构与队列里的 _stop 撞车会
+        // 让两个线程同时关同一个设备（见后续 issue），这里的等待只是避免测试自己制造竞态。
+        player.stop();
+        CHECK(waitForState(player, MusicPlayerState::StoppedState));
     }
 }

@@ -4,6 +4,7 @@
 #include <AudioStreamDecoder.h>
 #include <DataSource.hpp>
 #include <ExtractorFactory.h>
+#include <ExtractorHelper.hpp>
 #include <FileSource.h>
 #include <algorithm>
 #include <cstdlib>
@@ -525,7 +526,9 @@ TEST_SUITE("ExtractorFactory")
         REQUIRE(extractor == nullptr);
     }
 
-    TEST_CASE("ASF packetized payload from checked-in media")
+    // #64：asf 已迁到增量供给，不再有常驻逐包表。旧的两个整块视图都为空，
+    // 包边界由 PacketCursor 在播放期现场重算（ADR 0003「读过 ≠ 常驻」）。
+    TEST_CASE("asf exposes packet boundaries through the cursor without a resident table")
     {
         RealMediaFixture fixture;
         REQUIRE(fixture.exists("萨克斯机.asf"));
@@ -536,64 +539,29 @@ TEST_SUITE("ExtractorFactory")
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
-        const std::vector<AudioBuffer::AudioBufferPtr> packets = extractor->getPacketizedMetaData();
-        REQUIRE(packets.empty() == false);
-        CHECK(packets.size() > 1);
+        CHECK(extractor->getPacketizedMetaData().empty());
+        CHECK(extractor->getMetaData() == nullptr);
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+        CHECK(extractor->heldPayloadBytes() == 0);
 
+        PacketCursor cursor(extractor.get());
+        AudioBuffer::AudioBufferPtr packet;
+        size_t count = 0;
         size_t total = 0;
-        for (size_t i = 0; i < packets.size(); ++i) {
-            REQUIRE(packets[i] != nullptr);
-            CHECK(packets[i]->size() > 0);
-            total += packets[i]->size();
+        while (cursor.nextPacket(packet)) {
+            REQUIRE(packet != nullptr);
+            CHECK(packet->size() > 0);
+            total += packet->size();
+            ++count;
         }
-
-        REQUIRE(extractor->getMetaData() != nullptr);
-        CHECK(total == extractor->getMetaData()->size());
+        CHECK(count > 1);
+        CHECK(total > 0);
     }
 
-    // 决策来源：#17——payload 只有一种表示（解复用边界），整块视图由基类按需拼合并缓存。
-    // 这么定是因为「拼接后送解码」只在 codec 有 ffmpeg parser 时安全：aac/mp3/flac/vorbis 有，
-    // ape/wmav2/alac/pcm 没有，后者整块送进去只能解出开头（APE 曾 4.6s / 24.9s）。
-    // 边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
-    TEST_CASE("packetized payload is the only representation")
-    {
-        struct PayloadCase {
-            const char *fileName;
-            const char *extension;
-        };
-        const PayloadCase cases[] = {
-            { "music-ape.ape", ".ape" },
-            { "萨克斯机.asf", ".asf" },
-            { "music-mkv.mkv", ".mkv" },
-            { "摇滚乐_Freesound.m4a", ".m4a" },
-        };
-
-        RealMediaFixture fixture;
-        for (const auto &item : cases) {
-            INFO(item.fileName);
-            std::shared_ptr<FileSource> source;
-            std::unique_ptr<ExtractorHelper> extractor;
-            REQUIRE(fixture.create(item.fileName, item.extension, source, extractor));
-            REQUIRE(extractor->initCheck() == sdk_utils::OK);
-
-            const std::vector<AudioBuffer::AudioBufferPtr> packets
-                = extractor->getPacketizedMetaData();
-            REQUIRE(packets.size() > 1);
-
-            size_t total = 0;
-            for (size_t i = 0; i < packets.size(); ++i) {
-                REQUIRE(packets[i] != nullptr);
-                CHECK(packets[i]->size() > 0);
-                total += packets[i]->size();
-            }
-
-            AudioBuffer::AudioBufferPtr joined = extractor->getMetaData();
-            REQUIRE(joined != nullptr);
-            CHECK(joined->size() == total);
-            // 拼合结果要缓存，否则每次取整块都重新拷一遍
-            CHECK(extractor->getMetaData().get() == joined.get());
-        }
-    }
+    // #64 之后，m4a / ape / asf / wma 连同此前的 flac / mkv 都走增量供给，
+    // 没有任何格式再持有常驻逐包表；「packetized payload is the only representation」
+    // 用例锁的旧形式已无对象可测，随 PayloadCase 表一并退场。各格式的包形状由
+    // PacketFactory / StreamingBudget 套件从包工厂面锁定，旧形式的统一清理归 #66。
 }
 
 TEST_SUITE("AudioSpec comparison")
@@ -962,8 +930,8 @@ TEST_SUITE("ExtractorRealMedia")
 
     // 回归：APE 在 ffmpeg 里没有 parser，AudioDecode 遇到无 parser 的 codec 时会把
     // 「一整块输入」当成单个 packet 送进解码器，只解出第一帧（73728 采样 = 4608ms），
-    // 之后 flush 收尾，表现为播到 4.6s 就切歌。提取器必须按 packet 暴露数据
-    // （getPacketizedMetaData），解码器才会逐包解码，覆盖标称时长。
+    // 之后 flush 收尾，表现为播到 4.6s 就切歌。#64 起边界由 APEPacketReader 在播放期
+    // 现场重算、逐包交给生产链（不再有常驻 getPacketizedMetaData 表），覆盖标称时长。
     TEST_CASE("APE decode covers advertised duration")
     {
         RealMediaFixture fixture;
@@ -974,7 +942,9 @@ TEST_SUITE("ExtractorRealMedia")
         REQUIRE(extractor != nullptr);
         REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
-        CHECK(extractor->getPacketizedMetaData().size() > 1);
+        CHECK(extractor->getPacketizedMetaData().empty());
+        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
+        CHECK(extractor->heldPayloadBytes() == 0);
 
         const AudioSpec spec = extractor->getAudioSpec();
         REQUIRE(spec.durationMs > 0);

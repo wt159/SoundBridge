@@ -1,14 +1,7 @@
 #include "MKVExtractor.h"
 #include "ErrorUtils.h"
 #include "LogWrapper.h"
-#include <climits>
 #include <cstring>
-#include <vector>
-extern "C" {
-#include "libavformat/avformat.h"
-#include "libavutil/avutil.h"
-#include "libavutil/rational.h"
-}
 
 #define LOG_TAG "MKVExtractor"
 
@@ -37,69 +30,73 @@ MKVExtractor::MKVExtractor(DataSourceBase *source)
     , m_audioCodecID(AUDIO_CODEC_ID_NONE)
     , m_codecExtraData(nullptr)
     , m_initCheck(NO_INIT)
-    , m_validFormat(false)
     , m_audioSpec()
     , m_bitRate(0)
     , m_blockAlign(0)
+    , m_fileSize(0)
+    , m_audioPacketCount(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
+    , m_sequenceOffset(0)
 {
     m_initCheck = initWithFFmpegDemux();
 }
 
 MKVExtractor::~MKVExtractor() { }
 
-int MKVExtractor::avioRead(void *opaque, uint8_t *buf, int buf_size)
+MKVPacketReader *MKVExtractor::reader()
 {
-    if (!opaque || !buf || buf_size <= 0) {
-        return AVERROR_EOF;
+    // 解复用面在播放期（解码线程第一次拉包时）创建：init 期的 demux 在扫描结束后已经关掉了。
+    if (m_reader == nullptr && m_dataSource != nullptr && m_fileSize > 0) {
+        m_reader.reset(new MKVPacketReader(m_dataSource, m_fileSize));
+        m_nextPacketIndex = 0;
+        m_sequenceOffset  = 0;
     }
-    AvioData *ctx = reinterpret_cast<AvioData *>(opaque);
-    if (!ctx->source) {
-        return AVERROR_EOF;
-    }
-    ssize_t n = ctx->source->readAt(ctx->pos, buf, static_cast<size_t>(buf_size));
-    if (n <= 0) {
-        return AVERROR_EOF;
-    }
-    ctx->pos += n;
-    return static_cast<int>(n);
+    return m_reader.get();
 }
 
-int64_t MKVExtractor::avioSeek(void *opaque, int64_t offset, int whence)
+AudioBuffer::AudioBufferPtr MKVExtractor::packetAt(size_t index)
 {
-    if (!opaque) {
-        return -1;
+    MKVPacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return nullptr;
     }
-    AvioData *ctx = reinterpret_cast<AvioData *>(opaque);
-    if (!ctx->source) {
-        return -1;
-    }
-    if (whence == AVSEEK_SIZE) {
-        return ctx->size;
-    }
-
-    int64_t newPos = ctx->pos;
-    switch (whence & ~AVSEEK_FORCE) {
-    case SEEK_SET:
-        newPos = offset;
-        break;
-    case SEEK_CUR:
-        newPos = ctx->pos + offset;
-        break;
-    case SEEK_END:
-        newPos = ctx->size + offset;
-        break;
-    default:
-        return -1;
+    // 只支持顺序拉取。index == 0 是「本段包序列的第一包」：回到本段起点重来
+    // （新任务从流头开始，顺序重放 seek 之后同样回到流头）。其余跳跃不接受。
+    if (index == 0) {
+        if (!packetReader->seekTo(m_sequenceOffset)) {
+            return nullptr;
+        }
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
     }
 
-    if (newPos < 0) {
-        newPos = 0;
+    AudioBuffer::AudioBufferPtr packet;
+    if (!packetReader->nextPacket(packet)) {
+        return nullptr;
     }
-    if (ctx->size >= 0 && newPos > ctx->size) {
-        newPos = ctx->size;
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+bool MKVExtractor::seekPacketByte(int64_t offset)
+{
+    MKVPacketReader *packetReader = reader();
+    if (packetReader == nullptr) {
+        return false;
     }
-    ctx->pos = newPos;
-    return ctx->pos;
+    if (!packetReader->seekTo(offset)) {
+        return false;
+    }
+    m_sequenceOffset  = offset;
+    m_nextPacketIndex = 0;
+    return true;
+}
+
+int64_t MKVExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
 }
 
 status_t MKVExtractor::initWithFFmpegDemux()
@@ -110,140 +107,73 @@ status_t MKVExtractor::initWithFFmpegDemux()
         LOGW("initWithFFmpegDemux invalid file size");
         return NO_INIT;
     }
+    m_fileSize = fileSize;
 
-    AvioData ioCtxData;
-    ioCtxData.source = m_dataSource;
-    ioCtxData.pos    = 0;
-    ioCtxData.size   = static_cast<int64_t>(fileSize);
-
-    const int ioBufferSize = 64 * 1024;
-    uint8_t *ioBuffer      = static_cast<uint8_t *>(av_malloc(ioBufferSize));
-    if (!ioBuffer) {
-        LOGE("initWithFFmpegDemux av_malloc failed");
-        return NO_MEMORY;
-    }
-
-    AVIOContext *avioCtx
-        = avio_alloc_context(ioBuffer, ioBufferSize, 0, &ioCtxData, &MKVExtractor::avioRead,
-                             nullptr, &MKVExtractor::avioSeek);
-    if (!avioCtx) {
-        av_free(ioBuffer);
-        LOGE("initWithFFmpegDemux avio_alloc_context failed");
-        return NO_MEMORY;
-    }
-
-    AVFormatContext *fmt = avformat_alloc_context();
-    if (!fmt) {
-        avio_context_free(&avioCtx);
-        LOGE("initWithFFmpegDemux avformat_alloc_context failed");
-        return NO_MEMORY;
-    }
-    fmt->pb     = avioCtx;
-    fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
-
-    int ret = avformat_open_input(&fmt, nullptr, nullptr, nullptr);
-    if (ret < 0) {
-        LOGW("initWithFFmpegDemux avformat_open_input failed: %d", ret);
-        avformat_free_context(fmt);
-        avio_context_free(&avioCtx);
+    // init 期的 demux 只服务这一次**只读扫描**，结束时整个关掉（ADR 0003：只留 O(1) 摘要）。
+    MKVPacketReader scanner(m_dataSource, fileSize);
+    if (!scanner.open()) {
+        LOGW("initWithFFmpegDemux demux open failed");
         return NO_INIT;
     }
 
-    ret = avformat_find_stream_info(fmt, nullptr);
-    if (ret < 0) {
-        LOGW("initWithFFmpegDemux avformat_find_stream_info failed: %d", ret);
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_INIT;
-    }
-
-    int audioIndex = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    if (audioIndex < 0) {
-        LOGW("initWithFFmpegDemux no audio stream");
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_INIT;
-    }
-
-    AVStream *audioStream = fmt->streams[audioIndex];
-    if (!audioStream || !audioStream->codecpar) {
+    MKVStreamInfo info;
+    if (!scanner.streamInfo(info)) {
         LOGW("initWithFFmpegDemux invalid audio stream");
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
         return NO_INIT;
     }
 
-    AVCodecParameters *par = audioStream->codecpar;
-    m_audioCodecID         = static_cast<AudioCodecID>(par->codec_id);
-    m_audioSpec.sampleRate = par->sample_rate;
-    m_audioSpec.numChannel = par->channels;
+    m_audioCodecID = static_cast<AudioCodecID>(info.codecId);
+    m_audioSpec.sampleRate = info.sampleRate;
+    m_audioSpec.numChannel = info.channels;
     m_audioSpec.bitsPerSample
-        = par->bits_per_coded_sample > 0 ? par->bits_per_coded_sample : par->bits_per_raw_sample;
+        = info.bitsPerCodedSample > 0 ? info.bitsPerCodedSample : info.bitsPerRawSample;
     m_audioSpec.bytesPerSample
         = m_audioSpec.bitsPerSample > 0 ? (m_audioSpec.bitsPerSample + 7) / 8 : 0;
     m_audioSpec.format = getAudioFormatByBitPreSample(m_audioSpec.bitsPerSample);
-    m_bitRate          = static_cast<int>(par->bit_rate);
-    m_blockAlign       = static_cast<int>(par->block_align);
-    if (par->extradata && par->extradata_size > 0) {
-        m_codecExtraData = std::make_shared<AudioBuffer>(par->extradata_size);
-        memcpy(m_codecExtraData->data(), par->extradata, par->extradata_size);
+    m_bitRate          = info.bitRate;
+    m_blockAlign       = info.blockAlign;
+    if (!info.extradata.empty()) {
+        m_codecExtraData = std::make_shared<AudioBuffer>(info.extradata.size());
+        memcpy(m_codecExtraData->data(), info.extradata.data(), info.extradata.size());
     }
 
-    AVPacket *pkt = av_packet_alloc();
-    if (!pkt) {
-        avformat_close_input(&fmt);
-        avio_context_free(&avioCtx);
-        return NO_MEMORY;
-    }
-
-    // 逐包累加时长：直接用包时间轴算真实内容长度，不读容器声明值（见下方注释）。
+    // 只读扫描：逐块走完整份文件，只为按**包时间轴**累加标称时长，逐块丢掉负载。
+    // 时长归属（#15）：以「逐包时长累加」为准，容器声明值只作兜底。Matroska 的
+    // Segment/Duration 是封装器写进去的，写法出错的工具真实存在——music-mkv.mkv 就把
+    // 393216 个采样当毫秒写成 393.216 s，实际只有 24.576 s。包时长来自解复用出的时间轴，
+    // 不受该字段污染；累加成本已经付过（本就在读文件）。
     int64_t totalPktDuration = 0;
-    while (av_read_frame(fmt, pkt) >= 0) {
-        if (pkt->stream_index == audioIndex && pkt->size > 0) {
-            // 只保留解复用边界，不另拼整块（#17）：MKV 里可能是无 parser 的 codec
-            //（ape/alac/pcm），整块送进去会被当成一个 packet，只能解出开头。
-            AudioBuffer::AudioBufferPtr packet
-                = std::make_shared<AudioBuffer>(static_cast<size_t>(pkt->size));
-            memcpy(packet->data(), pkt->data, static_cast<size_t>(pkt->size));
-            m_packetizedMetaBuf.push_back(packet);
-
-            if (pkt->duration > 0) {
-                totalPktDuration += pkt->duration;
-            }
+    AudioBuffer::AudioBufferPtr packet;
+    while (scanner.nextPacket(packet)) {
+        ++m_audioPacketCount;
+        if (scanner.lastPacketDuration() > 0) {
+            totalPktDuration += scanner.lastPacketDuration();
         }
-        av_packet_unref(pkt);
+        packet.reset();
     }
-    av_packet_free(&pkt);
+    const uint64_t measuredMs = (totalPktDuration > 0 && info.timeBaseMs > 0)
+        ? static_cast<uint64_t>(totalPktDuration * info.timeBaseMs + 0.5)
+        : 0;
 
-    // 时长归属（#15）：以「逐包时长累加」为准，容器声明值只作兜底。
-    // Matroska 的 Segment/Duration 是封装器写进去的，写法出错的工具真实存在——
-    // music-mkv.mkv 就把 393216 个采样当毫秒写成 393.216s，实际只有 24.576s。
-    // 包时长来自解复用出的时间轴，不受该字段污染，且解析成本已经付过（本就在读包）。
-    uint64_t measuredMs = 0;
-    if (totalPktDuration > 0) {
-        const double scale = av_q2d(audioStream->time_base) * 1000.0;
-        if (scale > 0) {
-            measuredMs = static_cast<uint64_t>(totalPktDuration * scale + 0.5);
-        }
-    }
+    // 容器声明的时长（fmt->duration，单位微秒）只作兜底：它与包时间轴一致时才用得上。
+    const int64_t declaredUs = scanner.declaredDurationUs();
+
+    // demux 到此为止：播放期会按需重开一个（规格 4.3 所有权清单）。
+    scanner.close();
 
     if (measuredMs > 0) {
         m_audioSpec.durationMs = measuredMs;
-    } else if (fmt->duration > 0) {
-        m_audioSpec.durationMs = static_cast<uint64_t>(fmt->duration / 1000);
+    } else if (declaredUs > 0) {
+        m_audioSpec.durationMs = static_cast<uint64_t>(declaredUs / 1000);
     }
 
-    avformat_close_input(&fmt);
-    avio_context_free(&avioCtx);
-
-    if (m_packetizedMetaBuf.empty()) {
-        LOGW("initWithFFmpegDemux no audio payload collected");
+    if (m_audioPacketCount == 0) {
+        LOGW("initWithFFmpegDemux no audio payload found");
         return NO_INIT;
     }
 
-    m_validFormat = true;
-    LOGI("initWithFFmpegDemux ok, codec=%#x, packets=%zu", m_audioCodecID,
-         m_packetizedMetaBuf.size());
+    LOGI("initWithFFmpegDemux ok, codec=%#x, audioPackets=%zu", m_audioCodecID,
+         m_audioPacketCount);
     normalizeAudioSpec(m_audioSpec);
     return OK;
 }

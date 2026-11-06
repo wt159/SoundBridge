@@ -60,41 +60,19 @@ uint32_t getSampleRate(const uint8_t sfIndex)
     return 0;
 }
 
-static size_t countAdtsFrames(const uint8_t *data, size_t size)
-{
-    if (data == nullptr || size < 7) {
-        return 0;
-    }
-
-    // 旧实现只在这里跳 ID3，init() 却从 offset 0 解 ADTS 头，带前缀的合法文件全损。
-    // 现在与 init() / sniff() 共用同一份前缀计算（规格 10.#19）。
-    size_t offset = id3PrefixSize(data, size);
-
-    size_t frameCount = 0;
-    while (offset + 7 <= size) {
-        if (data[offset] != 0xFF || (data[offset + 1] & 0xF0) != 0xF0) {
-            break;
-        }
-
-        size_t frameLength = ((static_cast<size_t>(data[offset + 3] & 0x03) << 11)
-                              | (static_cast<size_t>(data[offset + 4]) << 3)
-                              | ((static_cast<size_t>(data[offset + 5]) & 0xE0) >> 5));
-        if (frameLength < 7 || offset + frameLength > size) {
-            break;
-        }
-
-        ++frameCount;
-        offset += frameLength;
-    }
-
-    return frameCount;
-}
-
 AACExtractor::AACExtractor(DataSourceBase *source)
     : m_dataSource(source)
+    , m_audioCodecID(AUDIO_CODEC_ID_NONE)
     , m_metaBuf(nullptr)
     , m_initCheck(NO_INIT)
     , m_validFormat(false)
+    , m_spec()
+    , m_header()
+    , m_dataSize(0)
+    , m_audioStart(0)
+    , m_reader()
+    , m_nextPacketIndex(0)
+    , m_sequenceOffset(0)
 {
     m_initCheck = init();
 }
@@ -165,25 +143,21 @@ status_t AACExtractor::init()
     }
     m_audioCodecID = AUDIO_CODEC_ID_AAC;
 
-    // payload 是「音频」的整块视图：从 ID3 前缀之后开始，标签不进 payload
-    // （规格 7.3 M6：跳过 tag 对外完全静默）。若把前缀一起喂给解码器，它会被
-    // 当成不可解帧跳过，EOS 汇总就会误报一条 DataCorrupted。
-    const off64_t payloadSize = (fileSize > prefix) ? (fileSize - prefix) : 0;
-    if (payloadSize <= 0) {
+    // init 只读扫描（ADR 0003）：只数 ADTS 帧拿标称时长，不留 payload 与帧表。
+    // 「音频」从 ID3 前缀之后开始，标签不进 payload（规格 7.3 M6）：若把前缀喂给
+    // 解码器，它会被当成不可解帧跳过，EOS 汇总就会误报一条 DataCorrupted。
+    if (fileSize <= prefix) {
         return NO_INIT;
     }
-    m_metaBuf = std::make_shared<AudioBuffer>(payloadSize);
-    if (m_dataSource->readAt(prefix, m_metaBuf->data(), payloadSize) < payloadSize) {
-        LOG_ERROR(LOG_TAG, "readAt failed");
-        return NO_MEMORY;
-    }
+    m_dataSize   = fileSize;
+    m_audioStart = prefix;
+    m_sequenceOffset = prefix;
 
     m_spec.bitsPerSample  = 16;
     m_spec.format         = getAudioFormatByBitPreSample(m_spec.bitsPerSample);
     m_spec.bytesPerSample = 2;
 
-    size_t frameCount
-        = countAdtsFrames(reinterpret_cast<const uint8_t *>(m_metaBuf->data()), m_metaBuf->size());
+    const size_t frameCount = AACFrameReader::scanFrameCount(m_dataSource, prefix, fileSize);
     if (frameCount > 0 && m_spec.sampleRate > 0) {
         size_t samplesPerFrame = (static_cast<size_t>(m_header.adts.numRawDataBlocks) + 1) * 1024;
         int64_t durationUs     = static_cast<int64_t>(frameCount)
@@ -198,4 +172,74 @@ status_t AACExtractor::init()
              m_spec.numChannel, m_spec.bytesPerSample);
     normalizeAudioSpec(m_spec);
     return NO_ERROR;
+}
+
+AACFrameReader *AACExtractor::reader()
+{
+    if (m_reader == nullptr && m_dataSource != nullptr) {
+        m_reader.reset(new AACFrameReader(m_dataSource, m_audioStart, m_dataSize));
+        m_nextPacketIndex = 0;
+        m_sequenceOffset  = m_audioStart;
+    }
+    return m_reader.get();
+}
+
+AudioBuffer::AudioBufferPtr AACExtractor::packetAt(size_t index)
+{
+    // 解复用面在播放期（解码线程第一次拉包时）创建，init 期只有 O(1) 摘要。
+    AACFrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return nullptr;
+    }
+    if (index == 0) {
+        frameReader->seekTo(m_sequenceOffset);
+        m_nextPacketIndex = 0;
+    } else if (index != m_nextPacketIndex) {
+        return nullptr;
+    }
+
+    AudioBuffer::AudioBufferPtr packet;
+    if (!frameReader->nextPacket(packet)) {
+        return nullptr;
+    }
+    ++m_nextPacketIndex;
+    return packet;
+}
+
+bool AACExtractor::seekPacketByte(int64_t offset)
+{
+    AACFrameReader *frameReader = reader();
+    if (frameReader == nullptr) {
+        return false;
+    }
+    // 0 在调用方语境里是「流头」；aac 的流头是 ID3v2 前缀之后的第一个 ADTS 帧。
+    if (offset < m_audioStart) {
+        offset = m_audioStart;
+    }
+    frameReader->seekTo(offset);
+    m_sequenceOffset  = offset;
+    m_nextPacketIndex = 0;
+    return true;
+}
+
+int64_t AACExtractor::packetBytePosition() const
+{
+    return m_reader != nullptr ? m_reader->position() : 0;
+}
+
+AudioBuffer::AudioBufferPtr AACExtractor::getMetaData()
+{
+    // 整块视图（测试量测仪器专用，生产链零调用）：按需读取音频负载，语义与改造前一致。
+    if (m_metaBuf == nullptr && m_dataSource != nullptr && m_dataSize > m_audioStart) {
+        const off64_t length = m_dataSize - m_audioStart;
+        AudioBuffer::AudioBufferPtr buffer
+            = std::make_shared<AudioBuffer>(static_cast<size_t>(length));
+        if (m_dataSource->readAt(m_audioStart, buffer->data(), static_cast<size_t>(length))
+            == static_cast<ssize_t>(length)) {
+            m_metaBuf = buffer;
+        } else {
+            LOG_ERROR(LOG_TAG, "readAt failed for the legacy whole view");
+        }
+    }
+    return m_metaBuf;
 }

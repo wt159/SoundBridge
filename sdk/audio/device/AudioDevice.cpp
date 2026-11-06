@@ -31,6 +31,7 @@ public:
     int getAudioSpec(AudioSpec &spec);
     int open();
     void close();
+    bool isOpen() const;
     void start();
     void stop();
     int write(const void *data, size_t len);
@@ -133,6 +134,11 @@ void AudioDevice::Impl::close()
         m_deviceID = 0;
     }
     m_isOpen = false;
+}
+
+bool AudioDevice::Impl::isOpen() const
+{
+    return m_isOpen;
 }
 
 void AudioDevice::Impl::start()
@@ -302,6 +308,11 @@ int AudioDevice::close()
 {
     m_impl->close();
     return 0;
+}
+
+bool AudioDevice::isOpen() const
+{
+    return m_impl->isOpen();
 }
 
 int AudioDevice::start()

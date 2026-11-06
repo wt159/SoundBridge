@@ -1,5 +1,6 @@
 #include "FLACDecode.h"
 #include "LogWrapper.h"
+#include <algorithm>
 #include <cstring>
 
 #define LOG_TAG "FLACDecode"
@@ -15,6 +16,11 @@ FLACDecode::FLACDecode(AudioDecodeCallback *callback)
     , m_decOffset(0)
     , m_abortFlag(nullptr)
     , m_md5CheckResult(-1)
+    , m_extractor(nullptr)
+    , m_observer(nullptr)
+    , m_cursor()
+    , m_packet()
+    , m_packetOffset(0)
 {
     // 必须在 init() 之前打开：libFLAC 的 FLAC__stream_decoder_set_md5_checking()
     // 在非 UNINITIALIZED 状态直接返回 false，init() 之后调用是一次静默空操作
@@ -74,11 +80,56 @@ void FLACDecode::setInputBuffer(const AudioBufferPtr &inBuf)
     m_dataSource      = nullptr;
     m_audioDataOffset = 0;
     m_dataSourceSize  = 0;
+    m_cursor.reset();
+    m_extractor = nullptr;
+    releasePacket();
+}
+
+bool FLACDecode::initFromPacketFactory(ExtractorHelper *extractor, DecodeSupplyObserver *observer)
+{
+    if (extractor == nullptr) {
+        return false;
+    }
+    m_extractor      = extractor;
+    m_observer       = observer;
+    m_cursor.reset(new PacketCursor(extractor));
+    // 新任务从流头开始：包序列可能还停在上一任务的位置（提取器跨任务存活）。
+    extractor->seekPacketByte(0);
+    releasePacket();
+    m_inBuf           = nullptr;
+    m_dataSource      = nullptr;
+    m_audioDataOffset = 0;
+    m_dataSourceSize  = extractor->getDataSize();
+    m_decOffset       = 0;
+    return true;
+}
+
+void FLACDecode::releasePacket()
+{
+    if (m_packet != nullptr) {
+        if (m_observer != nullptr) {
+            m_observer->onPacketReleased(m_packet->size());
+        }
+        m_packet.reset();
+    }
+    m_packetOffset = 0;
+}
+
+int64_t FLACDecode::packetPosition() const
+{
+    if (m_extractor == nullptr) {
+        return 0;
+    }
+    int64_t position = m_extractor->packetBytePosition();
+    if (m_packet != nullptr) {
+        position -= static_cast<int64_t>(m_packet->size() - m_packetOffset);
+    }
+    return position < 0 ? 0 : position;
 }
 
 int FLACDecode::processOne()
 {
-    if (m_inBuf == nullptr && m_dataSource == nullptr) {
+    if (m_inBuf == nullptr && m_dataSource == nullptr && !m_cursor) {
         return -1;
     }
 
@@ -95,7 +146,7 @@ int FLACDecode::processOne()
 
 bool FLACDecode::seekToSample(FLAC__uint64 sample)
 {
-    if (m_inBuf == nullptr && m_dataSource == nullptr) {
+    if (m_inBuf == nullptr && m_dataSource == nullptr && !m_cursor) {
         return false;
     }
     return this->seek_absolute(sample);
@@ -128,6 +179,10 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 ::FLAC__StreamDecoderReadStatus FLACDecode::read_callback(FLAC__byte buffer[], size_t *bytes)
 {
+    if (m_cursor) {
+        return readFromPackets(buffer, bytes);
+    }
+
     if (m_dataSource != nullptr) {
         off64_t remaining = m_dataSourceSize - static_cast<off64_t>(m_decOffset);
         if (remaining <= 0) {
@@ -168,8 +223,60 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
     return status;
 }
 
+::FLAC__StreamDecoderReadStatus FLACDecode::readFromPackets(FLAC__byte buffer[], size_t *bytes)
+{
+    if (buffer == nullptr || bytes == nullptr || *bytes == 0) {
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+    }
+
+    // 一包读完就放掉，再拉下一包：同一时刻只为一首曲目持有一包压缩数据。
+    while (m_packet == nullptr || m_packetOffset >= m_packet->size()) {
+        // 取消链要在**拉包之前**被看到：m_abortDecode 只由 stop 置位，这里立刻退出，
+        // 不让 libFLAC 为了「再解一帧」把包工厂继续往下推。
+        // seek 刻意不置该位（AudioStreamDecoder::seekToMs）：seek 的取消由目标槽承载，
+        // 在解码器侧的写 ring 循环里中断；native RA 定位期间这里必须能正常读流，
+        // 否则 READ_STATUS_ABORT 会让 seek_absolute 失败（#65 的非确定性根因）。
+        if (m_abortFlag != nullptr && m_abortFlag->load()) {
+            return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+        }
+        AudioBuffer::AudioBufferPtr next;
+        if (!m_cursor->nextPacket(next)) {
+            *bytes = 0;
+            return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+        }
+        releasePacket();
+        m_packet       = next;
+        m_packetOffset = 0;
+        if (m_observer != nullptr) {
+            m_observer->onPacketAcquired(m_packet->size());
+            m_observer->onPacketPulled(m_cursor->packetsProduced());
+        }
+    }
+
+    const size_t available = m_packet->size() - m_packetOffset;
+    const size_t count     = std::min(*bytes, available);
+    std::memcpy(buffer, m_packet->data() + m_packetOffset, count);
+    m_packetOffset += count;
+    *bytes = count;
+    return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+}
+
 ::FLAC__StreamDecoderSeekStatus FLACDecode::seek_callback(FLAC__uint64 absolute_byte_offset)
 {
+    if (m_cursor) {
+        // native random access 仍然可用：把「定位到某字节」交给包工厂的 O(1) 游标，
+        // 下一包从该处重新认帧头，libFLAC 自己 resync。取消/停止不在这里判断，
+        // 由 read_callback 在拉包前看到取消位后立刻返回 ABORT。
+        if (m_extractor == nullptr
+            || !m_extractor->seekPacketByte(static_cast<int64_t>(absolute_byte_offset))) {
+            return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
+        }
+        m_cursor->rewind();
+        releasePacket();
+        m_decOffset = static_cast<size_t>(absolute_byte_offset);
+        return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
+    }
+
     if (m_dataSource != nullptr) {
         if (absolute_byte_offset > static_cast<FLAC__uint64>(m_dataSourceSize)) {
             return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
@@ -194,6 +301,11 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
         return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
     }
 
+    if (m_cursor) {
+        *absolute_byte_offset = static_cast<FLAC__uint64>(packetPosition());
+        return FLAC__STREAM_DECODER_TELL_STATUS_OK;
+    }
+
     if (m_dataSource != nullptr) {
         *absolute_byte_offset = static_cast<FLAC__uint64>(m_decOffset);
         return FLAC__STREAM_DECODER_TELL_STATUS_OK;
@@ -213,6 +325,11 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
         return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
     }
 
+    if (m_cursor) {
+        *stream_length = static_cast<FLAC__uint64>(m_dataSourceSize);
+        return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
+    }
+
     if (m_dataSource != nullptr) {
         *stream_length = static_cast<FLAC__uint64>(m_dataSourceSize);
         return FLAC__STREAM_DECODER_LENGTH_STATUS_OK;
@@ -228,6 +345,10 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
 bool FLACDecode::eof_callback()
 {
+    if (m_cursor) {
+        return packetPosition() >= m_dataSourceSize;
+    }
+
     if (m_dataSource != nullptr) {
         return m_decOffset >= static_cast<size_t>(m_dataSourceSize);
     }

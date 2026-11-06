@@ -142,6 +142,8 @@ set(UNIT_TEST_SOURCES
     unit/test_decode.cpp
     unit/test_stream_decoder.cpp
     unit/test_stream_decoder_contract.cpp
+    unit/test_playback_position.cpp
+    unit/test_playback_lifecycle.cpp
     unit/test_playlist.cpp
     unit/test_playlist_advance.cpp
     unit/test_player.cpp
@@ -149,7 +151,10 @@ set(UNIT_TEST_SOURCES
     unit/test_error.cpp
     unit/test_resample_formats.cpp
     unit/test_media_coverage.cpp
+    unit/test_packet_factory.cpp
+    unit/test_packet_supply.cpp
     unit/test_bad_input.cpp
+    unit/test_streaming_budget.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})

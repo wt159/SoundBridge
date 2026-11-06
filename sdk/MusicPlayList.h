@@ -54,9 +54,9 @@ struct FileProperties {
 struct SignalProperties {
     AudioSpec spec;
     uint64_t durationMs;
+    // 唯一位置口径：来自 AudioStreamDecoder::positionMs()（段基准 + ring 段内读计数）。
     std::atomic<uint64_t> curPositionMs;
     off64_t dataSize;
-    std::atomic<off64_t> curDataOffset;
 };
 
 struct ProcessProperties {
@@ -69,11 +69,32 @@ struct MusicProperties {
     FileProperties fileProperties;
     SignalProperties signalProperties;
     ProcessProperties processProperties;
-    std::shared_ptr<AudioRingBuffer> ringBuffer;
-    std::shared_ptr<AudioStreamDecoder> streamDecoder;
 };
 
 using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
+
+// 一次播放任务：ring 与 decoder 由**当前曲目独占**，跨曲目不复用（规格 #55 第 4.3 节）。
+//
+// - 创建者：播放列表在做「这次要播哪首」的决定时造；消费者只借指针，不持有所有权。
+// - 销毁时机：新任务 start() **之前** —— stop / 切歌 / 停止播放都把旧任务整个丢掉，
+//   旧 ring 的引用计数归零，旧 decoder 析构时 join 掉自己的解码线程。
+// - 成员声明顺序决定析构顺序：decoder 声明在 ring 之后，所以先析构 decoder（其析构函数
+//   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
+struct PlaybackTask {
+    PlaybackTask(const std::shared_ptr<AudioRingBuffer> &ringBuffer,
+                 const std::shared_ptr<AudioStreamDecoder> &streamDecoder, size_t track)
+        : ring(ringBuffer)
+        , decoder(streamDecoder)
+        , trackIndex(track)
+    {
+    }
+
+    std::shared_ptr<AudioRingBuffer> ring;
+    std::shared_ptr<AudioStreamDecoder> decoder;
+    size_t trackIndex;
+};
+
+using PlaybackTaskPtr = std::shared_ptr<PlaybackTask>;
 
 class MusicPlayListCallback {
 public:
@@ -118,6 +139,15 @@ public:
     bool advanceToNextTrack();
     bool skipToNextPlayable();
 
+    // 当前播放任务（ring + decoder + 曲目号）。没有任务时返回空：停止状态、切歌窗口、
+    // 以及扫描阶段都属于这一类。调用方拿到的是快照，持有期间任务不会被销毁。
+    PlaybackTaskPtr currentTask() const;
+    // 为「当前曲目」准备播放任务。已经有一个活着的任务（暂停后恢复）就复用；
+    // 没有 / 已结束 / 已失败则先 stop+join 旧任务，再建新 ring + 新 decoder。
+    bool startCurrentTask();
+    // 丢弃当前任务：先 join 解码线程，再销毁 ring（旧 PCM 一律丢弃、不 drain）。
+    void stopCurrentTask();
+
     // 本次播放会话内因坏数据失败过的曲目：自动跳过不再回头重试（同一曲不重试第二次）。
     // 用户按播放（MusicPlayer::play）时清空，视为新会话。
     void markTrackFailed(size_t index);
@@ -137,8 +167,11 @@ protected:
 
 private:
     bool selectTrack(size_t index);
-    bool startStreaming(const MusicPropertiesPtr &musicProperties);
-    void releaseDecodedBuffersExcept(size_t keepIndex, size_t keepIndex2);
+    // 换任务：stop+join 旧任务并销毁旧 ring，再为新曲造 ring + decoder 并 start()。
+    // 全程在调用它的控制线程上完成（WorkQueue 单线程串行），禁止 detach / 后台 join。
+    bool replacePlaybackTask(const MusicPropertiesPtr &musicProperties);
+    // 只清位置 / 数据量这类元数据；任务（ring / decoder）不属于曲目，不在遍历范围内。
+    void resetTrackProgressExcept(size_t keepIndex);
     void reportError(ErrorCode code, const std::string &detail,
                      const MusicPropertiesPtr &musicProperties);
     void recordScanRejection(ErrorCode code);
@@ -147,6 +180,9 @@ private:
 private:
     std::atomic<MusicPlaybackMode> m_playbackMode;
     std::mt19937 m_randomEngine;
+    // 当前播放任务。只有控制线程写，消费者读快照；锁只保护指针本身，ring 内部无锁。
+    mutable std::mutex m_taskMutex;
+    PlaybackTaskPtr m_currentTask;
     mutable std::mutex m_failedMutex;
     std::set<size_t> m_failedIndices;
     mutable std::mutex m_rejectMutex;

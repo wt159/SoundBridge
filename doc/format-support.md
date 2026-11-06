@@ -35,6 +35,13 @@
 用例在 `sdk/test/unit/test_media_coverage.cpp` 的 `MediaCoverage` 套件里：15 份素材覆盖上表 11 个
 扩展名，随 `ctest -R sdk_unit_tests` 运行，净耗时约 2.5 秒。
 
+**增量路径下的分工（2026-11-05，地图 #42 / #52）**：本节的 1% 双向容差只判「完好素材的标称时长可不可信」，
+量测仪器仍是 `AudioDecodeProcess`（按 #47 改为遍历包工厂拼整段），15 行 `declared` / `measured` 数值
+一字不动 —— 尤其 `.wma` 只剩 113ms 余量，再动时长推导会假红。边解边播的「内存不随音频长度增长」
+「首播 / 欠流」判据用**另一套口径**（分配记账峰值 + 固定上界、稳态静音计数），落独立 suite，
+与本节的 1% 容差及 `doc/bad-input-spec.md` 的 5pp 判据**三分不混用**。
+完整规格见 [边解边播规格](streaming-playback-spec.md) 第 5、8 节。
+
 **判据是双向的**——只有下界会漏报「重复解码」（#13 普查里 FLAC 重复 35× 仍判 PASS）：
 
 ```text

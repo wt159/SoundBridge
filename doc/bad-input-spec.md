@@ -126,7 +126,7 @@ creator() 返回对象
 | 超大元数据 | mp3 ×2、aac、批量 | `mp3 tag declaring more than the file holds...`、`aac with an id3 prefix...`、`batch scan does not count tag-wrapped files as rejected` | 零容差：有/无 tag 逐项相同 |
 | 声明撒谎（时长） | m4a、asf、flac | `m4a duration follows the packet timeline...`、`asf duration follows...`、`flac total samples lie does not change how much audio is decoded` | 零容差差分（改声明后逐位不变） |
 | 声明撒谎（不可检测，反向） | wav ×2、m4a | `wav sample rate lie stays undetectable`、`wav channel count lie stays undetectable`、`m4a container spec fields never reach spec or payload` | 断言「确实检不出」 |
-| 上报链路与交互 | — | `corrupted mid-stream reports DataCorrupted...`、`player reports decode error instead of stalling silently`、`batch scan reports a summary...`、`auto skip ...` 等 6 条 | 错误码、文案、autoSkip |
+| 上报链路与交互 | — | `corrupted mid-stream reports DataCorrupted...`、`player reports decode error instead of stalling silently`、`batch scan reports a summary...`、`auto skip ...` 等 6 条 | 错误码、文案、autoSkip；seek 后 EOS 用 `m_seekBaseMs + 解出时长`（#49，增量接缝见 §13） |
 
 **结构性不覆盖**（总表里写了期望，但不属于「可造的坏文件」）：
 
@@ -135,6 +135,9 @@ creator() 返回对象
   与提取器工厂的结构性用例覆盖，不逐格造素材。
 - 截断 × asf / ape / m4a-faststart 三格：判据与 wav / aiff 完全相同（T1 不按格式分叉），
   走的是同一条 EOS 汇总实现路径，已由 P1 组锁住；不重复跑流式解码（见 2.2）。
+- **增量接缝（#50）**：#47 把 demux 生命周期挪到播放期后，原 init 期判死的 m4a `moov` 断 /
+  ogg 页链断改判「播放期包耗尽 + ring 累计 0 字节 + EOS 汇总」，属 B1 兜底、不是第二拒绝出口；
+  相应 2 条用例只移断言位置，矩阵不增行不增用例，详见 §13。
 
 **跨格式一致性**由两处锁定，不另起重复解码的用例：总表「坏帧」一行的七个格式各有
 一条用例、全部断言同一个 `DataCorrupted` 并显式排除 `DataTruncated`；「头坏」的拒绝格
@@ -147,7 +150,7 @@ creator() 返回对象
 **55 用例 / 396 断言 / 91.6 s**，`ctest -R sdk_` 全套约 120 s。
 
 原因：基石 B4 要求量测仪器是**流式播放路径**，每条用例要把整份素材解到 EOS，
-ring 背压按 1 ms 轮询；素材是 `music/` 里几十秒到数分钟的成品。3 s 是按
+ring 背压按 5 ms 轮询（`drainUntilSettled()` 的 `pollMs=5`）；素材是 `music/` 里几十秒到数分钟的成品。3 s 是按
 「15 份素材 × 字节手术」估的，没有算流式解码本身的开销。
 
 **决定：不削用例。** 换成短片段会改掉 `r × good` 的锚，动到所有截断与坏帧判据；
@@ -669,6 +672,18 @@ else:                             next = offset + declared
 
 - **空文件 / 非音频伪装扩展名**：已被 `ExtractorUnsupported` 挡住，有素材也有测试。
 - **读盘中途 IO 失败、权限、路径编码**：属数据源层（`FileOpenFailed`），与「文件内容坏」不是同一个问题。
-- **网络流 / 边下边播**：`support stream programme`（#8）是另一条线。
+- **网络流 / URL / 边下边播**：属数据源层，不在本地文件规格内。另更正：`support stream programme`（#8）的正文是 *Streaming decoding and playback scheme for local music players*，讲的是**本地文件边解边播**，已由地图 #42 收口为 [边解边播规格](streaming-playback-spec.md)；本文件旧版把它写成「网络流」属措辞偏差。
 - **播放列表自动跳过的交互重设计**：只判定它该不该覆盖「播到一半才坏」，不改 `m_autoSkipOnError` 的列表逻辑。
 - **用例与断言的实现**：见第 10 节 P2。
+
+## 13. 增量路径接缝（2026-11-05，地图 #42 收口）
+
+地图 #42 把生产链改成「包为唯一层间单元 + demux 播放期存活 + 索引 O(1)」后，**本文件整体仍成立、四条基石零改写**（B1 / B3 只依赖累计标量；B4 反被加强：改造后生产链与量测仪器同构）。逐节影响表与 55 条用例清单见 #50 的 resolution comment，规格正文见 [边解边播规格](streaming-playback-spec.md) 第 7 节。这里只记必须落地的接缝：
+
+- **唯一硬约束**：#47 新增的 init 期只读扫描**不得把可解性当判据** —— 坏包跳过继续扫、标称时长允许 `0`、扫描失败不返回 `nullptr`；工厂仍只按 `initCheck()` + 两个硬不变量拒绝。否则会给 B2 的唯一出口开第二个门。现状 `readHeader()` 只读 16 字节、根本没有「扫全文」动作，扫描是 #47 新增的。
+- 原 init 期判死的 m4a `moov` 断 / ogg 页链断，改判「播放期包耗尽 + ring 累计 0 字节 + EOS 汇总」，属 B1 兜底、不是第二出口；对应 2 条用例（`ogg truncation is rejected and plays nothing`、`m4a with its trailing moov cut off is rejected`）**只移断言位置**，判据数值不变，迁移顺序由 #52 定为线性四步的第 ③ 步。
+- EOS 原样成立、不新增时机，已消费 PCM 算数、不回滚不重播；零容差差分仍比 `declaredMs` / `decodedBytes` / `code` 三个累计标量、不扩展到 PCM 逐位；「不可检测」清单零增删；**#48 新增的四个观测点禁作坏输入旁证**（F4「不许伪造信号」）。
+- seek 后 EOS 判定用 `m_seekBaseMs + 解出时长`；`durationMs == 0` 时 `haveNominal=false` 仍不报 `DataTruncated`。
+- 55 用例 **53 条原样、2 条只移断言位置**，零条换量测仪器、零条新增；§2.1 不增行不增用例。
+- 术语：canonical 是「边解边播」（`GLOSSARY.md`），「流式」列 `_Avoid_`；本票标题与正文保留历史措辞、不回改。
+- 判据分工不变：本文件管坏文件（5pp / `r × good`），`doc/format-support.md` 管好文件（1%），边解边播的内存 / 首播 / 欠流判据另落独立 suite，三套口径不混用。

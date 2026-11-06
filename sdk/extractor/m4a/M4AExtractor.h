@@ -2,9 +2,18 @@
 #include "AudioDecode.h"
 #include "DataSource.hpp"
 #include "ExtractorHelper.hpp"
+#include "M4APacketReader.h"
 #include "NonCopyable.hpp"
 #include <memory>
 
+// m4a 提取器（票面 #64 / ADR 0003）。
+//
+// init 期只做一次只读扫描：逐包累加标称时长（包时间轴优先，容器声明只兜底），
+// 扫描结束就把 demux 关掉，只留 O(1) 定长摘要：spec、标称时长、codec id、extradata、
+// 文件大小、音频包计数。moov 在文件尾部也只是被读一遍，不缓存整首索引、不建 seek 表。
+//
+// 播放期的包边界由 M4APacketReader 现场重算：AAC 由 Reader 还原 7 字节 ADTS 头
+// （解码侧 aac parser 与量测仪器都靠它切帧），ALAC 没有 parser，边界由提取器直接给。
 class M4AExtractor : public ExtractorHelper, public NonCopyable {
 public:
     explicit M4AExtractor(DataSourceBase *source);
@@ -13,34 +22,46 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual std::vector<AudioBuffer::AudioBufferPtr> getPacketizedMetaData() const
-    {
-        return m_packetizedMetaBuf;
-    }
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
 
+    // 包工厂的单包面（#64 / ADR 0003）：总数事先未知，边界按 offset 现场重算，
+    // 任何「先把整份文件数一遍再建表」的做法都会把常驻内存按包数放大。
+    virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
+    virtual bool seekPacketByte(int64_t offset);
+    virtual int64_t packetBytePosition() const;
+
+    // 分配记账：init 不持有 payload，播放期的 demux 面只持 AVIO 缓冲（判据公式里的
+    // 独立项，口径上不混进这个数）；交出去的包归解码侧 alloc/free 记账。
+    virtual size_t heldPayloadBytes() const { return 0; }
+
+    // 现场重算包边界的 CPU 成本（独立指标，不设阈值；见规格第 5 节末段）。
+    virtual uint64_t packetBoundaryMicros() const
+    {
+        return m_reader != nullptr ? m_reader->boundaryMicros() : 0;
+    }
+
 private:
     sdk_utils::status_t initWithFFmpegDemux();
-    struct AvioData {
-        DataSourceBase *source;
-        int64_t pos;
-        int64_t size;
-    };
-    static int avioRead(void *opaque, uint8_t *buf, int buf_size);
-    static int64_t avioSeek(void *opaque, int64_t offset, int whence);
+    // demux 面在**播放期**创建（规格 4.3 所有权清单）。
+    M4APacketReader *reader();
 
 private:
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
-    // payload 只保留解复用边界（#17）：AAC 有 parser，拼不拼都能解；ALAC 没有 parser，
-    // 一旦拼接就只能解出首帧。统一按包保存，两种 codec 都不会踩坑。
-    std::vector<AudioBuffer::AudioBufferPtr> m_packetizedMetaBuf;
+    // 只留 codec 的 extradata（几十字节的定长摘要），不是音频负载。
     AudioBuffer::AudioBufferPtr m_codecExtraData;
     sdk_utils::status_t m_initCheck;
-    bool m_validFormat;
     AudioSpec m_audioSpec;
     int m_bitRate;
     int m_blockAlign;
+    int64_t m_fileSize;
+    // init 只读扫描数到的音频包数：只用来判「有没有音频」，不随播放增长。
+    size_t m_audioPacketCount;
+    std::unique_ptr<M4APacketReader> m_reader;
+    size_t m_nextPacketIndex;
+    // 本段包序列的起点（顺序重放 seek 之后为 0）。
+    int64_t m_sequenceOffset;
 };

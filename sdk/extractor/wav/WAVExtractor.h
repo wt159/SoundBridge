@@ -4,6 +4,8 @@
 #include "DataSource.hpp"
 #include "ExtractorHelper.hpp"
 #include "NonCopyable.hpp"
+#include "PcmPacketReader.hpp"
+#include <memory>
 
 class WAVExtractor : public ExtractorHelper, public NonCopyable {
 public:
@@ -12,12 +14,25 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
     virtual bool isDataTruncated() const { return m_dataTruncated; }
+
+    // —— 包工厂的单包面（#61 / ADR 0003）——
+    // init 期只留 O(1) 定长摘要（spec / 时长 / data 块的偏移与长度 / 截断标志），
+    // 负载在播放期按 offset 现场切片读出，不再整首常驻。总数事先未知，
+    // 用 kUnknownPacketCount 表示「读到为止」；一包 = 一段对齐到帧的定长 PCM 切片。
+    virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
+    // 下一包的文件偏移（数据块内按整数帧推进）。
+    virtual int64_t packetBytePosition() const;
+
+    // 分配记账：init 不持 payload，交出去的包归解码侧记账（alloc/free 增量）。
+    virtual size_t heldPayloadBytes() const { return 0; }
     virtual ~WAVExtractor();
 
 private:
     sdk_utils::status_t init();
+    // 切片面在**播放期**创建（规格 4.3：demux 由解码侧持有、随任务释放）。
+    PcmPacketReader *reader();
 
 private:
     DataSourceBase *m_dataSource;
@@ -31,5 +46,6 @@ private:
     size_t m_dataSize;
     AudioSpec m_audioSpec;
     AudioCodecID m_audioCodecID;
-    AudioBuffer::AudioBufferPtr m_metaBuf;
+    std::unique_ptr<PcmPacketReader> m_reader;
+    size_t m_nextPacketIndex;
 };

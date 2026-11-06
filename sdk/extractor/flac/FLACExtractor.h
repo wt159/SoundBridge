@@ -4,7 +4,9 @@
 #include "AudioDecode.h"
 #include "DataSource.hpp"
 #include "ExtractorHelper.hpp"
+#include "FLACFrameReader.h"
 #include "NonCopyable.hpp"
+#include <memory>
 #include <vector>
 
 // Overview of the FLAC bitstream.
@@ -220,23 +222,45 @@ public:
     virtual sdk_utils::status_t initCheck() { return m_initCheck; }
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
-    virtual AudioBuffer::AudioBufferPtr getMetaData() { return m_metaBuf; }
+    virtual AudioBuffer::AudioBufferPtr getMetaData() { return nullptr; }
     virtual DataSourceBase *getDataSource() { return m_dataSource; }
     virtual off64_t getDataSize() { return m_dataSize; }
     virtual off64_t getAudioDataOffset() { return m_audioDataOffset; }
+
+    // —— 包工厂的单包面（#60 / ADR 0003）——
+    // FLAC 没有 ffmpeg demux：init 期只留 O(1) 定长摘要（spec / 时长 / 数据起点 / 数据长度），
+    // 帧边界由 FLACFrameReader 在播放期按 offset 现场重算。首包是流头（fLaC + 元数据块），
+    // 之后每包一帧；总数事先未知，用 kUnknownPacketCount 表示「读到为止」。
+    virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
+    virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
+    virtual bool seekPacketByte(int64_t offset);
+    virtual int64_t packetBytePosition() const;
+
+    // 分配记账：只报播放期解复用缓冲的实际容量（O(1)）。init 期不持有 payload，
+    // 交出去的包归解码侧记账（alloc/free 增量），这里不再重复计一份。
+    virtual size_t heldPayloadBytes() const
+    {
+        return m_reader != nullptr ? m_reader->heldBytes() : 0;
+    }
     virtual ~FLACExtractor();
 
 private:
     sdk_utils::status_t init();
+    // demux 面在**播放期**创建（规格 4.3 所有权清单：demux 句柄由解码侧创建、随任务释放）。
+    FLACFrameReader *reader();
 
 private:
     DataSourceBase *m_dataSource;
     AudioCodecID m_audioCodecID;
-    AudioBuffer::AudioBufferPtr m_metaBuf;
     sdk_utils::status_t m_initCheck;
     bool m_validFormat;
     AudioSpec m_spec;
-    FLACHeader m_header;
     off64_t m_audioDataOffset;
     off64_t m_dataSize;
+    // STREAMINFO 声明的最大帧字节数（0 表示未知）：只用来定扫描缓冲上限，不建索引。
+    size_t m_maxFrameBytes;
+    std::unique_ptr<FLACFrameReader> m_reader;
+    size_t m_nextPacketIndex;
+    // 当前包序列的起点：新任务为 0，native seek 之后为目标偏移
+    int64_t m_sequenceOffset;
 };
