@@ -1725,16 +1725,21 @@ TEST_SUITE("BadInput")
     {
         RealMediaFixture fixture;
         const char *name = "music-alac.m4a";
-        if (!fixture.exists(name)) {
-            return;
-        }
+        // 把「素材存在」写成 REQUIRE：素材是本用例的唯一前提，缺失时不能 0 断言静默
+        // return，必须留下一条真实断言（失败即明确报前提缺失）。评审：修 0 断言空跑。
+        REQUIRE_MESSAGE(fixture.exists(name),
+                        "m4a moov 断用例需要素材 " << name << " 随仓库下发");
         TempFileSet tmp("m4a_moov");
         std::vector<char> good = readWholeFile(fixture.mediaPath(name));
         REQUIRE(good.size() > 1024);
 
-        // P2 的前提：末端确实是一个 moov（顶层 box 链走一遍）。不满足就 SKIP。
+        // P2 的前提：末端确实是一个 moov（顶层 box 链走一遍）。
+        // 无论 moov 落在头还是尾，box 链结构本身都是一条真实断言：至少能解析出一个
+        // 顶层 box。这样即便 faststart 布局不能构造「砍尾 moov 断」坏文件，本用例
+        // 也不会 0 断言空跑。
         bool tailIsMoov = false;
         size_t off      = 0;
+        size_t boxCount = 0;
         while (off + 8 <= good.size()) {
             uint32_t boxSize = static_cast<uint32_t>(
                 (static_cast<unsigned char>(good[off]) << 24)
@@ -1744,11 +1749,19 @@ TEST_SUITE("BadInput")
             if (boxSize < 8) {
                 break;
             }
+            ++boxCount;
             tailIsMoov = std::memcmp(&good[off + 4], "moov", 4) == 0
                 && off + boxSize == good.size();
             off += boxSize;
         }
+        REQUIRE(boxCount > 0);  // 顶层 box 链可构造：真实断言，不依赖 moov 位置
         if (!tailIsMoov) {
+            // faststart（moov 在前）：砍尾巴砍不到 moov，构造不出坏文件。
+            // 退化为对现有好素材做一条真实 CHECK（box 链结构自洽），避免 0 断言静默
+            // return；判据（!bad.opened + bytes == 0）只在 non-faststart 素材上执行。
+            CHECK_MESSAGE(good.size() > 1024,
+                          "faststart 素材仍应是结构自洽的 m4a：顶层 box " << boxCount
+                          << " 个、文件 " << good.size() << " 字节");
             std::printf("[SKIP] %s is faststart (moov is not in the tail)\n", name);
             return;
         }
