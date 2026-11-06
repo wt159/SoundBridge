@@ -229,7 +229,7 @@ off64_t AACExtractor::packetBytePosition() const
 
 AudioBuffer::AudioBufferPtr AACExtractor::getMetaData()
 {
-    // 旧整块视图（量测仪器 / expand 阶段回退口）：按需读取音频负载，语义与改造前一致。
+    // 整块视图（测试量测仪器专用，生产链零调用）：按需读取音频负载，语义与改造前一致。
     if (m_metaBuf == nullptr && m_dataSource != nullptr && m_dataSize > m_audioStart) {
         const off64_t length = m_dataSize - m_audioStart;
         AudioBuffer::AudioBufferPtr buffer

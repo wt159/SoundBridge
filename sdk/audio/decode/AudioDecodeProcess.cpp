@@ -7,11 +7,10 @@
 
 using namespace sdk_utils;
 
-AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor, PayloadSupply supply)
+AudioDecodeProcess::AudioDecodeProcess(ExtractorHelper *extractor)
     : m_extractor(extractor)
     , m_decode(nullptr)
     , m_decSize(0)
-    , m_supply(supply)
     , m_payloadPacketCount(0)
 {
     m_decBufVec.clear();
@@ -63,7 +62,7 @@ status_t AudioDecodeProcess::init()
 {
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         // 原始 PCM 不需要解码。包工厂有包就逐包拼出整段（#61：wav / aiff 的 init
-        // 不再持有整首 payload，整块视图也就没有来源），没有包才退回旧形式。
+        // 不再持有整首 payload，整块视图也就没有来源），没有包才退回测试专用的整块视图。
         // 仪器拼整段是它的职责；生产链不这么做（规格第 3 节 / ADR 0003）。
         if (m_extractor->packetCount() != 0) {
             PacketCursor cursor(m_extractor);
@@ -190,27 +189,13 @@ status_t AudioDecodeProcess::init()
             return INVALID_OPERATION;
         }
         std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData;
-        // 供给形式只影响「负载从哪来」（#57 expand 阶段）：解码本身仍是同一套。
-        // 默认路径逐字保持旧行为；单包迭代路径用 PacketCursor 逐包拼出同一段负载。
-        if (m_supply == PayloadSupply::PacketIteration) {
-            PacketCursor cursor(m_extractor);
-            AudioBuffer::AudioBufferPtr packet;
-            while (cursor.nextPacket(packet)) {
-                packetizedMetaData.push_back(packet);
-            }
-        } else {
-            packetizedMetaData = m_extractor->getPacketizedMetaData();
-            // 旧形式缺席（既没有逐包表，也拼不出整块视图）时退回包工厂逐包取：
-            // 包边界在播放期现场重算的格式不持有任何常驻 payload（ADR 0003，#60 flac 起、
-            // #63 mkv），仪器必须与生产链同构，否则「量测走播放路径」就不成立了。
-            if (packetizedMetaData.empty() && m_extractor->packetCount() != 0
-                && m_extractor->getMetaData() == nullptr) {
-                PacketCursor cursor(m_extractor);
-                AudioBuffer::AudioBufferPtr packet;
-                while (cursor.nextPacket(packet)) {
-                    packetizedMetaData.push_back(packet);
-                }
-            }
+        // contract（#66）：仪器与生产链同构，只走包工厂逐包拼出整段负载。
+        // 包边界在播放期按 offset 现场重算的格式不持有常驻 payload（ADR 0003，
+        // #60 flac 起、#63 mkv），「量测走播放路径」要求仪器也不建表、不拼旧整块。
+        PacketCursor cursor(m_extractor);
+        AudioBuffer::AudioBufferPtr packet;
+        while (cursor.nextPacket(packet)) {
+            packetizedMetaData.push_back(packet);
         }
         m_payloadPacketCount = packetizedMetaData.size();
         int ret              = 0;

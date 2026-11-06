@@ -498,8 +498,8 @@ void AudioStreamDecoder::threadFunc()
     if (m_codecID == AUDIO_CODEC_ID_FLAC) {
         FLACDecode flac(this);
         flac.setAbortFlag(&m_abortDecode);
-        // 供给形式只看「提取器有没有包」：有包就逐包 pull（增量），没有包才回退到
-        // DataSource / 整块视图（expand 阶段的生产链回退口，batch 之间还能绿）。
+        // 供给形式只看「提取器有没有包」：11 种格式全部有包工厂（#66 contract），
+        // 逐包 pull（增量）；DataSource 分支只作为 native RA 的备用入口保留。
         // demux 句柄（FLACDecode + 包游标）在这一行之前是不存在的，创建发生在解码线程里、
         // 随本任务退出释放（规格 4.3 所有权清单）。
         DataSourceBase *ds = m_extractor->getDataSource();
@@ -509,7 +509,7 @@ void AudioStreamDecoder::threadFunc()
                 return;
             }
         } else if (ds != nullptr) {
-            // 旧形式（回退口）：从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
+            // 从文件起点喂，而不是 getAudioDataOffset()（元数据之后）。
             // libFLAC 只在读到 STREAMINFO 之后才会做整段 MD5 校验（没有 STREAMINFO 时它
             // 直接 do_md5_checking=false），所以只喂纯帧数据等于把 #10 的检测手段关掉。
             if (!flac.initFromDataSource(ds, 0, m_extractor->getDataSize())) {
@@ -517,13 +517,10 @@ void AudioStreamDecoder::threadFunc()
                 return;
             }
         } else {
-            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-            if (extPtr == nullptr || extPtr->size() == 0) {
-                LOGE("extractor getMetaData failed");
-                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
-                return;
-            }
-            flac.setInputBuffer(extPtr);
+            // contract（#66）：整块视图回退口已退场——既没有包工厂也没有 DataSource
+            // 时按初始化失败汇总，不再持有整首 payload。
+            setError(sdk::ErrorCode::DecodeInitFailed, "flac has no packet supply or data source");
+            return;
         }
 
         while (!m_stopRequest.load()) {
@@ -598,16 +595,10 @@ void AudioStreamDecoder::threadFunc()
                 return;
             }
         } else {
-            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-            if (extPtr == nullptr || extPtr->size() == 0) {
-                LOGE("extractor getMetaData failed");
-                setError(sdk::ErrorCode::DataCorrupted, "extractor metadata unavailable");
-                return;
-            }
-            if (!vorbis.initVF(extPtr->data(), extPtr->size())) {
-                setError(sdk::ErrorCode::DecodeInitFailed, "vorbis stream init failed");
-                return;
-            }
+            // contract（#66）：整块视图回退口已退场——Vorbis 的 DataSource 缺席时
+            // 按初始化失败汇总，不再持有整首 payload。
+            setError(sdk::ErrorCode::DecodeInitFailed, "vorbis has no data source");
+            return;
         }
 
         while (!m_stopRequest.load()) {
@@ -667,8 +658,7 @@ void AudioStreamDecoder::threadFunc()
     if (m_codecID == AUDIO_CODEC_ID_NONE && m_extractor->packetCount() != 0) {
         // 逐包供给（#61）：wav / aiff 的负载是原始 PCM，不需要解码，包边界由提取器
         // 按 offset 现场切片。与 FLAC 分支同形——包游标在解码线程里创建、随任务退出释放
-        // （规格 4.3）；「有包就逐包 pull」是供给形式的判据，没有包才退回下面的整块视图
-        // （expand 阶段的回退口，batch 之间还能绿）。
+        // （规格 4.3）；「有包就逐包 pull」是供给形式的判据（#66 contract 后无回退口）。
         PacketCursor cursor(m_extractor);
         AudioBuffer::AudioBufferPtr packet;
         while (!m_stopRequest.load()) {
@@ -730,9 +720,9 @@ void AudioStreamDecoder::threadFunc()
 
     // ffmpeg 逐包分支（#62 mp3/aac + #63 现场重算包边界的提取器）：包边界在播放期
     // 现场重算的提取器用 kUnknownPacketCount 表示总数（mkv 走这条），mp3 / aac 的
-    // 帧边界由各自的帧读取器给出。两条判据是「或」：任一成立就逐包 pull，否则落到
-    // 下面的整块 runDecode()（expand 阶段的回退口，batch 之间还能绿）。
-    // wav / aiff 与 FLAC / Vorbis 各有自己的分支，已在上面返回。
+    // 帧边界由各自的帧读取器给出。两条判据是「或」：任一成立就逐包 pull。
+    // wav / aiff 与 FLAC / Vorbis 各有自己的分支，已在上面返回；11 种格式全部命中
+    // 上面四个增量分支（#66 contract），生产链不再有整块视图回退口。
     if (m_extractor->packetCount() == ExtractorHelper::kUnknownPacketCount
         || ((m_codecID == AUDIO_CODEC_ID_MP3 || m_codecID == AUDIO_CODEC_ID_AAC)
             && m_extractor->packetCount() != 0)) {
@@ -743,64 +733,10 @@ void AudioStreamDecoder::threadFunc()
         return;
     }
 
-    for (;;) {
-        // 取走即清空：本分支处理 seek 的整段时间里（12 ms 静默窗口 + 重放）到达的新目标
-        // 会留在槽里，处理完由下面的 `m_seekRequestMs >= 0` 接住，不会被这次处理抹掉。
-        // 反过来「读值再在结尾写 -1」会把窗口内到达的目标一起清掉——连续 seek 后一次就丢了。
-        int64_t seekMs = m_seekRequestMs.exchange(-1);
-        if (seekMs >= 0) {
-            m_state.store(StreamDecoderState::SEEKING);
-            std::this_thread::sleep_for(std::chrono::milliseconds(12));
-            // 位置口径：段基准 + ring 段内读计数，两者都用「ring 内容那一档」字节（positionBytesPerMs）。
-            // 丢弃口径：m_seekDiscardBytes 数的是**源格式** PCM（重采样之前），两者互不换算，
-            // 因此不会因为重采样倍率不同而互相打架——seek 后位置=目标，交付字节=源字节减去丢弃量。
-            applySegmentBase(static_cast<uint64_t>(seekMs));
-            m_ring->reset();
-            m_processedBytes = 0;
-            m_seekDiscardBytes
-                = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
-            m_decodedFrames = 0;
-            m_seekBaseMs    = static_cast<uint64_t>(seekMs);
-            m_abortDecode.store(false);
-            m_state.store(StreamDecoderState::DECODING);
-
-            RunDecodeResult ret = runDecode();
-            if (ret == RunDecodeResult::Error) {
-                setError(sdk::ErrorCode::DataCorrupted, "decode failed");
-                break;
-            }
-            if (m_stopRequest.load()) {
-                break;
-            }
-            if (m_seekRequestMs.load() >= 0) {
-                continue;
-            }
-            finishAtEndOfStream();
-            break;
-        }
-
-        if (m_stopRequest.load()) {
-            break;
-        }
-
-        // 在解码前添加背压检查
-        const size_t minSpace = calculateMinWriteSpace(m_codecID);
-
-        if (m_ring->availableWrite() < minSpace) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        RunDecodeResult ret = runDecode();
-        if (ret == RunDecodeResult::Error) {
-            setError(sdk::ErrorCode::DataCorrupted, "decode failed");
-        } else if (ret == RunDecodeResult::Abort && m_seekRequestMs.load() >= 0) {
-            continue;
-        } else if (!m_stopRequest.load()) {
-            finishAtEndOfStream();
-        }
-        break;
-    }
+    // contract 阶段（#66）：11 种格式全部有包工厂，生产链不再有整块视图回退口。
+    // 能走到这里说明提取器既不属于上面任何增量分支（既无包工厂也无 DataSource），
+    // 按解码失败汇总，避免解码线程静默退出后状态机停在 DECODING。
+    setError(sdk::ErrorCode::DataCorrupted, "decode failed");
 
     if (m_stopRequest.load()) {
         m_state.store(StreamDecoderState::IDLE);
@@ -991,111 +927,6 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
     return true;
 }
 
-AudioStreamDecoder::RunDecodeResult AudioStreamDecoder::runDecode()
-{
-    if (m_extractor == nullptr) {
-        return RunDecodeResult::Error;
-    }
-
-    if (m_codecID == AUDIO_CODEC_ID_NONE) {
-        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-        if (extPtr == nullptr || extPtr->size() == 0) {
-            LOGE("extractor getMetaData failed");
-            return RunDecodeResult::Error;
-        }
-        if (!writeDecodedBytes(extPtr->data(), extPtr->size())) {
-            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
-        }
-        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
-    }
-
-    if (m_codecID == AUDIO_CODEC_ID_FLAC) {
-        FLACDecode flacDecode(this);
-        flacDecode.setAbortFlag(&m_abortDecode);
-        DataSourceBase *ds = m_extractor->getDataSource();
-        int ret            = -1;
-        if (ds != nullptr) {
-            flacDecode.initFromDataSource(ds, 0, m_extractor->getDataSize());
-            ret = flacDecode.process_until_end_of_stream() ? 0 : -1;
-        } else {
-            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-            if (extPtr == nullptr || extPtr->size() == 0) {
-                LOGE("extractor getMetaData failed");
-                return RunDecodeResult::Error;
-            }
-            ret = flacDecode.decode(extPtr);
-        }
-        if (ret < 0) {
-            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
-        }
-        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
-    }
-
-    if (m_codecID == AUDIO_CODEC_ID_VORBIS) {
-        VorbisDecode vorbisDecode(this);
-        vorbisDecode.setAbortFlag(&m_abortDecode);
-        int ret            = -1;
-        DataSourceBase *ds = m_extractor->getDataSource();
-        if (ds != nullptr) {
-            if (!vorbisDecode.initVFFromSource(ds, m_extractor->getDataSize())) {
-                return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
-            }
-            while (true) {
-                ret = vorbisDecode.decodeOne();
-                if (ret == 0) {
-                    break;
-                }
-                if (ret < 0) {
-                    break;
-                }
-            }
-        } else {
-            AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-            if (extPtr == nullptr || extPtr->size() == 0) {
-                LOGE("extractor getMetaData failed");
-                return RunDecodeResult::Error;
-            }
-            ret = vorbisDecode.decode(extPtr);
-        }
-        if (ret < 0) {
-            return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
-        }
-        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
-    }
-
-    AudioCodecConfig config;
-    config.sampleRate    = m_srcSpec.sampleRate;
-    config.channels      = m_srcSpec.numChannel;
-    config.bitsPerSample = m_srcSpec.bitsPerSample;
-    config.bitRate       = m_extractor->getBitRate();
-    config.blockAlign    = m_extractor->getBlockAlign();
-    config.extraData     = m_extractor->getCodecExtraData();
-
-    AudioDecode decode(m_codecID, this, config);
-    if (decode.initCheck() != sdk_utils::OK) {
-        LOGE("AudioDecode init failed, codec=%#x", m_codecID);
-        return RunDecodeResult::Error;
-    }
-    std::vector<AudioBuffer::AudioBufferPtr> packetizedMetaData
-        = m_extractor->getPacketizedMetaData();
-    int ret = 0;
-    if (!packetizedMetaData.empty()) {
-        ret = decode.decodePackets(packetizedMetaData);
-    } else {
-        AudioBuffer::AudioBufferPtr extPtr = m_extractor->getMetaData();
-        if (extPtr == nullptr || extPtr->size() == 0) {
-            LOGE("extractor getMetaData failed");
-            return RunDecodeResult::Error;
-        }
-        ret = decode.decode(extPtr->data(), extPtr->size());
-    }
-    // 跳过的包已经在发生顺序上经 onAudioDecodeSkip() 记过账，上报留给 EOS 汇总
-    // （规格 F1：一次坏文件只挂一条错误）；这里只区分「放弃」与「正常跑完」。
-    if (ret < 0) {
-        return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Error;
-    }
-    return cancelRequested() ? RunDecodeResult::Abort : RunDecodeResult::Completed;
-}
 
 std::unique_ptr<AudioDecode> AudioStreamDecoder::createFfmpegPacketDecoder()
 {

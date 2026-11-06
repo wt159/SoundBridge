@@ -30,7 +30,7 @@ sdk/audio/decode/
 
 ## ANTI-PATTERNS
 - 不要再给 `AudioStreamDecoder` 加同步的单步解码入口（曾经的 `decodeNext()`，见 #18）。它天生要对三类 codec 维护三套语义，而 FLAC/Vorbis 的实例化开销使“每轮新建 + 只解一帧”成为最自然的写法，实测每轮产出的 FNV 指纹完全相同却返回「有进度」——`while (ret != EOS)` 永不终止。需要同步拿 PCM 就用 `AudioDecodeProcess`。
-- `runDecode()` 的返回值是 `RunDecodeResult::{Completed,Error,Abort}`，`Completed` 的含义是「整个 payload 已解完」，不是「还有进度」；不要把它映射回 OK。
+- 旧整块视图（getMetaData() / getPacketizedMetaData()）与整块 runDecode() 已在 #66 contract 退场；生产链零调用，接口按票面仅保留测试专用。
 - 不要忽略 `av_parser_init()` 失败后的 fallback 路径；当前实现允许 parser 不可用时直接 packet decode。
 - 不要把 `AudioDecodeProcess` 用在超大流媒体场景里假装它是流式解码器；它会累计 `m_decBufVec` 再 merge。
 - 不要直接假设 `start()` 后很快到 `EOS`；现有测试都用 `waitForDecoderState()` / `waitForDecoderStateWithDrain()` 轮询。

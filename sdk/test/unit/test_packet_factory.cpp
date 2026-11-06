@@ -11,11 +11,11 @@
 #include <string>
 #include <vector>
 
-// 包工厂的 expand 阶段（spec doc/streaming-playback-spec.md 第 3 节、ADR 0003、票面 #57）。
+// 包工厂契约（spec doc/streaming-playback-spec.md 第 3 节、ADR 0003、票面 #57 / #66）。
 //
 // 判据只有一条：**包是音频负载的唯一表示**，整块视图只是按需拼合的产物。
-// 新增的单包迭代必须能遍历旧视图覆盖的同一段负载，边界逐项一致，且不复制包表；
-// 旧形式（getMetaData() / getPacketizedMetaData()）同时保持可用，任何调用方都不用迁移。
+// 单包迭代必须能遍历旧视图覆盖的同一段负载，边界逐项一致，且不复制包表；
+// 旧形式（getMetaData() / getPacketizedMetaData()）按票面保留测试专用，生产链零调用。
 //
 // 本套件只碰 ExtractorHelper 的包工厂面：不新增同步解码入口（#18 继续成立），
 // 也不改生产链 AudioStreamDecoder。

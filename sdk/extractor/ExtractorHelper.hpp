@@ -51,17 +51,15 @@ static const std::unordered_map<std::string, standardExtractors> defaultExtracto
 //     AudioDecodeProcess 的回调都这么做）。
 // 任何「拿 spec 直接算字节数或时长」的代码，都必须先处理第二类字段为 0 的情况。
 //
-// payload 的契约（来源 #17）：**包是唯一表示**。
-//   - getPacketizedMetaData() 返回解复用器给出的原始包边界；
-//   - getMetaData() 是「把包拼成一整块」的便捷视图，基类按需拼合并缓存，
-//     提取器不要自己再存一份拼接副本（历史上 APE/ASF 因此各存了两份，等于 2× 文件大小）；
+// payload 的契约（来源 #17、#47 / ADR 0003）：**包是唯一层间单元**。
+//   - packetCount() / packetAt() 加 PacketCursor 是包工厂的单包面，解码侧逐包 pull、零复制；
+//     11 种格式全部 override，init 期只读扫描只留 O(1) 摘要、播放期按 offset 现场重算包边界。
+//   - getMetaData() / getPacketizedMetaData() 的整块 / 全量 vector 形式已退出生产链（#66 contract）；
+//     接口按票面保留测试专用：合成提取器 override getMetaData() 交出假 PCM，量测仪器可用整块视图。
 //   - 为什么必须由提取器给边界：ffmpeg 的 parser 只覆盖部分 codec（aac/mp3/flac/vorbis/opus 有，
 //     ape/wmav2/alac/pcm 没有）。没有 parser 时解码器「一个 packet 出有限帧」，
 //     把整段音频当成一个 packet 送进去只能解出开头——APE 曾因此 4.6s/24.9s。
 //     边界只有解复用器知道（变长帧的字节长度无法从采样数反推），所以解码器侧兜底做不到。
-//   - 单包面（#57）：packetCount() / packetAt() 加 PacketCursor 是层间单元的新形状，
-//     解码侧逐包 pull、零复制；旧的两个整块视图在 expand 阶段继续可用，调用方不用迁移。
-//     逐格式迁移见 #60 起的票，旧形式退场归 #66 的 contract 票。
 class ExtractorHelper {
 public:
     virtual ~ExtractorHelper() { }
@@ -75,14 +73,11 @@ public:
         return std::vector<AudioBuffer::AudioBufferPtr>();
     }
 
-    // —— 包工厂的单包面（expand 阶段，#57 / ADR 0003）——
-    // 解码侧按需 pull 单包，整块视图只是按需拼合的产物；两个方法必须 O(1)：
-    // 不允许为了「交出第 i 包」复制包表、拼合负载或重建索引。
-    // 默认实现把**按需拼合的整块视图**当作一整包：mp3 / ogg / aac 这些尚未迁移的提取器
-    // 本来就只持有整块 payload，边界就是整块本身，与旧路径 decode(data, size)
-    // 完全一致。持有逐包表的提取器（ape / asf / m4a / mkv）覆写这两个方法，零复制交出旧边界，
-    // 调用方因此不需要迁移任何东西。wav / aiff 与 FLAC 已在播放期现场切片（#60 / #61），
-    // 不经过整块视图。
+    // —— 包工厂的单包面（#57 / #66 / ADR 0003）——
+    // 解码侧按需 pull 单包；两个方法必须 O(1)：不允许为了「交出第 i 包」复制包表、
+    // 拼合负载或重建索引。11 种格式全部 override packetCount() / packetAt()，
+    // 包边界在播放期现场重算（#60 起）。基类默认实现把 getMetaData() 的整块视图
+    // 当作一整包，只服务测试里的合成提取器（它们不 override 这两个方法）。
     //
     // 未知总数（#60 起）：包边界在播放期按 offset 现场重算的格式（FLAC 的帧扫描、
     // wav / aiff 的定长切片）事先不知道有多少包。这类提取器让 packetCount() 返回
@@ -109,8 +104,9 @@ public:
     }
     virtual off64_t packetBytePosition() const { return 0; }
 
-    // 需要连续缓冲的消费者（FLAC/Vorbis 专用解码路径、部分用例）走这里。
+    // 整块视图（测试专用）：合成提取器 override 它交出假 PCM，量测仪器用它拼整段。
     // 默认实现把包拼起来并缓存：没有包化数据时返回 nullptr，与「没有 payload」同义。
+    // 生产链零调用（#66 contract）；播放器不为当前曲目持有整首压缩 payload。
     virtual AudioBuffer::AudioBufferPtr getMetaData()
     {
         if (m_joinedMetaBuf) {
@@ -155,8 +151,8 @@ public:
 
     // 观测点（规格第 5 节 / 票面 #56）：提取器 init 的只读扫描耗时，单位微秒。
     // 由 ExtractorFactory 在构造后回填（构造就是 init），解码器在 start() 时抄进 StreamMetrics。
-    // 已知代价：当前 init 仍是「全量装载 payload」，所以这个数现在等于「启动开销」，
-    // 不是纯粹的只读扫描；E2 把 init 改成只读扫描 + O(1) 摘要后，同一测量点自动变准。
+    // #56–#65 后 init 已是只读扫描 + O(1) 摘要，全量装载 payload 不再发生；
+    // 这个数 = 启动开销（含只读扫描），按规格不进判据、不设阈值。
     void setInitScanMicros(uint64_t micros) { m_initScanMicros = micros; }
     uint64_t initScanMicros() const { return m_initScanMicros; }
 
