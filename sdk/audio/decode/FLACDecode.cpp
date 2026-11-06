@@ -231,8 +231,11 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
 
     // 一包读完就放掉，再拉下一包：同一时刻只为一首曲目持有一包压缩数据。
     while (m_packet == nullptr || m_packetOffset >= m_packet->size()) {
-        // 取消链要在**拉包之前**被看到：停止 / seek 只置一个位，这里立刻退出，
+        // 取消链要在**拉包之前**被看到：m_abortDecode 只由 stop 置位，这里立刻退出，
         // 不让 libFLAC 为了「再解一帧」把包工厂继续往下推。
+        // seek 刻意不置该位（AudioStreamDecoder::seekToMs）：seek 的取消由目标槽承载，
+        // 在解码器侧的写 ring 循环里中断；native RA 定位期间这里必须能正常读流，
+        // 否则 READ_STATUS_ABORT 会让 seek_absolute 失败（#65 的非确定性根因）。
         if (m_abortFlag != nullptr && m_abortFlag->load()) {
             return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
         }

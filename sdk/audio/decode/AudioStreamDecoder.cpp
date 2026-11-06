@@ -221,8 +221,15 @@ void AudioStreamDecoder::seekToMs(uint64_t targetMs)
     if (m_state.load() == StreamDecoderState::IDLE || m_state.load() == StreamDecoderState::ERROR) {
         return;
     }
+    // seek 的取消只由目标槽承载（#59 单槽语义）：cancelRequested() 已经把「槽内有值」
+    // 视为取消，解码线程的写 ring 循环会中断并回到循环头 exchange 取走目标。
+    // 刻意不置 m_abortDecode：它是 stop 的读回调 ABORT 信号（FLACDecode / VorbisDecode
+    // 的 m_abortFlag 指向它）。native RA 定位（flac.seekToSample / ov_time_seek）期间
+    // 读回调一旦看到它就返回 READ_STATUS_ABORT（#60 的坑）；而「写槽 + 置位」两步发布里
+    // 第二步可能晚于解码线程「取槽 → 清位 → 开始定位」，迟到置回会污染整段定位过程，
+    // 让 seekToSample() 偶发返回 false（#65 的非确定性根因）。
+    // 连续 seek 仍由槽覆盖（后一次覆盖前一次）；stop 仍靠 m_abortDecode 中断读回调。
     m_seekRequestMs.store(static_cast<int64_t>(targetMs));
-    m_abortDecode.store(true);
 }
 
 StreamDecoderState AudioStreamDecoder::state() const
@@ -443,7 +450,8 @@ uint64_t AudioStreamDecoder::durationMs() const
 
 bool AudioStreamDecoder::cancelRequested() const
 {
-    // 取消只有一个协议：控制线程先写 seek 目标、再置 m_abortDecode（停止则直接置 m_stopRequest）。
+    // 取消只由控制线程发布，两个来源：stop 置 m_stopRequest + m_abortDecode；
+    // seek 只写 m_seekRequestMs 目标槽（不置 m_abortDecode，见 seekToMs 注释）。
     // 槽里还挂着目标，就说明这次 seek 还没被解码线程处理完，此时任何等待都必须立刻退出，
     // 否则「让位」的那次收尾会把紧接着到达的新目标一起搁死（连续 seek 后一次覆盖前一次）。
     return m_stopRequest.load() || m_abortDecode.load() || m_seekRequestMs.load() >= 0;
@@ -533,10 +541,11 @@ void AudioStreamDecoder::threadFunc()
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
-                // 取消位必须在定位**之前**清：seek 目标已经从槽里取走（exchange 成 -1），
-                // 而 libFLAC 的定位过程要读流，读回调会把还置着的取消位当成停止信号直接
-                // ABORT 掉这次定位（旧 DataSource 路径的读回调不看取消位，所以没有这一步）。
-                // 定位途中若又有新 seek 到达，控制线程会重新置位，这一次定位照样让位。
+                // native RA 定位要读流：readFromPackets() 的读回调把 m_abortDecode 当成
+                // 停止信号，一旦置位就 READ_STATUS_ABORT（#60 的坑）。seek 现在只写目标槽、
+                // 不置该位（见 seekToMs），这里仍显式清一次，保证定位期间读回调不因
+                // 上一次 stop 残留的取消位而 ABORT。定位途中到达的新 seek 留在槽里，
+                // 由下一轮循环头接住，不影响本次定位（连续 seek 后一次覆盖前一次）。
                 m_abortDecode.store(false);
                 if (!flac.seekToSample(targetSample)) {
                     if (m_durationMs > 0
