@@ -249,6 +249,7 @@ TEST_SUITE("StreamingBudget")
             { kLongWma, ".wma", 180000 },  // 259 s，约 70 倍
         };
 
+        PlaybackObservation observations[sizeof(tracks) / sizeof(tracks[0])];
         for (size_t i = 0; i < sizeof(tracks) / sizeof(tracks[0]); ++i) {
             INFO(std::string(tracks[i].fileName));
             PlaybackObservation observation
@@ -260,6 +261,7 @@ TEST_SUITE("StreamingBudget")
                           "start→首帧时间戳没有记上");
             CHECK_MESSAGE(observation.metrics.initScanUs > 0, "init 只读扫描耗时没有记上");
             CHECK_MESSAGE(observation.metrics.peakHeldBytes > 0, "分配记账峰值没有记上");
+            observations[i] = observation;
             MESSAGE(tracks[i].fileName
                     << ": initScanUs " << observation.metrics.initScanUs
                     << ", startToFirstPcmUs " << observation.metrics.startToFirstPcmUs
@@ -267,6 +269,25 @@ TEST_SUITE("StreamingBudget")
                     << ", silenceFills " << observation.metrics.silenceFills
                     << ", deliveredBytes " << observation.bytes);
         }
+
+        // 首播延迟判据（规格第 5 节）：长短素材对 start()→设备首次 write() 的延迟差
+        // ≤ 150ms。init 只读扫描耗时（initScanUs）单独记「启动开销」，不进判据、不设阈值。
+        // 复用上面两个素材已跑完的观测，不新增一次长素材播放（不新增耗时 gate）。
+        const uint64_t shortUs = observations[0].metrics.startToFirstPcmUs;
+        const uint64_t longUs  = observations[1].metrics.startToFirstPcmUs;
+        const uint64_t gapUs   = shortUs > longUs ? shortUs - longUs : longUs - shortUs;
+        CHECK_MESSAGE(gapUs <= 150000,
+                      "长短素材首播延迟差 " << gapUs << "us 超过 150ms（短 " << shortUs
+                                          << "us / 长 " << longUs << "us）");
+        MESSAGE("first-frame latency gap: short " << shortUs << "us, long " << longUs
+                                                  << "us, gap " << gapUs << "us (<= 150000us)");
+
+        // 跨素材峰值差 |peak_long − peak_short| ≤ P（规格第 5 节）在本素材矩阵下不可验：
+        // ogg 只有 1 首短素材（3.7 s）、wma 只有 1 首长素材（259 s），没有同格式的长短配对，
+        // 跨格式比较会把 codec / 解码器工作缓冲差异混进峰值差，不能归因于素材时长。
+        // 不伪造素材、不放宽判据：这一条留给后续 effort 补素材。当前用 O(1) 结构性证据
+        // 论证「读过 ≠ 常驻」——绝对上界（peak ≤ ring + P + 64KB + O(1)，见下方各格式用例）、
+        // 并行（首帧时包序列未耗尽）、整块反例被判红、两次运行 peak 逐位复现。
     }
 
     // —— 常驻上界与并行两条判据（规格第 5 节 / 票面 #60 的验收门禁）——
