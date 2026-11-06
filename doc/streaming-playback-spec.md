@@ -210,3 +210,41 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - 首播判据不含 init 扫描与切歌窗口，端到端体验仍有随文件大小增长的**启动开销**与**切换开销**；两个指标只记录、不设阈值，drift 测量留作后续 effort 输入。
 - 稳态欠流判据假定测试环境消费端不按实时墙钟节流；若将来改水位驱动或出现真实解码慢于消费的用例，须回来重开此判据。
 - 两处文档偏差已回填：`doc/bad-input-spec.md` 的「1 ms 轮询」→ 5 ms、`#8` 的「网络流 / 边下边播」措辞更正。
+
+## 12. CI 观测与后续 effort 输入（#68 / E15）
+
+本票是边解边播 effort 的最后一张票：只把数值留进 CI 日志、把口径写进规格，**不新增判据、不改第 5 节任何数值 / 容差、不为 drift 拍板**。
+
+### 12.1 四个仪表在 CI 的可见性（纯观测，非门禁）
+
+- 四个观测点（分配记账峰值 `peakHeldBytes`、稳态静音填充次数 `silenceFills`、start→首帧 `startToFirstPcmUs`、init 只读扫描 `initScanUs`）由 `StreamingBudget` suite 的 `MESSAGE(...)` 输出；doctest 默认只在断言失败时进日志，通过时数值不可见。`packetBoundaryMicros` 在该输出里打印为 `boundaryMicros`，包数打印为 `packets` / `packetsPulled`。
+- CI `sdk-coverage.yml` 既有链只跑 `coverage` target + `UnitTests -ts=MediaCoverage -s`，不带该 suite，数值不进日志。本票在 `Report coverage matrix numbers` **之后新增一个独立 step**（`UnitTests -ts=StreamingBudget -s` + grep 把上述字段打进日志）。
+- 该 step `continue-on-error: true` 且命令以 `|| true` 收尾：观测命令失败、素材未下发、断言红都**不让 CI 失败**；不设阈值、不注册 `add_test` 分组、不动 `TIMEOUT 180`、不拆快集 / 全量集、不改覆盖度矩阵报告步骤。它是纯观测、不是门禁（不新增耗时 gate）；代价是**新增一次 StreamingBudget 测试运行**，CI 墙钟时间相应增加（本机等价命令实测见提交报告）。
+
+### 12.2 三个独立指标（只记录、不设阈值）
+
+三者都**不是第 5 节判据**，本 effort 不给数值判据、不改判据、不拍板，只作为后续 effort 的输入：
+
+| 独立指标 | 记录口径 | 落点 |
+|---|---|---|
+| 启动开销 | 提取器 init 期只读扫描耗时；测试仪表 `StreamMetrics::initScanUs`（微秒），生产链另有 `open_file_ms`（毫秒，`Metrics::RecordTiming`）。随素材大小增长，不进首播判据 | `sdk/audio/decode/StreamMetrics.h`；`sdk/MusicPlayList.cpp:288` |
+| 切换开销 | 新任务 `start()` 之前销毁旧任务（stop+join 旧线程、旧 ring 引用计数归零、建新 ring / decoder）的耗时；`track_switch_ms`（毫秒）经 `Metrics::RecordTiming` 输出为日志行 `metric=track_switch_ms type=timing value=<ms> unit=ms`。切歌窗口不进首播判据，与启动开销同构 | `sdk/MusicPlayList.cpp:402-433`；`sdk/Metrics.cpp` |
+| 端到端 drift | 播放时钟与源时钟在长时播放下的累积偏差。**仍未判**：本票只登记口径，不给数值判据、不设阈值、不改判据 | 本规格只登记口径；判定与阈值属后续 effort（见 #55 Out of Scope / Further Notes） |
+
+- 与四个仪表的关系：启动开销对应 `initScanUs`；切换开销来自生产链日志、不来自 `StreamMetrics`；drift 在 `StreamMetrics` 里**没有**现成仪表，本票不新增仪表 / 观测点。
+
+### 12.3 稳态欠流判据的假定（本票再次写明）
+
+稳态欠流判据（第 5 节「静音填充次数 == 0」）**假定测试环境消费端不按实时墙钟节流**：`StreamingBudget` 消费端以固定轮询排空 ring，不按 10 ms / 4096 B 的生产节奏推进。若将来改成水位驱动，或出现真实解码慢于消费的用例，`silenceFills` 会计到真实欠流，**须回来重开该判据**。此假定已登记于第 11 节，本票不改判据数值。
+
+### 12.4 后续 effort 输入说明
+
+1. 三个独立指标（12.2）只有数值与口径、没有阈值；后续 effort 要立判据，须先用本票留下的 CI 日志数值定标，再决定阈值，别在缺基线时拍板。
+2. 端到端 drift 仍未判：先定义「播放时钟 / 源时钟」的取数点与量纲，再谈判定与阈值（参见 `doc/开发方向建议.md` 的「长时播放 drift 检测」）。本票不新增仪表、不给数值判据。
+3. 跨素材峰值差判据（`|peak_long − peak_short| ≤ P`）因素材矩阵缺口（ogg / wma 各仅 1 首、无同格式长短配对）不可验，#67 已如实标注；补素材后再验。
+4. 本地 `ctest` 的 `sdk_unit_tests` 在修好 SIGSEGV 后全量约 191 s、命中 `TIMEOUT 180`，本地 ctest 7/8；票面记「CI 路径不经它、不受影响」，12.5 补记显示 coverage 脚本间接会跑它，CI 实况本机未验证。是否调整交用户决策，本票不动 `TIMEOUT`。
+5. 全量 `UnitTests.exe`（不带参数）在 integration 上已验证 492 用例 / 50078 断言 / 0 failed / exit 0；Linux `sdk-coverage` 本机未验证；**本票 CI 观测是否真的在 GitHub Actions 显示数值，本机无法运行，未在真实 CI 验证**。
+
+### 12.5 CI 事实补记（与票面 / 第 8 节措辞的出入）
+
+`sdk-coverage.yml` 文本里确实没有 `ctest -R sdk_` 命令；但 `coverage` target 经 `scripts/coverage/run_linux.sh:29` **间接**执行 `ctest -R sdk_`（含 `sdk_unit_tests` 全量与 `TIMEOUT 180`）以生成 `.gcda`。因此「CI 只跑 coverage target + MediaCoverage」是 workflow 文本层面的陈述：完整执行链里 8 组 CTest 在 CI 也会跑，只是不带 `-s`、`--output-on-failure` 只在失败时输出，四个仪表数值仍不可见，12.1 的观测 step 仍必要。此出入如实登记，本票不改 coverage 脚本。
