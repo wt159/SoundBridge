@@ -282,6 +282,18 @@ TEST_SUITE("StreamingBudget")
         const char *kFlac = "小镇姑娘-陶喆.flac";
         const size_t kAvioHeadroomBytes = 64 * 1024;
 
+        // spec 5 判据 `peak <= ring + P + 64KB(AVIO) + O(1) 摘要` 里的 O(1) 项。
+        // AudioStreamDecoder::refreshHeldPeak() 把解码器自己的两块工作缓冲
+        // （m_interleaveBuf / m_resampleBuf）计入 peak，这是 #60 起所有走 ffmpeg packet
+        // loop 的格式共享的记账口径：只随单帧 PCM 大小变化，不随素材时长增长，也不是
+        // 提取器侧常驻。既有 helper 的 upper 只写了 ring + P + 64KB，把这块漏了；多数
+        // 格式单帧很小、被余量吸收，因此一直没暴露。
+        // asf 的 WMAV2 一个 ASF data packet 会一次解出约 0.7s PCM（30720 samples ×
+        // 2ch × 4B），两块缓冲实测各 245760、合计 491520 —— 迁移前后都存在，与边解边播
+        // 契约无关（迁移消掉的是随包数增长的整首 payload）。取 2 × ring 容量作名义上界，
+        // 紧覆盖实测值并给单帧大小的小幅波动留余量。
+        const size_t kDecoderWorkspaceBytes = AudioRingBuffer::kDefaultCapacity * 2;
+
         struct PacketProfile {
             size_t count          = 0;
             size_t maxPacketBytes = 0;
@@ -1126,7 +1138,8 @@ TEST_SUITE("StreamingBudget")
     namespace
     {
         void checkBoundaryRecomputedFormat(const RealMediaFixture &fixture, const char *name,
-                                          const char *extension, int timeoutMs)
+                                          const char *extension, int timeoutMs,
+                                          size_t decoderWorkspaceBytes = 0)
         {
             const std::string fileName(name);
             INFO(fileName);
@@ -1151,7 +1164,7 @@ TEST_SUITE("StreamingBudget")
             CHECK(observation.bytes > 0);
 
             const size_t upper = AudioRingBuffer::kDefaultCapacity
-                + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+                + profile.maxPacketBytes * 2 + kAvioHeadroomBytes + decoderWorkspaceBytes;
             CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
                           fileName << ": 常驻峰值 " << observation.metrics.peakHeldBytes
                                    << " 超过上界 " << upper);
@@ -1200,5 +1213,18 @@ TEST_SUITE("StreamingBudget")
     {
         RealMediaFixture fixture;
         checkBoundaryRecomputedFormat(fixture, "music-ape.ape", ".ape", 120000);
+    }
+
+    TEST_CASE("asf stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "萨克斯机.asf", ".asf", 120000,
+                                      kDecoderWorkspaceBytes);
+    }
+
+    TEST_CASE("wma stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "十七岁-陶喆.96.wma", ".wma", 300000);
     }
 }
