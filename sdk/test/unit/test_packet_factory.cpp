@@ -575,42 +575,12 @@ TEST_SUITE("PacketFactory")
         CHECK(spec.durationMs > 0);
     }
 
-    // #61 起 wav 按定长切片成多个 PCM 包，不再暴露「整块 = 单包」的旧视图；
-    // 切片对齐与连续性由 "wav and aiff packet factory..." 用例锁定，这里只确认
-    // 旧形式确实退场、包边界改由现场重算给出。
-    TEST_CASE("wav packet cursor yields pcm slices instead of a single joined block")
-    {
-        RealMediaFixture fixture;
-        const std::string name("music.wav");
-        if (!fixture.exists(name)) {
-            MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
-            return;
-        }
-
-        std::shared_ptr<FileSource> source;
-        std::unique_ptr<ExtractorHelper> extractor;
-        REQUIRE(fixture.create(name, ".wav", source, extractor));
-        REQUIRE(extractor != nullptr);
-        REQUIRE(extractor->initCheck() == sdk_utils::OK);
-
-        CHECK(extractor->getMetaData() == nullptr);
-        CHECK(extractor->getPacketizedMetaData().empty());
-        CHECK(extractor->packetCount() == ExtractorHelper::kUnknownPacketCount);
-        CHECK(extractor->heldPayloadBytes() == 0);
-
-        PacketCursor cursor(extractor.get());
-        AudioBuffer::AudioBufferPtr packet;
-        size_t count      = 0;
-        size_t totalBytes = 0;
-        while (cursor.nextPacket(packet)) {
-            REQUIRE(packet != nullptr);
-            CHECK(packet->size() > 0);
-            ++count;
-            totalBytes += packet->size();
-        }
-        CHECK(count > 1);
-        CHECK(totalBytes > 0);
-    }
+    // 这里原有一条「真实素材的整块视图等于唯一一包」的用例（#57 用 wav 做载体）。
+    // #60–#64 把 11 种格式全部迁到「包按需现场切」之后，任何真实素材都不再有整块视图，
+    // 该用例的前提被迁移本身取消了 —— 不是被放宽。整块供给的语义仍由合成提取器锁定：
+    //   * packet cursor treats a single-block payload as exactly one packet
+    //   * StreamingBudget: whole view supply is red under both criteria
+    // 旧形式整体退场（contract）见 #66。
 
     // wav / aiff 的增量包面（票面 #61 / 规格第 9 节 E8）。
     //
