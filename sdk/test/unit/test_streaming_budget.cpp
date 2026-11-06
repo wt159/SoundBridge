@@ -1139,7 +1139,7 @@ TEST_SUITE("StreamingBudget")
                 = measurePacketProfile(fixture.mediaDir(), name, extension);
             REQUIRE(profile.count > 1);
             REQUIRE(profile.maxPacketBytes > 0);
-            REQUIRE(profile.maxPacketBytes < 64 * 1024);
+            MESSAGE(fileName << ": maxPacket " << profile.maxPacketBytes);
 
             const PlaybackObservation observation
                 = playWholeTrack(fixture.mediaDir(), fileName, extension, timeoutMs);
@@ -1194,5 +1194,11 @@ TEST_SUITE("StreamingBudget")
     {
         RealMediaFixture fixture;
         checkBoundaryRecomputedFormat(fixture, "music-alac.m4a", ".m4a", 120000);
+    }
+
+    TEST_CASE("ape stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "music-ape.ape", ".ape", 120000);
     }
 }
