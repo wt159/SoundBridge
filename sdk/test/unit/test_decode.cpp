@@ -253,6 +253,34 @@ static std::vector<AudioBuffer::AudioBufferPtr> copyPacketizedMeta(const Extract
     return extractor.getPacketizedMetaData();
 }
 
+// 与 AudioDecodeProcess::init() 同构：从包工厂逐包取齐，拼成一段连续负载。
+// getMetaData() 的整块视图退出生产链后（#66 contract / ADR 0003），一致性用例用它
+// 拿到与全量解码等价的整段 payload，再按原语义一次性 decode.decode(data, size)。
+static AudioBuffer::AudioBufferPtr concatenatePacketPayload(ExtractorHelper *extractor)
+{
+    std::vector<AudioBuffer::AudioBufferPtr> packets;
+    PacketCursor cursor(extractor);
+    AudioBuffer::AudioBufferPtr packet;
+    while (cursor.nextPacket(packet)) {
+        packets.push_back(packet);
+    }
+    if (packets.empty()) {
+        return nullptr;
+    }
+
+    size_t total = 0;
+    for (const auto &part : packets) {
+        total += part->size();
+    }
+    AudioBuffer::AudioBufferPtr merged = std::make_shared<AudioBuffer>(total);
+    off64_t offset                    = 0;
+    for (const auto &part : packets) {
+        merged->setData(offset, part->size(), part->data());
+        offset += part->size();
+    }
+    return merged;
+}
+
 AudioSpec createStreamDecoderDeviceSpec(ExtractorHelper *extractor);
 AudioSpec createStreamDecoderDeviceSpec(ExtractorHelper *extractor)
 {
@@ -1134,9 +1162,10 @@ TEST_CASE("Chunked decode consistency with full file decode - AAC")
     REQUIRE(bufferFull != nullptr);
     REQUIRE(bufferFull->size() > 0);
 
-    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
-    const char *data                     = metaData->data();
-    size_t totalSize                     = metaData->size();
+    AudioBuffer::AudioBufferPtr payload  = concatenatePacketPayload(extractor.get());
+    REQUIRE(payload != nullptr);
+    const char *data                     = payload->data();
+    size_t totalSize                     = payload->size();
 
     std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
 
@@ -1193,9 +1222,10 @@ TEST_CASE("Chunked decode consistency with full file decode - MP3")
     REQUIRE(bufferFull != nullptr);
     REQUIRE(bufferFull->size() > 0);
 
-    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
-    const char *data                     = metaData->data();
-    size_t totalSize                     = metaData->size();
+    AudioBuffer::AudioBufferPtr payload  = concatenatePacketPayload(extractor.get());
+    REQUIRE(payload != nullptr);
+    const char *data                     = payload->data();
+    size_t totalSize                     = payload->size();
 
     std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
 
@@ -1252,9 +1282,10 @@ TEST_CASE("Chunked decode consistency with full file decode - M4A")
     REQUIRE(bufferFull != nullptr);
     REQUIRE(bufferFull->size() > 0);
 
-    AudioBuffer::AudioBufferPtr metaData = extractor->getMetaData();
-    const char *data                     = metaData->data();
-    size_t totalSize                     = metaData->size();
+    AudioBuffer::AudioBufferPtr payload  = concatenatePacketPayload(extractor.get());
+    REQUIRE(payload != nullptr);
+    const char *data                     = payload->data();
+    size_t totalSize                     = payload->size();
 
     std::vector<AudioBuffer::AudioBufferPtr> chunkFrames;
 
