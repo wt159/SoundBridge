@@ -64,20 +64,43 @@ struct PublicPlayerProbe : public soundbridge::PlayerCallbacks {
     std::atomic<int> error_count { 0 };
     std::atomic<int> track_changed_count { 0 };
     std::atomic<int> last_track_index { -1 };
-    std::mutex mutex;
+    // #72：回调层断言的数据源。以前 state / duration / position 三个回调都是空实现，
+    // 「facade 有没有正确转发」这件事根本没有证据可查。
+    std::atomic<int> state_change_count { 0 };
+    std::atomic<int> position_samples { 0 };
+    std::atomic<int> duration_count { 0 };
+    std::atomic<int> playlist_change_count { 0 };
+    std::atomic<uint64_t> last_position { 0 };
+    std::atomic<uint64_t> last_duration { 0 };
+    mutable std::mutex mutex;
     std::string last_trace_id;
     std::map<int, std::string> track_names;
+    std::vector<soundbridge::PlayerState> state_sequence;
 
-    void onStateChanged(soundbridge::PlayerState) override { }
+    void onStateChanged(soundbridge::PlayerState state) override
+    {
+        state_change_count.fetch_add(1);
+        std::lock_guard<std::mutex> lock(mutex);
+        state_sequence.push_back(state);
+    }
     void onTrackChanged(int index) override
     {
         track_changed_count.fetch_add(1);
         last_track_index.store(index);
     }
-    void onDurationChanged(uint64_t) override { }
-    void onPositionChanged(uint64_t) override { }
+    void onDurationChanged(uint64_t durationMs) override
+    {
+        duration_count.fetch_add(1);
+        last_duration.store(durationMs);
+    }
+    void onPositionChanged(uint64_t positionMs) override
+    {
+        position_samples.fetch_add(1);
+        last_position.store(positionMs);
+    }
     void onPlaylistChanged(const std::list<soundbridge::TrackInfo> &tracks) override
     {
+        playlist_change_count.fetch_add(1);
         std::lock_guard<std::mutex> lock(mutex);
         track_names.clear();
         for (const auto &track : tracks) {
@@ -90,6 +113,18 @@ struct PublicPlayerProbe : public soundbridge::PlayerCallbacks {
         error_count.fetch_add(1);
         std::lock_guard<std::mutex> lock(mutex);
         last_trace_id = traceId;
+    }
+
+    std::vector<soundbridge::PlayerState> stateSequence() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return state_sequence;
+    }
+
+    std::map<int, std::string> playlistSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return track_names;
     }
 };
 
@@ -454,6 +489,138 @@ bool test_player_api()
                         "Public Player keeps duration available after track switch");
             ok &= check(player.position() == 0, "Public Player resets position after track switch");
         }
+    }
+
+    // #72 / P0-3：公开层必须把 position / duration 回调真正转发出来，而不是只有 getter。
+    {
+        PublicPlayerProbe probe;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(static_cast<soundbridge::PlayerCallbacks *>(&probe), config);
+
+        RealMediaFixture fixture;
+        player.addMusicDirectory(fixture.mediaDir());
+        ok &= check(wait_for_condition([&player]() { return player.trackCount() > 0; }, 5000),
+                    "Public Player loads tracks for the callback probe");
+        ok &= check(wait_for_condition([&probe]() { return probe.duration_count.load() > 0; }, 3000),
+                    "Public Player forwards onDurationChanged");
+        ok &= check(wait_for_condition([&player]() { return player.duration() > 0; }, 3000),
+                    "Public Player duration is readable after the callback");
+
+        player.play();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                        3000),
+                    "Public Player enters Playing through the public API");
+        ok &= check(wait_for_condition([&probe]() { return probe.position_samples.load() >= 2; },
+                                       3000),
+                    "Public Player emits at least two position callbacks");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+        const uint64_t callbackPosition = probe.last_position.load();
+        const uint64_t apiPosition       = player.position();
+        ok &= check(probe.position_samples.load() >= 2,
+                    "Public Player keeps reporting position during real playback");
+        ok &= check(callbackPosition > 0, "Public Player position callback carries a positive value");
+        ok &= check(probe.duration_count.load() == 1,
+                    "Public Player reports duration exactly once per track");
+        ok &= check(probe.last_duration.load() == player.duration(),
+                    "Public Player duration callback matches the duration getter");
+        ok &= check(apiPosition >= callbackPosition && apiPosition - callbackPosition <= 50,
+                    "Public Player position getter agrees with the position callback");
+        player.stop();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+                        3000),
+                    "Public Player stops after the callback probe");
+    }
+
+    // #72 / P2-11：状态回调序列 play -> pause -> play -> stop 里，相邻状态不许重复。
+    {
+        PublicPlayerProbe probe;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(static_cast<soundbridge::PlayerCallbacks *>(&probe), config);
+
+        RealMediaFixture fixture;
+        player.addMusicDirectory(fixture.mediaDir());
+        ok &= check(wait_for_condition([&player]() { return player.trackCount() > 0; }, 5000),
+                    "Public Player loads tracks for the state sequence probe");
+        ok &= check(wait_for_condition([&player]() { return player.duration() > 0; }, 3000),
+                    "Public Player exposes duration for the state sequence probe");
+
+        player.play();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                        3000),
+                    "state sequence: play reaches Playing");
+        player.pause();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Paused; },
+                        3000),
+                    "state sequence: pause reaches Paused");
+        player.play();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                        3000),
+                    "state sequence: resume reaches Playing");
+        player.stop();
+        ok &= check(wait_for_condition(
+                        [&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+                        3000),
+                    "state sequence: stop reaches Stopped");
+
+        const std::vector<soundbridge::PlayerState> states = probe.stateSequence();
+        ok &= check(!states.empty(), "Public Player records state callbacks");
+        ok &= check(!states.empty() && states.front() == soundbridge::PlayerState::Playing,
+                    "state sequence starts with Playing");
+        ok &= check(!states.empty() && states.back() == soundbridge::PlayerState::Stopped,
+                    "state sequence ends with Stopped");
+        bool adjacentDuplicate = false;
+        for (size_t i = 1; i < states.size(); ++i) {
+            if (states[i] == states[i - 1]) {
+                adjacentDuplicate = true;
+            }
+        }
+        ok &= check(!adjacentDuplicate, "state sequence has no duplicate adjacent states");
+    }
+
+    // #72 / P2-12：addMusicDir 之后的 onPlaylistChanged 必须覆盖全部曲目，索引 0..n-1 连续。
+    {
+        PublicPlayerProbe probe;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(static_cast<soundbridge::PlayerCallbacks *>(&probe), config);
+
+        RealMediaFixture fixture;
+        player.addMusicDirectory(fixture.mediaDir());
+        ok &= check(wait_for_condition([&player]() { return player.trackCount() > 0; }, 5000),
+                    "Public Player loads tracks for the playlist callback probe");
+        ok &= check(wait_for_condition([&probe]() { return probe.playlist_change_count.load() > 0; },
+                                       3000),
+                    "Public Player forwards onPlaylistChanged");
+        ok &= check(wait_for_condition(
+                        [&probe, &player]() {
+                            std::lock_guard<std::mutex> lock(probe.mutex);
+                            return static_cast<int>(probe.track_names.size()) == player.trackCount();
+                        },
+                        5000),
+                    "playlist callback carries every loaded track");
+
+        const int trackCount                            = player.trackCount();
+        const std::map<int, std::string> playlistTracks = probe.playlistSnapshot();
+        ok &= check(static_cast<int>(playlistTracks.size()) == trackCount,
+                    "playlist callback size matches trackCount");
+        bool consecutive = true;
+        int expectedIndex = 0;
+        for (std::map<int, std::string>::const_iterator it = playlistTracks.begin();
+             it != playlistTracks.end(); ++it) {
+            if (it->first != expectedIndex) {
+                consecutive = false;
+            }
+            ++expectedIndex;
+        }
+        ok &= check(consecutive, "playlist callback indices are 0..n-1 consecutive");
     }
 
     return ok;
