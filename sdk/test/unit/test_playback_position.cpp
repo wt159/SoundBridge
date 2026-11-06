@@ -47,7 +47,7 @@ size_t pcmBytesForMs(uint64_t ms)
     return static_cast<size_t>(ms * kBytesPerMs);
 }
 
-// 整段 PCM 的假提取器：AUDIO_CODEC_ID_NONE 走 runDecode 的「一次性吐 getMetaData」分支，
+// 整段 PCM 的假提取器：AUDIO_CODEC_ID_NONE 走逐包供给分支（基类把整块 PCM 当作一包），
 // 没有真实解码器依赖，行为确定。
 class PcmExtractor : public ExtractorHelper {
 public:

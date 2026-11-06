@@ -62,7 +62,7 @@ status_t AudioDecodeProcess::init()
 {
     if (m_codecID == AUDIO_CODEC_ID_NONE) {
         // 原始 PCM 不需要解码。包工厂有包就逐包拼出整段（#61：wav / aiff 的 init
-        // 不再持有整首 payload，整块视图也就没有来源），没有包才退回旧形式。
+        // 不再持有整首 payload，整块视图也就没有来源），没有包才退回测试专用的整块视图。
         // 仪器拼整段是它的职责；生产链不这么做（规格第 3 节 / ADR 0003）。
         if (m_extractor->packetCount() != 0) {
             PacketCursor cursor(m_extractor);

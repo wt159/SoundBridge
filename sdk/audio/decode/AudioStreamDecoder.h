@@ -97,15 +97,10 @@ private:
     // 把 seek 目标写成段基准；字节口径未知（首帧之前）时寄存目标，首帧后补算。
     void applySegmentBase(uint64_t targetMs);
     // 取消请求是否仍然有效：停止 / 取消位 / 槽里还挂着没被处理的 seek 目标。
-    // 解码线程只把 `RunDecodeResult::Abort` 当作**结果**，从不把它当成取消信号读回来。
+    // 解码线程只把取消当作**结果**，从不把它当成取消信号读回来。
     bool cancelRequested() const;
 
-    // runDecode() 一次性解完整个 payload，成功即「流已耗尽」，不存在「还有数据」的中间态。
-    // 用枚举而不是 0/-1，避免再把「成功」映射成「还有进度」而看不出矛盾。
-    enum class RunDecodeResult { Completed, Error, Abort };
-
     void threadFunc();
-    RunDecodeResult runDecode();
     // 增量供给的 ffmpeg 分支（#62 / ADR 0003）：mp3 / aac 逐包喂、整个任务只建一次
     // 编解码器；seek 按「顺序重放」重建解码器并从包序列起点重新迭代（#49 第二档）。
     std::unique_ptr<AudioDecode> createFfmpegPacketDecoder();

@@ -52,7 +52,7 @@ char patternByteAt(size_t offset)
     return static_cast<char>((offset / 1024) & 0xFF);
 }
 
-// 整段 PCM 的假提取器：AUDIO_CODEC_ID_NONE 走 runDecode 的一次性交付分支，
+// 整段 PCM 的假提取器：AUDIO_CODEC_ID_NONE 走逐包供给分支（基类把整块 PCM 当作一包），
 // 没有真实解码器依赖，时钟与内容都确定。
 class PatternPcmExtractor : public ExtractorHelper {
 public:

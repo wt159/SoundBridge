@@ -463,7 +463,7 @@ off64_t MP3Extractor::packetBytePosition() const
 
 AudioBuffer::AudioBufferPtr MP3Extractor::getMetaData()
 {
-    // 旧整块视图（expand 阶段的回退口 / 量测仪器）：只在被请求时按需读取，
+    // 整块视图（测试量测仪器专用，生产链零调用）：只在被请求时按需读取，
     // 语义与改造前一致——从第一个音频帧到文件尾（含 ID3v1 尾标）。
     if (m_metaBuf == nullptr && m_dataSource != nullptr && m_firstFramePos >= 0
         && m_dataSize > m_firstFramePos) {
