@@ -106,7 +106,7 @@ uint16_t readBe16(const uint8_t *data)
 
 } // namespace
 
-FLACFrameReader::FLACFrameReader(DataSourceBase *source, off64_t streamHeaderEnd, off64_t endOffset,
+FLACFrameReader::FLACFrameReader(DataSourceBase *source, int64_t streamHeaderEnd, int64_t endOffset,
                                  size_t maxFrameBytes)
     : m_source(source)
     , m_streamHeaderEnd(streamHeaderEnd)
@@ -130,7 +130,7 @@ FLACFrameReader::FLACFrameReader(DataSourceBase *source, off64_t streamHeaderEnd
 
 FLACFrameReader::~FLACFrameReader() { }
 
-void FLACFrameReader::seekTo(off64_t offset)
+void FLACFrameReader::seekTo(int64_t offset)
 {
     if (offset < 0) {
         offset = 0;

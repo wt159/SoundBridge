@@ -47,7 +47,7 @@ public:
     // 一包 = 一段对齐到帧的定长 PCM 切片，交出之前换成主机字节序（AIFF 的 PCM 是大端）。
     virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
     virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
-    virtual off64_t packetBytePosition() const;
+    virtual int64_t packetBytePosition() const;
 
     // 分配记账：init 只留 O(1) 标量摘要，不持 payload；
     // 交出去的包归解码侧记账（alloc/free 增量）。
@@ -70,7 +70,7 @@ private:
     AudioSpec m_audioSpec;
     AudioCodecID m_audioCodecID;
     // SSND 的阴影数据起点与长度（clamp 到文件剩余）：O(1) 摘要。
-    off64_t m_dataOffset;
+    int64_t m_dataOffset;
     size_t m_dataSize;
     std::unique_ptr<PcmPacketReader> m_reader;
     size_t m_nextPacketIndex;

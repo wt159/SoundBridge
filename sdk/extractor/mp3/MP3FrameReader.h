@@ -39,12 +39,12 @@ FrameInfo parseFrameHeader(uint32_t header);
 // 仍是 createExtractor() == nullptr）。
 class MP3FrameReader {
 public:
-    MP3FrameReader(DataSourceBase *source, off64_t audioStart, off64_t audioEnd);
+    MP3FrameReader(DataSourceBase *source, int64_t audioStart, int64_t audioEnd);
     ~MP3FrameReader();
 
     // 定位到任意文件偏移：下一包从该处重新认帧头。offset 会被夹到 [audioStart, audioEnd]。
-    void seekTo(off64_t offset);
-    off64_t position() const { return m_nextOffset; }
+    void seekTo(int64_t offset);
+    int64_t position() const { return m_nextOffset; }
 
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet);
 
@@ -65,8 +65,8 @@ private:
     size_t findHeader(size_t from);
 
     DataSourceBase *m_source;
-    off64_t m_audioStart;
-    off64_t m_audioEnd;
-    off64_t m_nextOffset;
+    int64_t m_audioStart;
+    int64_t m_audioEnd;
+    int64_t m_nextOffset;
     std::vector<uint8_t> m_buf;
 };

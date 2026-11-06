@@ -30,7 +30,7 @@ ASFStreamInfo::ASFStreamInfo()
 {
 }
 
-ASFPacketReader::ASFPacketReader(DataSourceBase *source, off64_t fileSize)
+ASFPacketReader::ASFPacketReader(DataSourceBase *source, int64_t fileSize)
     : m_ioData()
     , m_fmt(nullptr)
     , m_avio(nullptr)
@@ -250,7 +250,7 @@ bool ASFPacketReader::nextPacket(AudioBuffer::AudioBufferPtr &packet)
     return true;
 }
 
-bool ASFPacketReader::seekTo(off64_t offset)
+bool ASFPacketReader::seekTo(int64_t offset)
 {
     // 顺序重放档（#49 第二档）只用到 0：整个 demux 关掉重开，等价于「从流头重新迭代」。
     // 任意偏移走 demux 的字节 seek，可用时不必自己维护一张 seek 表。
@@ -269,7 +269,7 @@ bool ASFPacketReader::seekTo(off64_t offset)
     return true;
 }
 
-off64_t ASFPacketReader::position() const
+int64_t ASFPacketReader::position() const
 {
     if (m_fmt == nullptr || m_fmt->pb == nullptr) {
         return 0;

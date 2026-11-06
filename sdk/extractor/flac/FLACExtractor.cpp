@@ -74,7 +74,7 @@ AudioBuffer::AudioBufferPtr FLACExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool FLACExtractor::seekPacketByte(off64_t offset)
+bool FLACExtractor::seekPacketByte(int64_t offset)
 {
     FLACFrameReader *frameReader = reader();
     if (frameReader == nullptr) {
@@ -88,7 +88,7 @@ bool FLACExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t FLACExtractor::packetBytePosition() const
+int64_t FLACExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

@@ -112,7 +112,7 @@ FrameInfo parseFrameHeader(uint32_t header)
 
 } // namespace mp3
 
-MP3FrameReader::MP3FrameReader(DataSourceBase *source, off64_t audioStart, off64_t audioEnd)
+MP3FrameReader::MP3FrameReader(DataSourceBase *source, int64_t audioStart, int64_t audioEnd)
     : m_source(source)
     , m_audioStart(audioStart)
     , m_audioEnd(audioEnd)
@@ -132,7 +132,7 @@ MP3FrameReader::MP3FrameReader(DataSourceBase *source, off64_t audioStart, off64
 
 MP3FrameReader::~MP3FrameReader() { }
 
-void MP3FrameReader::seekTo(off64_t offset)
+void MP3FrameReader::seekTo(int64_t offset)
 {
     if (offset < m_audioStart) {
         offset = m_audioStart;

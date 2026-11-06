@@ -23,13 +23,13 @@ public:
     // streamHeaderEnd：音频数据起点（fLaC + 元数据块之后）；首包是 [0, streamHeaderEnd)，
     // 因为 libFLAC 要从 STREAMINFO 起读才会打开整段 MD5 校验。
     // maxFrameBytes：STREAMINFO 声明的最大帧字节数，用来定扫描缓冲的上限（0 表示未知）。
-    FLACFrameReader(DataSourceBase *source, off64_t streamHeaderEnd, off64_t endOffset,
+    FLACFrameReader(DataSourceBase *source, int64_t streamHeaderEnd, int64_t endOffset,
                     size_t maxFrameBytes);
     ~FLACFrameReader();
 
     // 定位到任意文件偏移（native seek 用）：下一包从该处重新认帧头。
-    void seekTo(off64_t offset);
-    off64_t position() const { return m_nextOffset; }
+    void seekTo(int64_t offset);
+    int64_t position() const { return m_nextOffset; }
 
     // 拉下一包：首包是流头，之后每包一帧。返回 false 表示序列正常结束。
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet);
@@ -53,9 +53,9 @@ private:
     size_t findHeader(size_t from, size_t &scanned);
 
     DataSourceBase *m_source;
-    off64_t m_streamHeaderEnd;
-    off64_t m_endOffset;
-    off64_t m_nextOffset;
+    int64_t m_streamHeaderEnd;
+    int64_t m_endOffset;
+    int64_t m_nextOffset;
     size_t m_scanCap;
     std::vector<uint8_t> m_buf;
 };

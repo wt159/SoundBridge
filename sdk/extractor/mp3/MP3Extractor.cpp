@@ -440,7 +440,7 @@ AudioBuffer::AudioBufferPtr MP3Extractor::packetAt(size_t index)
     return packet;
 }
 
-bool MP3Extractor::seekPacketByte(off64_t offset)
+bool MP3Extractor::seekPacketByte(int64_t offset)
 {
     MP3FrameReader *frameReader = reader();
     if (frameReader == nullptr) {
@@ -456,7 +456,7 @@ bool MP3Extractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t MP3Extractor::packetBytePosition() const
+int64_t MP3Extractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

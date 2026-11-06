@@ -206,7 +206,7 @@ AudioBuffer::AudioBufferPtr AACExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool AACExtractor::seekPacketByte(off64_t offset)
+bool AACExtractor::seekPacketByte(int64_t offset)
 {
     AACFrameReader *frameReader = reader();
     if (frameReader == nullptr) {
@@ -222,7 +222,7 @@ bool AACExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t AACExtractor::packetBytePosition() const
+int64_t AACExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

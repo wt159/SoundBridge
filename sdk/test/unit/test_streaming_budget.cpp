@@ -406,7 +406,7 @@ TEST_SUITE("StreamingBudget")
             {
                 return m_block != nullptr ? static_cast<off64_t>(m_block->size()) : 0;
             }
-            off64_t packetBytePosition() const override
+            int64_t packetBytePosition() const override
             {
                 return (m_delivered && m_block != nullptr) ? static_cast<off64_t>(m_block->size())
                                                            : 0;

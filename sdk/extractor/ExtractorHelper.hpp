@@ -97,12 +97,12 @@ public:
     // 单包序列的字节定位（FLAC 的 native random access 用，ADR 0003 / #49）：
     // 提取器把「下一包从哪个文件偏移开始」作为 O(1) 状态暴露给解码侧，
     // 解码器只负责把 libFLAC 的 seek/tell 转成这两个调用，不自己算包边界。
-    virtual bool seekPacketByte(off64_t offset)
+    virtual bool seekPacketByte(int64_t offset)
     {
         (void)offset;
         return false;
     }
-    virtual off64_t packetBytePosition() const { return 0; }
+    virtual int64_t packetBytePosition() const { return 0; }
 
     // 整块视图（测试专用）：合成提取器 override 它交出假 PCM，量测仪器用它拼整段。
     // 默认实现把包拼起来并缓存：没有包化数据时返回 nullptr，与「没有 payload」同义。

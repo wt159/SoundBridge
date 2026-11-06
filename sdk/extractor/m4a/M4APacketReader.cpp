@@ -30,7 +30,7 @@ M4AStreamInfo::M4AStreamInfo()
 {
 }
 
-M4APacketReader::M4APacketReader(DataSourceBase *source, off64_t fileSize)
+M4APacketReader::M4APacketReader(DataSourceBase *source, int64_t fileSize)
     : m_ioData()
     , m_fmt(nullptr)
     , m_avio(nullptr)
@@ -263,7 +263,7 @@ bool M4APacketReader::nextPacket(AudioBuffer::AudioBufferPtr &packet)
     return true;
 }
 
-bool M4APacketReader::seekTo(off64_t offset)
+bool M4APacketReader::seekTo(int64_t offset)
 {
     // 顺序重放档（#49 第二档）只用到 0：整个 demux 关掉重开，等价于「从流头重新迭代」。
     // 任意偏移走 demux 的字节 seek，可用时不必自己维护一张 seek 表。
@@ -282,7 +282,7 @@ bool M4APacketReader::seekTo(off64_t offset)
     return true;
 }
 
-off64_t M4APacketReader::position() const
+int64_t M4APacketReader::position() const
 {
     if (m_fmt == nullptr || m_fmt->pb == nullptr) {
         return 0;

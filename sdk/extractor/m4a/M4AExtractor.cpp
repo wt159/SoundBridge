@@ -79,7 +79,7 @@ AudioBuffer::AudioBufferPtr M4AExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool M4AExtractor::seekPacketByte(off64_t offset)
+bool M4AExtractor::seekPacketByte(int64_t offset)
 {
     M4APacketReader *packetReader = reader();
     if (packetReader == nullptr) {
@@ -93,7 +93,7 @@ bool M4AExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t M4AExtractor::packetBytePosition() const
+int64_t M4AExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

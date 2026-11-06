@@ -24,8 +24,8 @@ bool AACFrameReader::parseHeader(const uint8_t *data, size_t available, size_t &
     return true;
 }
 
-size_t AACFrameReader::scanFrameCount(DataSourceBase *source, off64_t audioStart,
-                                      off64_t audioEnd)
+size_t AACFrameReader::scanFrameCount(DataSourceBase *source, int64_t audioStart,
+                                      int64_t audioEnd)
 {
     if (source == nullptr || audioStart < 0 || audioEnd <= audioStart) {
         return 0;
@@ -51,7 +51,7 @@ size_t AACFrameReader::scanFrameCount(DataSourceBase *source, off64_t audioStart
     return count;
 }
 
-AACFrameReader::AACFrameReader(DataSourceBase *source, off64_t audioStart, off64_t audioEnd)
+AACFrameReader::AACFrameReader(DataSourceBase *source, int64_t audioStart, int64_t audioEnd)
     : m_source(source)
     , m_audioStart(audioStart)
     , m_audioEnd(audioEnd)
@@ -71,7 +71,7 @@ AACFrameReader::AACFrameReader(DataSourceBase *source, off64_t audioStart, off64
 
 AACFrameReader::~AACFrameReader() { }
 
-void AACFrameReader::seekTo(off64_t offset)
+void AACFrameReader::seekTo(int64_t offset)
 {
     if (offset < m_audioStart) {
         offset = m_audioStart;

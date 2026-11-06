@@ -102,7 +102,7 @@ AudioBuffer::AudioBufferPtr WAVExtractor::packetAt(size_t index)
     return packet;
 }
 
-off64_t WAVExtractor::packetBytePosition() const
+int64_t WAVExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

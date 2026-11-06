@@ -23,7 +23,7 @@ public:
     virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
     virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
     // 下一包的文件偏移（数据块内按整数帧推进）。
-    virtual off64_t packetBytePosition() const;
+    virtual int64_t packetBytePosition() const;
 
     // 分配记账：init 不持 payload，交出去的包归解码侧记账（alloc/free 增量）。
     virtual size_t heldPayloadBytes() const { return 0; }

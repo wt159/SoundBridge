@@ -62,5 +62,5 @@ private:
     ::FLAC__StreamDecoderReadStatus readFromPackets(FLAC__byte buffer[], size_t *bytes);
     void releasePacket();
     // 逻辑读位置 = 已交出包的末端 - 当前包内还没读走的字节。
-    off64_t packetPosition() const;
+    int64_t packetPosition() const;
 };

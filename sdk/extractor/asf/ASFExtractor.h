@@ -231,8 +231,8 @@ public:
     // 任何「先把整份文件数一遍再建表」的做法都会把常驻内存按包数放大。
     virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
     virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
-    virtual bool seekPacketByte(off64_t offset);
-    virtual off64_t packetBytePosition() const;
+    virtual bool seekPacketByte(int64_t offset);
+    virtual int64_t packetBytePosition() const;
 
     // 分配记账：init 不持有 payload，播放期的 demux 面只持 AVIO 缓冲（判据公式里的
     // 独立项，口径上不混进这个数）；交出去的包归解码侧 alloc/free 记账。
@@ -274,11 +274,11 @@ private:
     int m_bitRate;
     int m_blockAlign;
     AudioBuffer::AudioBufferPtr m_codecExtraData;
-    off64_t m_fileSize;
+    int64_t m_fileSize;
     // init 只读扫描数到的音频包数：只用来判「有没有音频」，不随播放增长。
     size_t m_audioPacketCount;
     std::unique_ptr<ASFPacketReader> m_reader;
     size_t m_nextPacketIndex;
     // 本段包序列的起点（顺序重放 seek 之后为 0）。
-    off64_t m_sequenceOffset;
+    int64_t m_sequenceOffset;
 };

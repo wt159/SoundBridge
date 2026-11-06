@@ -37,7 +37,7 @@ struct APEStreamInfo {
 
 class APEPacketReader {
 public:
-    APEPacketReader(DataSourceBase *source, off64_t fileSize);
+    APEPacketReader(DataSourceBase *source, int64_t fileSize);
     ~APEPacketReader();
 
     // demux 句柄在播放期由解码线程第一次拉包时创建（规格 4.3 所有权清单）。
@@ -56,9 +56,9 @@ public:
     int64_t declaredDurationUs() const;
 
     // 定位到文件偏移：顺序重放 seek 只用 0（回到流头重新迭代）。
-    bool seekTo(off64_t offset);
+    bool seekTo(int64_t offset);
     // 下一次读块的位置（文件偏移），用于分辨「包序列在推进」与「原地打转」。
-    off64_t position() const;
+    int64_t position() const;
 
     // 现场重算包边界的 CPU 成本（独立指标，不设阈值）。
     uint64_t boundaryMicros() const { return m_boundaryMicros.load(); }

@@ -115,14 +115,14 @@ void FLACDecode::releasePacket()
     m_packetOffset = 0;
 }
 
-off64_t FLACDecode::packetPosition() const
+int64_t FLACDecode::packetPosition() const
 {
     if (m_extractor == nullptr) {
         return 0;
     }
-    off64_t position = m_extractor->packetBytePosition();
+    int64_t position = m_extractor->packetBytePosition();
     if (m_packet != nullptr) {
-        position -= static_cast<off64_t>(m_packet->size() - m_packetOffset);
+        position -= static_cast<int64_t>(m_packet->size() - m_packetOffset);
     }
     return position < 0 ? 0 : position;
 }
@@ -268,7 +268,7 @@ void FLACDecode::setAbortFlag(std::atomic<bool> *flag)
         // 下一包从该处重新认帧头，libFLAC 自己 resync。取消/停止不在这里判断，
         // 由 read_callback 在拉包前看到取消位后立刻返回 ABORT。
         if (m_extractor == nullptr
-            || !m_extractor->seekPacketByte(static_cast<off64_t>(absolute_byte_offset))) {
+            || !m_extractor->seekPacketByte(static_cast<int64_t>(absolute_byte_offset))) {
             return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
         }
         m_cursor->rewind();

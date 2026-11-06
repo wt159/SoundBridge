@@ -334,7 +334,7 @@ AudioBuffer::AudioBufferPtr ASFExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool ASFExtractor::seekPacketByte(off64_t offset)
+bool ASFExtractor::seekPacketByte(int64_t offset)
 {
     ASFPacketReader *packetReader = reader();
     if (packetReader == nullptr) {
@@ -348,7 +348,7 @@ bool ASFExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t ASFExtractor::packetBytePosition() const
+int64_t ASFExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

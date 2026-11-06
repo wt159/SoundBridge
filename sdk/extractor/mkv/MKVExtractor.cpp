@@ -80,7 +80,7 @@ AudioBuffer::AudioBufferPtr MKVExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool MKVExtractor::seekPacketByte(off64_t offset)
+bool MKVExtractor::seekPacketByte(int64_t offset)
 {
     MKVPacketReader *packetReader = reader();
     if (packetReader == nullptr) {
@@ -94,7 +94,7 @@ bool MKVExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t MKVExtractor::packetBytePosition() const
+int64_t MKVExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

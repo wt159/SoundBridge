@@ -82,7 +82,7 @@ AudioBuffer::AudioBufferPtr AIFFExtractor::packetAt(size_t index)
     return packet;
 }
 
-off64_t AIFFExtractor::packetBytePosition() const
+int64_t AIFFExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }

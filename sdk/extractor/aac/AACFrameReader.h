@@ -18,13 +18,13 @@ public:
     static bool parseHeader(const uint8_t *data, size_t available, size_t &frameLength);
 
     // init 只读扫描：只数帧，不保存任何东西（与旧 countAdtsFrames 的判据完全相同）。
-    static size_t scanFrameCount(DataSourceBase *source, off64_t audioStart, off64_t audioEnd);
+    static size_t scanFrameCount(DataSourceBase *source, int64_t audioStart, int64_t audioEnd);
 
-    AACFrameReader(DataSourceBase *source, off64_t audioStart, off64_t audioEnd);
+    AACFrameReader(DataSourceBase *source, int64_t audioStart, int64_t audioEnd);
     ~AACFrameReader();
 
-    void seekTo(off64_t offset);
-    off64_t position() const { return m_nextOffset; }
+    void seekTo(int64_t offset);
+    int64_t position() const { return m_nextOffset; }
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet);
     size_t heldBytes() const { return m_buf.capacity(); }
 
@@ -40,8 +40,8 @@ private:
     size_t findHeader(size_t from);
 
     DataSourceBase *m_source;
-    off64_t m_audioStart;
-    off64_t m_audioEnd;
-    off64_t m_nextOffset;
+    int64_t m_audioStart;
+    int64_t m_audioEnd;
+    int64_t m_nextOffset;
     std::vector<uint8_t> m_buf;
 };

@@ -233,8 +233,8 @@ public:
     // 之后每包一帧；总数事先未知，用 kUnknownPacketCount 表示「读到为止」。
     virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }
     virtual AudioBuffer::AudioBufferPtr packetAt(size_t index);
-    virtual bool seekPacketByte(off64_t offset);
-    virtual off64_t packetBytePosition() const;
+    virtual bool seekPacketByte(int64_t offset);
+    virtual int64_t packetBytePosition() const;
 
     // 分配记账：只报播放期解复用缓冲的实际容量（O(1)）。init 期不持有 payload，
     // 交出去的包归解码侧记账（alloc/free 增量），这里不再重复计一份。
@@ -262,5 +262,5 @@ private:
     std::unique_ptr<FLACFrameReader> m_reader;
     size_t m_nextPacketIndex;
     // 当前包序列的起点：新任务为 0，native seek 之后为目标偏移
-    off64_t m_sequenceOffset;
+    int64_t m_sequenceOffset;
 };

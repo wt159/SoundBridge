@@ -22,7 +22,7 @@ public:
     // 坏数据也不会为了「读出下一包」把整首拉进内存。
     static const size_t kPacketBytes = 64 * 1024;
 
-    PcmPacketReader(DataSourceBase *source, off64_t dataOffset, off64_t dataSize,
+    PcmPacketReader(DataSourceBase *source, int64_t dataOffset, int64_t dataSize,
                     size_t frameBytes)
         : m_source(source)
         , m_dataOffset(dataOffset)
@@ -36,7 +36,7 @@ public:
     void rewind() { m_nextOffset = 0; }
 
     // 下一包从哪个文件偏移开始（绝对偏移，与 FLAC 的 packetBytePosition 同口径）。
-    off64_t position() const { return m_dataOffset + m_nextOffset; }
+    int64_t position() const { return m_dataOffset + m_nextOffset; }
 
     // 拉下一包；返回 false 表示序列正常结束。
     bool nextPacket(AudioBuffer::AudioBufferPtr &packet)
@@ -50,7 +50,9 @@ public:
         const size_t want      = std::min(m_packetBytes, remaining);
 
         AudioBuffer::AudioBufferPtr block = std::make_shared<AudioBuffer>(want);
-        const ssize_t got = m_source->readAt(m_dataOffset + m_nextOffset, block->data(), want);
+        // readAt 是 master 既有 off64_t 边界：偏移从新增的 int64_t 成员显式转回既有契约。
+        const ssize_t got = m_source->readAt(
+            static_cast<off64_t>(m_dataOffset + m_nextOffset), block->data(), want);
         if (got <= 0) {
             // 读不动了就是序列结束：可解性不在这里判（ADR 0002，EOS 汇总兜底）。
             return false;
@@ -62,7 +64,7 @@ public:
             std::memcpy(tail->data(), block->data(), static_cast<size_t>(got));
             block = tail;
         }
-        m_nextOffset += static_cast<off64_t>(got);
+        m_nextOffset += static_cast<int64_t>(got);
         packet = block;
         return true;
     }
@@ -81,8 +83,8 @@ private:
     }
 
     DataSourceBase *m_source;
-    off64_t m_dataOffset;
-    off64_t m_dataSize;
-    off64_t m_nextOffset;
+    int64_t m_dataOffset;
+    int64_t m_dataSize;
+    int64_t m_nextOffset;
     size_t m_packetBytes;
 };

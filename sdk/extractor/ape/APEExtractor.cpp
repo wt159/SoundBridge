@@ -139,7 +139,7 @@ AudioBuffer::AudioBufferPtr APEExtractor::packetAt(size_t index)
     return packet;
 }
 
-bool APEExtractor::seekPacketByte(off64_t offset)
+bool APEExtractor::seekPacketByte(int64_t offset)
 {
     APEPacketReader *packetReader = reader();
     if (packetReader == nullptr) {
@@ -153,7 +153,7 @@ bool APEExtractor::seekPacketByte(off64_t offset)
     return true;
 }
 
-off64_t APEExtractor::packetBytePosition() const
+int64_t APEExtractor::packetBytePosition() const
 {
     return m_reader != nullptr ? m_reader->position() : 0;
 }
