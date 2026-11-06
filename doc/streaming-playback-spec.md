@@ -56,6 +56,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 |---|---|---|
 | `play` | IDLE / STOPPED → PLAYING：设备 `open` → `start` → `startConsumer`；创建当前任务 ring + decoder，`start()` 先 stop+join 旧线程 | shuttingDown 全拒；stop 期间排队到 stop 完成后执行 |
 | `stop` | PLAYING / PAUSED / SEEKING → STOPPED：`stopConsumer` → `clearQueue` → 设备 `stop` / `close`；清 ring、**不 drain** | 幂等；旧 PCM 全丢弃 |
+| `pause` / 恢复 | PLAYING → PAUSED：`stopConsumer` → 设备 `stop`，**设备保持 open、播放任务与 ring 保持存活**；PAUSED → PLAYING：**复用已打开设备**（不得再 `open`）→ `start` → `startConsumer` | 与 `play` 同一入口（按当前状态分支）；STOPPED / IDLE 下 `pause` 无操作 |
 | 切歌（含自动跳轨） | PLAYING / ERROR → SWITCHING → PLAYING：`clearQueue` → 更新 `segmentBaseBytes` → **新任务 `start()` 之前销毁旧 ring**；新曲首帧后重新起算稳态窗口 | switching 期间 seek 显式丢弃；EOS / 自动跳轨沿用一次门闩，按 `ErrorAction::SkipTrack` 触发（**不看 recoverable**） |
 | `seek` | PLAYING → SEEKING → PLAYING：控制线程置 `m_abortDecode` / `m_seekRequestMs`，解码线程在 consumer 静默窗口内 `reset()` ring 并更新 `segmentBaseBytes`，同线程轮询重放、**不 join** | 连续 seek 后一次覆盖前一次；`durationMs==0` → 显式 `INVALID_OPERATION`；IDLE / ERROR 早退 |
 | EOS 汇总 | 解码侧单一汇总，包耗尽 + ring 排空后发一次 | 不新增错误码 / 时机；已消费 PCM 算数、不回滚不重播 |

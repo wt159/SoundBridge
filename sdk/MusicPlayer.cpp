@@ -296,7 +296,10 @@ void MusicPlayer::Impl::_play()
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
         return;
     }
-    if (m_audioDev->open() != 0) {
+    // 设备可能已经打开：暂停只 stop 不 close（恢复时沿用同一个 SDL 设备），
+    // 这里若再 open 一次会以 "already open" 失败，把恢复误判成 AudioDeviceOpenFailed
+    // 并触发自动跳过（表现为「继续播放变成跳下一首」）。
+    if (!m_audioDev->isOpen() && m_audioDev->open() != 0) {
         onMusicPlayListError(ErrorCode::AudioDeviceOpenFailed, "audio device open failed",
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
         return;

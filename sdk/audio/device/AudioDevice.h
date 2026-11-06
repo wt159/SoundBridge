@@ -28,6 +28,7 @@ public:
     int selectDevice(uint64_t id);
     int open();
     int close();
+    bool isOpen() const;
     int start();
     int stop();
 
