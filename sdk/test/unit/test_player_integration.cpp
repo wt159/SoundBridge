@@ -252,9 +252,33 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         CHECK(waitForState(player, MusicPlayerState::PlayingState));
         CHECK(listener.error_count == errors_before);
 
-        // 等 stop 真正执行完再出作用域：命令是异步排队的，析构与队列里的 _stop 撞车会
-        // 让两个线程同时关同一个设备（见后续 issue），这里的等待只是避免测试自己制造竞态。
         player.stop();
         CHECK(waitForState(player, MusicPlayerState::StoppedState));
+    }
+
+    TEST_CASE("destructing right after stop does not close the device twice")
+    {
+        // issue #70：stop() 只是把 _stop 丢进控制队列，析构若不先让队列静止就关设备，
+        // 两处会并发进入 SDL_CloseAudioDevice 把同一个设备释放两次。这里故意不等
+        // StoppedState 就出作用域 —— 修复前第一轮就会让测试进程异常终止（不是断言失败）。
+        RealMediaFixture fixture;
+        std::string logDir = "./log";
+        for (int round = 0; round < 5; ++round) {
+            MockMusicPlayerListener listener;
+            {
+                MusicPlayer player(&listener, logDir);
+                player.addMusicDir(fixture.mediaDir());
+                for (int i = 0; i < 40 && player.getMusicCount() == 0; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                if (player.getMusicCount() == 0)
+                    return; // 素材缺失：本机跳过
+                player.play();
+                if (!waitForState(player, MusicPlayerState::PlayingState))
+                    return; // 没有可用音频设备：play 起不来，析构路径无从验证
+                player.stop();
+                // 关键：不等待 StoppedState，立刻析构
+            }
+        }
+        CHECK(true); // 进程没被异常终止即通过
     }
 }
