@@ -816,8 +816,12 @@ TEST_SUITE("MusicPlayer Interactive Paths")
     }
 
     // #72 / P1-7：坏文件先报错，再自动跳到可播的那首。
-    // 60% 截断的 music.wav 完整播到断点要 15s，超出单条 3s 预算，所以播起来后 seek 到
-    // 断点前 600ms，让错误在预算内出现（仍然是「播放中解到坏数据」这条真实路径）。
+    // 截断比例按「断点要落在单条耗时预算内」选：music.wav 是 24.87s，取 10% ≈ 2.5s，
+    // 直接播到断点即可，不需要 seek。
+    // 这里必须避免 seek：截断文件的 byte→ms 换算仍按文件头声明的完整长度，seek 到 60%
+    // 附近正好落在文件物理末尾，而「seek 到末尾之后算不算错」在 Linux CI 的 ffmpeg wav
+    // demuxer 上与 Windows 不一致（#72 的首次 CI 就是因此变红：error_count 恒 0、索引不前进）。
+    // 靠自然播放走到 EOF，跨平台口径才是同一条。
     TEST_CASE("bad file reports error then auto skips to next track")
     {
         RealMediaFixture fixture;
@@ -836,7 +840,7 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         const std::string goodPath = temp.file("good.wav");
         const std::string badPath  = temp.file("bad.wav");
         if (!writeAllBytes(goodPath, intact)
-            || !writeAllBytes(badPath, keepPercent(intact, 60))) {
+            || !writeAllBytes(badPath, keepPercent(intact, 10))) {
             skipCase("cannot synthesize truncated wav");
             return;
         }
@@ -875,17 +879,8 @@ TEST_SUITE("MusicPlayer Interactive Paths")
             return;
         }
 
-        // 先选中完好文件拿一次「完好时长」，据此推算 60% 截断点；再切到坏文件播放。
-        player.setCurrentIndex(goodIndex);
-        if (!waitFor([&listener, goodIndex]() {
-                return listener.last_current_index.load() == goodIndex;
-            }, 2000)
-            || !waitFor([&listener]() { return listener.last_duration.load() > 0; }, 3000)) {
-            skipCase("cannot read duration of the intact track");
-            return;
-        }
-        const uint64_t goodDuration = listener.last_duration.load();
-
+        // 直接播坏文件，让它自己走到断点。窗口给 8s：2.5s 音频 + 扫描/init 的固定开销，
+        // 再留出 CI 慢机的余量（issue 对真实播放类放宽到单条 8s）。
         player.setCurrentIndex(badIndex);
         if (!waitFor([&listener, badIndex]() {
                 return listener.last_current_index.load() == badIndex;
@@ -895,23 +890,22 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         }
 
         player.play();
-        if (!waitForState(player, MusicPlayerState::PlayingState)) {
-            skipCase("no usable audio device: play never reached Playing");
-            return;
-        }
-
-        const uint64_t truncationMs = goodDuration * 60 / 100;
-        const uint64_t target = truncationMs > 800 ? truncationMs - 600 : 0;
-        if (target > 0)
-            player.setPosition(target);
+        // 不强制要求观测到 PlayingState：截断文件有可能在 init 期就被判定不可解，
+        // 那条路径同样要「报错 + 跳过」，不该因此判红。只有当既没起播也没报错时才归为环境问题。
+        const bool reachedPlaying = waitForState(player, MusicPlayerState::PlayingState, 4000);
 
         const bool skipped = waitFor(
             [&listener, goodIndex]() {
                 return listener.error_count.load() >= 1
                     && listener.last_current_index.load() == goodIndex;
             },
-            5000);
+            8000);
         player.stop();
+
+        if (!reachedPlaying && listener.error_count.load() == 0) {
+            skipCase("no usable audio device and no error: nothing was observed");
+            return;
+        }
 
         CHECK_MESSAGE(listener.error_count.load() >= 1,
                       "截断文件没有通过 onMusicPlayerError 上报");
