@@ -71,3 +71,19 @@ jobs:
           LD_LIBRARY_PATH="${{ github.workspace }}/sdk/3rdparty/dist/linux_x86_64_gcc_debug/lib" \
             ./build/sdk/test/UnitTests -ts=MediaCoverage -s \
             | grep -E "declared |coverage matrix covered"
+
+      # 四个观测点（分配记账峰值 / 稳态静音填充次数 / start→首帧时间戳 / init 扫描耗时）
+      # 由 StreamingBudget suite 的 MESSAGE(...) 打印；doctest 默认只在断言失败时进日志，
+      # 通过时数值不可见，而上面的覆盖度矩阵步骤只跑 MediaCoverage。这里单独跑一次 -s，
+      # 把基线数值留在 CI 日志里（#68 / E15）。
+      # 纯观测：continue-on-error + 命令以 `|| true` 收尾，观测失败 / 素材未下发 / 断言红
+      # 都不让 CI 失败；不设阈值、不注册 ctest 分组、不动 TIMEOUT 180、不拆快集 / 全量集，
+      # 也不改上面的覆盖度矩阵报告步骤。代价是新增一次 StreamingBudget 测试运行。
+      # MESSAGE 里 packetBoundaryMicros 打印为 boundaryMicros、包数打印为 packets / packetsPulled，
+      # 故 grep 用能覆盖这两种写法的关键字。
+      - name: Report streaming budget instruments (observation only, non-gating)
+        continue-on-error: true
+        run: |
+          LD_LIBRARY_PATH="${{ github.workspace }}/sdk/3rdparty/dist/linux_x86_64_gcc_debug/lib" \
+            ./build/sdk/test/UnitTests -ts=StreamingBudget -s \
+            | grep -E "peakHeldBytes|silenceFills|startToFirstPcmUs|initScanUs|packets|boundaryMicros" || true
