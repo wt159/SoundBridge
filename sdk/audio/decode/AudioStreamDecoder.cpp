@@ -340,19 +340,29 @@ void AudioStreamDecoder::finishAtEndOfStream()
     // 正常 EOS 时短于标称超过 5 个百分点（T4）
     const bool shortOfNominal = haveNominal && measuredMs < m_durationMs
         && (m_durationMs - measuredMs) * 20 > m_durationMs;
+    // #49：seek 目标超出标称时长（可解内容之外）→ 不在 seek 入口拒绝，由 EOS 汇总处
+    // 按 m_seekBaseMs 与标称时长比，汇总成既有 DataTruncated。durationMs == 0 时
+    // haveNominal=false，不报（规格第 6 节）。
+    const bool seekPastEnd = haveNominal && m_seekBaseMs > m_durationMs;
 
     // flac 的整段 MD5：截断会让 MD5 同样不符，所以「解不到标称长度」时按截断处理，
     // 只有「解到了标称长度却对不上」才是流内坏帧（4.1：坏帧之后还有数据）。
-    if (m_md5Mismatch && !shortOfNominal) {
+    if (m_md5Mismatch && !shortOfNominal && !seekPastEnd) {
         setError(sdk::ErrorCode::DataCorrupted, "flac stream md5 mismatch");
         return;
     }
 
-    if (shortOfNominal) {
+    if (shortOfNominal || seekPastEnd) {
         char detail[128];
-        std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
-                      static_cast<unsigned long long>(measuredMs),
-                      static_cast<unsigned long long>(m_durationMs));
+        if (seekPastEnd && !shortOfNominal) {
+            std::snprintf(detail, sizeof(detail), "seek target %llu ms exceeds nominal %llu ms",
+                          static_cast<unsigned long long>(m_seekBaseMs),
+                          static_cast<unsigned long long>(m_durationMs));
+        } else {
+            std::snprintf(detail, sizeof(detail), "decoded %llu ms of nominal %llu ms",
+                          static_cast<unsigned long long>(measuredMs),
+                          static_cast<unsigned long long>(m_durationMs));
+        }
         setError(sdk::ErrorCode::DataTruncated, detail);
         return;
     }
@@ -529,6 +539,13 @@ void AudioStreamDecoder::threadFunc()
                 // 定位途中若又有新 seek 到达，控制线程会重新置位，这一次定位照样让位。
                 m_abortDecode.store(false);
                 if (!flac.seekToSample(targetSample)) {
+                    if (m_durationMs > 0
+                        && static_cast<uint64_t>(seekMs) > m_durationMs) {
+                        // 目标超出可解内容：不新增拒绝出口，交给 EOS 汇总按
+                        // m_seekBaseMs + 解出时长 与标称时长比，汇总 DataTruncated（#49）。
+                        finishAtEndOfStream();
+                        break;
+                    }
                     setError(sdk::ErrorCode::DataCorrupted, "flac seek failed");
                     break;
                 }
@@ -596,6 +613,13 @@ void AudioStreamDecoder::threadFunc()
                 m_decodedFrames    = 0;
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
                 if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
+                    if (m_durationMs > 0
+                        && static_cast<uint64_t>(seekMs) > m_durationMs) {
+                        // 目标超出可解内容：不新增拒绝出口，交给 EOS 汇总（#49）。
+                        m_abortDecode.store(false);
+                        finishAtEndOfStream();
+                        break;
+                    }
                     setError(sdk::ErrorCode::DataCorrupted, "vorbis seek failed");
                     break;
                 }

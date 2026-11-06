@@ -1215,6 +1215,62 @@ TEST_SUITE("StreamingBudget")
         }
     }
 
+    // 两类降级之二（规格第 6 节 / #49）：目标超出可解内容 → 不在 seek 入口拒绝，
+    // 由 EOS 汇总按 m_seekBaseMs + 解出时长 与标称时长比，汇总成既有 DataTruncated。
+    // 两档各取一种格式锁定：顺序重放（wav）与 native RA（Vorbis）。
+    TEST_CASE("seek past the end is summarized as DataTruncated at EOS")
+    {
+        RealMediaFixture fixture;
+        const struct {
+            const char *name;
+            const char *extension;
+            bool useSourceSpec;
+        } cases[] = {
+            { "music.wav", ".wav", true },  // 顺序重放档，源规格即设备规格
+            { kShortOgg, ".ogg", false },   // native RA 档，用默认设备规格
+        };
+
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            const std::string name(cases[i].name);
+            INFO(name);
+            if (!fixture.exists(name)) {
+                MESSAGE("[SKIP] " << name << " (素材未随仓库下发)");
+                continue;
+            }
+
+            AudioSpec devSpec = makeDevSpec();
+            if (cases[i].useSourceSpec) {
+                const TrackFacts facts = probeTrack(fixture.mediaDir(), name.c_str(),
+                                                    cases[i].extension);
+                REQUIRE(facts.ok);
+                devSpec = facts.spec;
+            }
+
+            const uint64_t declaredMs
+                = declaredDurationMs(fixture.mediaDir(), name, cases[i].extension);
+            REQUIRE(declaredMs > 0);
+            PlaybackPlan plan;
+            plan.seekAfterBytes = 65536;
+            plan.seekTargetMs   = declaredMs + 5000; // 明确超出标称时长
+            const PlaybackObservation observation = playWholeTrack(
+                fixture.mediaDir(), name, cases[i].extension, 60000, plan, devSpec);
+            REQUIRE(observation.opened);
+            CHECK_MESSAGE(observation.error == sdk::ErrorCode::DataTruncated,
+                          name << ": 超界 seek 没有汇总成 DataTruncated，错误码 "
+                               << static_cast<int>(observation.error) << " / "
+                               << observation.errorDetail);
+            CHECK_MESSAGE(observation.endState == StreamDecoderState::ERROR,
+                          name << ": 超界 seek 没有在 EOS 汇总处上报错误，末状态 "
+                               << static_cast<int>(observation.endState));
+            CHECK_MESSAGE(!observation.errorDetail.empty(),
+                          name << ": EOS 汇总没有给出错误原因");
+            MESSAGE(name << ": seek " << plan.seekTargetMs << " ms / declared " << declaredMs
+                         << " ms -> error " << static_cast<int>(observation.error) << " ("
+                         << observation.errorDetail << "), delivered after seek "
+                         << observation.bytesAfterSeek << ", total " << observation.bytes);
+        }
+    }
+
     // —— 最后一批「不可增量」格式（票面 #64 / 规格第 9 节 E11）——
     // m4a（AAC + ALAC）/ ape / asf / wma 复用 mkv 的现场重算机制：init 只读扫描只留
     // O(1) 摘要，播放期由各容器的 Reader 重开 demux、按 offset 逐包给出边界。
