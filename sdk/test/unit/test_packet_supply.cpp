@@ -5,18 +5,17 @@
 #include <ExtractorFactory.h>
 #include <ExtractorHelper.hpp>
 #include <FileSource.h>
+#include <algorithm>
 #include <doctest/doctest.h>
 #include <memory>
 #include <string>
 
-// 量测仪器（AudioDecodeProcess，测试专用）的两条供给路径等价性（票面 #57）。
+// 量测仪器（AudioDecodeProcess，测试专用）在 #66 contract 后只剩包工厂一条供给路径。
 //
-// 旧形式：整块视图——提取器按需拼一份 getMetaData()，仪器按旧方式解码。
-// 新形式：单包迭代——仪器被 PacketCursor 逐包喂，拼出整段再解码。
-// 两条路径对同一曲目必须解出同样的 PCM 字节数，换算出的解码时长也一致。
-//
-// 生产链（AudioStreamDecoder::start()）本票不迁移，仍然走旧形式；本文件只证明
-// 新形式已经能覆盖同一段负载，为 #60 起的格式迁移留好形状。
+// 仪器用 PacketCursor 逐包拼出整段负载再解码，换算出的解码时长必须与提取器
+// init 期给出的标称时长吻合（双向容差），且确实逐包交付过包。
+// 生产链（AudioStreamDecoder::start()）走增量供给，不经过本仪器；
+// getPacketizedMetaData() 按票面保留测试专用，用于比对旧逐包表（若非空）。
 
 namespace {
 
@@ -27,12 +26,11 @@ struct DecodedSummary {
     bool ok;
 };
 
-DecodedSummary decodeWithInstrument(ExtractorHelper *extractor,
-                                    AudioDecodeProcess::PayloadSupply supply)
+DecodedSummary decodeWithInstrument(ExtractorHelper *extractor)
 {
     DecodedSummary summary = { 0, 0, 0, false };
 
-    AudioDecodeProcess process(extractor, supply);
+    AudioDecodeProcess process(extractor);
     if (process.initCheck() != sdk_utils::OK) {
         return summary;
     }
@@ -62,7 +60,7 @@ DecodedSummary decodeWithInstrument(ExtractorHelper *extractor,
 
 TEST_SUITE("PacketSupply")
 {
-    TEST_CASE("two supply paths decode the same pcm bytes and duration")
+    TEST_CASE("packet iteration instrument decodes the advertised duration through the packet factory")
     {
         RealMediaFixture fixture;
         const struct {
@@ -86,30 +84,29 @@ TEST_SUITE("PacketSupply")
             REQUIRE(extractor != nullptr);
             REQUIRE(extractor->initCheck() == sdk_utils::OK);
 
-            const DecodedSummary wholeView
-                = decodeWithInstrument(extractor.get(),
-                                       AudioDecodeProcess::PayloadSupply::WholeView);
-            const DecodedSummary packetIteration
-                = decodeWithInstrument(extractor.get(),
-                                       AudioDecodeProcess::PayloadSupply::PacketIteration);
+            // 独立预言机：提取器 init 期给出的标称时长，不是仪器自己算出的量。
+            const uint64_t declaredMs = extractor->getAudioSpec().durationMs;
+            REQUIRE(declaredMs > 0);
+            const uint64_t toleranceMs = std::max<uint64_t>(declaredMs / 100, 150);
 
-            CHECK_MESSAGE(wholeView.ok, "legacy instrument failed: " << name);
-            CHECK_MESSAGE(packetIteration.ok, "packet iteration instrument failed: " << name);
-            CHECK_MESSAGE(wholeView.pcmBytes == packetIteration.pcmBytes,
-                          name << ": legacy vs packet iteration pcm bytes, " << wholeView.pcmBytes << " vs "
-                               << packetIteration.pcmBytes);
-            CHECK_MESSAGE(wholeView.measuredMs == packetIteration.measuredMs,
-                          name << ": legacy vs packet iteration duration, " << wholeView.measuredMs
-                               << "ms vs " << packetIteration.measuredMs << "ms");
-            // 新路径确实逐包走过：有旧逐包表时逐项一致；没有时允许 #62 起的
+            const DecodedSummary decoded = decodeWithInstrument(extractor.get());
+            CHECK_MESSAGE(decoded.ok, "packet iteration instrument failed: " << name);
+            CHECK_MESSAGE(decoded.measuredMs + toleranceMs >= declaredMs,
+                          name << ": decoded duration too short, " << decoded.measuredMs
+                               << "ms vs declared " << declaredMs << "ms");
+            CHECK_MESSAGE(decoded.measuredMs <= declaredMs + toleranceMs,
+                          name << ": decoded duration too long, " << decoded.measuredMs
+                               << "ms vs declared " << declaredMs << "ms");
+
+            // 包工厂确实逐包交付：有旧逐包表时逐项一致；没有时允许 #62 起的
             // 「播放期按 offset 现场切包」（mp3 / aac 逐帧）——它不建旧包表，
-            // 但包数必须 ≥1，且上面的 PCM / 时长等价性仍然成立。
+            // 但包数必须 ≥1，且上面的时长等价性仍然成立。
             const size_t legacyPackets = extractor->getPacketizedMetaData().size();
-            CHECK_MESSAGE(packetIteration.packetCount >= 1,
+            CHECK_MESSAGE(decoded.packetCount >= 1,
                           name << ": packet iteration fed no packet at all");
             if (legacyPackets > 0) {
-                CHECK_MESSAGE(packetIteration.packetCount == legacyPackets,
-                              name << ": packet iteration fed " << packetIteration.packetCount
+                CHECK_MESSAGE(decoded.packetCount == legacyPackets,
+                              name << ": packet iteration fed " << decoded.packetCount
                                    << " packets, legacy view has " << legacyPackets);
             }
         }
