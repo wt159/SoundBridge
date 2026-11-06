@@ -1118,4 +1118,81 @@ TEST_SUITE("StreamingBudget")
                          << observation.metrics.packetsPulled);
         }
     }
+
+    // —— 最后一批「不可增量」格式（票面 #64 / 规格第 9 节 E11）——
+    // m4a（AAC + ALAC）/ ape / asf / wma 复用 mkv 的现场重算机制：init 只读扫描只留
+    // O(1) 摘要，播放期由各容器的 Reader 重开 demux、按 offset 逐包给出边界。
+    // 判据与 mkv 用例同形：常驻上界 + 并行 + EOS + 覆盖度 + 现场重算成本。
+    namespace
+    {
+        void checkBoundaryRecomputedFormat(const RealMediaFixture &fixture, const char *name,
+                                          const char *extension, int timeoutMs)
+        {
+            const std::string fileName(name);
+            INFO(fileName);
+            if (!fixture.exists(fileName)) {
+                MESSAGE("[SKIP] " << fileName << " (素材未随仓库下发)");
+                return;
+            }
+
+            const PacketProfile profile
+                = measurePacketProfile(fixture.mediaDir(), name, extension);
+            REQUIRE(profile.count > 1);
+            REQUIRE(profile.maxPacketBytes > 0);
+            REQUIRE(profile.maxPacketBytes < 64 * 1024);
+
+            const PlaybackObservation observation
+                = playWholeTrack(fixture.mediaDir(), fileName, extension, timeoutMs);
+            REQUIRE(observation.opened);
+            REQUIRE_MESSAGE(observation.endState == StreamDecoderState::EOS,
+                            fileName << ": 没有走到 EOS，状态 "
+                                     << static_cast<int>(observation.endState) << " / "
+                                     << observation.errorDetail);
+            CHECK(observation.bytes > 0);
+
+            const size_t upper = AudioRingBuffer::kDefaultCapacity
+                + profile.maxPacketBytes * 2 + kAvioHeadroomBytes;
+            CHECK_MESSAGE(observation.metrics.peakHeldBytes <= upper,
+                          fileName << ": 常驻峰值 " << observation.metrics.peakHeldBytes
+                                   << " 超过上界 " << upper);
+
+            CHECK(observation.metrics.packetsPulled >= profile.count);
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm >= 1,
+                          fileName << ": 首帧交付时供给序列还没开始");
+            CHECK_MESSAGE(observation.metrics.packetsPulledAtFirstPcm
+                              < observation.metrics.packetsPulled,
+                          fileName << ": 首帧交付时供给序列已经耗尽：解码与消费没有并行");
+            CHECK(observation.metrics.packetBoundaryMicros > 0);
+
+            const uint64_t declaredMs
+                = declaredDurationMs(fixture.mediaDir(), fileName, extension);
+            const uint64_t deliveredMs = devBytesToMs(observation.bytes);
+            const uint64_t tolerance   = RealMediaFixture::coverageToleranceMs(declaredMs);
+            REQUIRE(declaredMs > 0);
+            CHECK(deliveredMs + tolerance >= declaredMs);
+            CHECK(deliveredMs <= declaredMs + tolerance);
+
+            MESSAGE(fileName << ": packets " << profile.count << " (maxPacket "
+                             << profile.maxPacketBytes << "), peak "
+                             << observation.metrics.peakHeldBytes << " / upper " << upper
+                             << ", firstPcm packets "
+                             << observation.metrics.packetsPulledAtFirstPcm << "/"
+                             << observation.metrics.packetsPulled << ", delivered "
+                             << deliveredMs << "ms / declared " << declaredMs
+                             << "ms, boundaryMicros "
+                             << observation.metrics.packetBoundaryMicros);
+        }
+    } // namespace
+
+    TEST_CASE("m4a aac stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "摇滚乐_Freesound.m4a", ".m4a", 120000);
+    }
+
+    TEST_CASE("m4a alac stays inside the held bytes cap and decodes in parallel with delivery")
+    {
+        RealMediaFixture fixture;
+        checkBoundaryRecomputedFormat(fixture, "music-alac.m4a", ".m4a", 120000);
+    }
 }
