@@ -43,6 +43,9 @@ protected:
     void _play();
     void _pause();
     void _stop();
+    // 关闭音频设备的唯一出口：_stop 与析构都走这里。调用方必须保证控制队列已静止
+    // （析构先 m_workQueue.shutdown()），否则会与队列线程中的 _stop 并发关同一个设备。
+    void _releaseAudio();
     void _setPosition(uint64_t pos);
     void _next();
     void _previous();
@@ -127,15 +130,13 @@ MusicPlayer::Impl::~Impl()
     m_shuttingDown.store(true);
     m_switching.store(true);
     stopConsumerThread();
-    // 播放任务在这里 join + 销毁（不 detach）。析构是「谁发起谁在新任务前 join」的唯一例外，
-    // 与规格 4.4 的「析构例外」一致：控制事件已停，不会再有新任务。
-    if (m_musicList != nullptr) {
-        m_musicList->stopCurrentTask();
-    }
-    if (m_audioDev != nullptr) {
-        m_audioDev->stop();
-        m_audioDev->close();
-    }
+    // 先静止控制队列再动设备。m_workQueue 是成员，自身析构里的 stop()+join 发生在
+    // 本函数体之后；若不等它退出，函数体里的关设备会与队列线程中尚未执行完的 _stop
+    // 并发进入 SDL_CloseAudioDevice，同一个 m_deviceID 被释放两次（issue #70）。
+    // 这也是规格 4.4「析构是 join 唯一例外」的落点：函数体内完成 join，
+    // 之后不会再有任何控制任务，_releaseAudio 成为唯一执行者。
+    m_workQueue.shutdown();
+    _releaseAudio();
 }
 
 void MusicPlayer::Impl::addMusicDir(const std::string &dir)
@@ -343,13 +344,22 @@ void MusicPlayer::Impl::_stop()
         return;
     }
     stopConsumerThread();
+    _releaseAudio();
+    updatePlayState(MusicPlayerState::StoppedState);
+}
+
+void MusicPlayer::Impl::_releaseAudio()
+{
     // 停止时整个播放任务被丢弃：解码线程在这里 join，旧 PCM 随 ring 一起消失，
     // 不 drain、不播完（规格 4.1 stop 行）。
-    m_musicList->stopCurrentTask();
-    m_audioDev->clearQueue();
-    m_audioDev->stop();
-    m_audioDev->close();
-    updatePlayState(MusicPlayerState::StoppedState);
+    if (m_musicList != nullptr) {
+        m_musicList->stopCurrentTask();
+    }
+    if (m_audioDev != nullptr) {
+        m_audioDev->clearQueue();
+        m_audioDev->stop();
+        m_audioDev->close();
+    }
 }
 
 void MusicPlayer::Impl::_setPosition(uint64_t pos)

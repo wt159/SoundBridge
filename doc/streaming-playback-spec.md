@@ -67,6 +67,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 控制事件经 WorkQueue 单线程串行、每次 `start()` 新建解码线程且先 stop/join、seek 同线程轮询不 join，是唯一形态。`m_abortDecode` 是**唯一取消信号**（`RunDecodeResult::Abort` 只是结果），只由控制事件所在 WorkQueue 线程置位；**join 必须由发起新任务的同一线程在新任务启动前完成，禁止 detach / 后台 join**。自动跳轨不新增并发机制：旧解码线程 join 允许延后到下一次切歌或析构，但旧任务必须在 EOS 汇总后停止写 ring、且不得持有新曲 ring。
 
+**析构的时序（issue #70）**：「析构例外」只表示关闭动作不必再排队，**不表示可以绕过串行**。`m_workQueue` 是 `Impl` 的成员，其自身析构里的 `stop()` + `join()` 发生在 `~Impl` 函数体**之后**；若函数体直接关设备，就会与队列线程中尚未执行完的 `_stop` 并发进入 `SDL_CloseAudioDevice`，同一个 `m_deviceID` 被释放两次（堆损坏 `c0000374`）。因此析构必须在函数体内先 `m_workQueue.shutdown()` 让控制队列静止（join 掉在跑的 `_stop` / `_play`），再调 `_releaseAudio()`。设备关闭只保留 `_releaseAudio()` 这一个出口，`_stop` 与析构共用它；析构之后再无任何线程会碰设备。
+
 ### 4.3 所有权清单
 
 | 对象 | 创建者 | 拥有者 | 销毁 / 清理时机 | 跨曲目延续 |
@@ -88,7 +90,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 | ring `read()` / 10 ms `consumeAudioData` / 静音填充 | **WorkQueue 消费线程**（唯一消费者） |
 | ring `reset()` | **仅解码线程**，且 consumer 处于 SEEKING / switching 静默窗口、不读 ring；与 `segmentBaseBytes` 更新同窗口完成 |
 | 控制事件 `play` / `stop` / 切歌 / `seek` / 自动跳轨 | **WorkQueue 线程**（串行）；UI 线程只投递 |
-| `AudioDevice` `open` / `start` / `stop` / `close` / `clearQueue` | **WorkQueue 线程**（析构例外） |
+| `AudioDevice` `open` / `start` / `stop` / `close` / `clearQueue` | **WorkQueue 线程**；析构例外须先 `m_workQueue.shutdown()` 静止队列，再走唯一出口 `_releaseAudio()`（见 4.2） |
 | `m_abortDecode` 置位 / `join()` | 控制事件所在 WorkQueue 线程；join 在新任务启动前 |
 | `MusicProperties` / signal 字段 / decoder state / `errorDetail` | `m_curMusicMutex`、atomic 字段、`m_errorMutex`；ring 本身无 mutex（SPSC） |
 

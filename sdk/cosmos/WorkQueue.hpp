@@ -46,6 +46,12 @@ public:
     WorkQueue() { start(); }
     ~WorkQueue() { stop(); }
 
+    // 显式停止并等待队列线程退出（幂等）。析构会自动调用；需要「保证此刻没有任务在跑」
+    // 的场景可以提前调用——例如 MusicPlayer::Impl 析构必须在关音频设备前静止控制队列，
+    // 否则队列线程里的 _stop 会与析构并发进入 SDL_CloseAudioDevice（issue #70）。
+    // 调用后不再接受新任务。
+    void shutdown() { stop(); }
+
     template <typename F, typename... Arg>
     TaskID startTimerTask(bool isRepeat, int intervalTimeMs, F &&f, Arg &&...args)
     {
