@@ -411,11 +411,20 @@ TEST_SUITE("MusicPlayer Interactive Paths")
             return;
         }
 
+        // 单曲目录：本用例只需要「能播一首」，整库扫描要读 20 个文件的头，冷 cache 的
+        // CI runner 上 5s 内拿不到曲目数（#72 合并后 master 变红的直接原因就是它）。
+        // 素材降到一份，判据完全不变。
+        TempMediaDir temp("pauseresume");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
 
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
         if (!waitFor([&player]() { return player.getMusicCount() > 0; }, 5000)) {
             skipCase("playlist empty");
             return;
@@ -445,12 +454,19 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         // 两处会并发进入 SDL_CloseAudioDevice 把同一个设备释放两次。这里故意不等
         // StoppedState 就出作用域 —— 修复前第一轮就会让测试进程异常终止（不是断言失败）。
         RealMediaFixture fixture;
+        // 同上：5 轮析构回归只需要一首可播的曲目，整库扫描会让这条用例的耗时被 I/O 主导，
+        // 且在冷 cache 的 runner 上会撞 5s 超时。
+        TempMediaDir temp("dtor");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
         std::string logDir = "./log";
         for (int round = 0; round < 5; ++round) {
             MockMusicPlayerListener listener;
             {
                 MusicPlayer player(&listener, logDir);
-                player.addMusicDir(fixture.mediaDir());
+                player.addMusicDir(temp.dir());
                 if (!waitFor([&player]() { return player.getMusicCount() > 0; }, 5000)) {
                     skipCase("playlist empty");
                     return;
