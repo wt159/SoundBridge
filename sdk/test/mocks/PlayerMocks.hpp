@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 class MockPlayerCallbacks : public soundbridge::PlayerCallbacks {
 public:
@@ -22,6 +23,8 @@ public:
     mutable std::mutex mutex;
     std::string last_trace_id;
     std::map<int, std::string> track_names;
+    // #72：状态序列要按到达顺序留档，才能断言「相邻状态不重复」。
+    std::vector<soundbridge::PlayerState> state_sequence;
     soundbridge::PlayerState last_state    = soundbridge::PlayerState::Stopped;
     soundbridge::ErrorCode last_error_code = soundbridge::ErrorCode::Unknown;
     std::string last_error_detail;
@@ -41,6 +44,7 @@ public:
         last_position         = 0;
         last_trace_id.clear();
         track_names.clear();
+        state_sequence.clear();
         last_state = soundbridge::PlayerState::Stopped;
     }
 
@@ -48,6 +52,20 @@ public:
     {
         state_change_count.fetch_add(1);
         last_state = state;
+        std::lock_guard<std::mutex> lock(mutex);
+        state_sequence.push_back(state);
+    }
+
+    std::vector<soundbridge::PlayerState> stateSequence() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return state_sequence;
+    }
+
+    std::map<int, std::string> playlistSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return track_names;
     }
 
     void onTrackChanged(int index) override

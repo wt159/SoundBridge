@@ -184,7 +184,8 @@ target_include_directories(UnitTests
 # `coverage` target 的覆盖面不变。
 set(SB_TEST_BAD_INPUT_SUITES "BadInput")
 set(SB_TEST_STREAMING_SUITES "StreamingBudget")
-set(SB_TEST_INTERACTION_SUITES "MusicPlayer Interactive Paths")
+set(SB_TEST_INTERACTION_SUITES
+    "MusicPlayer Interactive Paths,PublicPlayer Interactive Paths")
 
 add_test(
     NAME sdk_unit_tests
