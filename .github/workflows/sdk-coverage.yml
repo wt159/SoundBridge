@@ -77,7 +77,8 @@ jobs:
       # 通过时数值不可见，而上面的覆盖度矩阵步骤只跑 MediaCoverage。这里单独跑一次 -s，
       # 把基线数值留在 CI 日志里（#68 / E15）。
       # 纯观测：continue-on-error + 命令以 `|| true` 收尾，观测失败 / 素材未下发 / 断言红
-      # 都不让 CI 失败；不设阈值、不注册 ctest 分组、不动 TIMEOUT 180、不拆快集 / 全量集，
+      # 都不让 CI 失败；本步骤自身不设阈值、不注册 ctest 分组、不改测试分组与超时
+      # （套件分组见 sdk/test/CMakeLists.txt 的 SB_TEST_*_SUITES），
       # 也不改上面的覆盖度矩阵报告步骤。代价是新增一次 StreamingBudget 测试运行。
       # MESSAGE 里 packetBoundaryMicros 打印为 boundaryMicros、包数打印为 packets / packetsPulled，
       # 故 grep 用能覆盖这两种写法的关键字。

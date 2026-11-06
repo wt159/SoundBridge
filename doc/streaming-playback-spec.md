@@ -144,8 +144,12 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 - **迁移顺序 = 线性四步，不并行双跑**：① 加四个观测点 → ② 切增量实现 → ③ 迁移 2 条断言 → ④ 全量回归。仓库无 feature flag / 双跑机制，新增机制成本高于收益。
 - **CI 不拆快集 / 全量集**（沿用「决定不削用例」）；`TIMEOUT 180` 只挂在 `sdk_unit_tests`，保持不动；不新增耗时 gate；`Report coverage matrix numbers` 不改。
-- **事实更正**：`sdk-coverage.yml` 实际跑的是 `cmake --build build --target coverage` + `UnitTests -ts=MediaCoverage -s`，**没有** `ctest -R sdk_` 命令；8 组 `sdk_*` 是本地 CTest 注册。
-- 新增 suite 只需在 `UNIT_TEST_SOURCES` 加一个 .cpp（doctest 自动注册），不新增 `add_test` 分组。
+  **2026-11-06 更正**：全量 `UnitTests` 涨到 184 s 后该约定失效（`sdk_unit_tests` 实测 180.03 s 超时），
+  已按套件耗时拆成 `sdk_unit_tests`（快集）/ `sdk_badinput_tests` / `sdk_streaming_tests` /
+  `sdk_interaction_tests` 四组，各自设超时；`coverage` 经由 `ctest -R sdk_` 仍全跑，覆盖面不变。
+- **事实更正**：`sdk-coverage.yml` 实际跑的是 `cmake --build build --target coverage` + `UnitTests -ts=MediaCoverage -s`，**没有** `ctest -R sdk_` 命令；`ctest -R sdk_` 在 `scripts/coverage/run_linux.sh:29` 里由 `coverage` target 间接执行。11 组 `sdk_*`（7 组 `TestSdkSuite` + 4 组 `UnitTests` 分组）是本地 CTest 注册。
+- 新增 suite 只需在 `UNIT_TEST_SOURCES` 加一个 .cpp（doctest 自动注册）。若新 suite 单独跑超过约 60 s，
+  应挂进 `SB_TEST_*_SUITES` 分组并给它自己的 `add_test`，而不是抬高全局 `TIMEOUT`。
 
 ## 9. 实现清单（按优先级分级并编号）
 

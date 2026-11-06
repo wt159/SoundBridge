@@ -107,8 +107,9 @@ creator() 返回对象
 ### 2.1 矩阵覆盖对照（#41 收口）
 
 下表把 §2 总表的每一格对到可执行的用例。全部用例在
-`sdk/test/unit/test_bad_input.cpp` 的 `TEST_SUITE("BadInput")` 下，共 **55 条 / 396 断言**，
-没有新增 ctest 分组。`...` 表示同构用例的公共后缀。
+`sdk/test/unit/test_bad_input.cpp` 的 `TEST_SUITE("BadInput")` 下，共 **55 条 / 396 断言**。
+2026-11-06 起这 55 条单独挂在 `sdk_badinput_tests`（`ctest -R sdk_` 一并跑到），
+原因见 §2.2 的耗时更正。`...` 表示同构用例的公共后缀。
 
 | 坏法 | 覆盖的格子 | 用例 | 断言 |
 |---|---|---|---|
@@ -148,6 +149,11 @@ creator() 返回对象
 
 条目 28 交付时估「整套 < 3 s」。实测（2026-11-04，Windows / MinGW）：
 **55 用例 / 396 断言 / 91.6 s**，`ctest -R sdk_` 全套约 120 s。
+
+2026-11-06 追加更正：`UnitTests` 涨到 494 用例后全量 **184 s**，而 `sdk_unit_tests` 的
+`TIMEOUT 180` 已实测出现 180.03 s 超时（余量 0~3 s 抖动）。同日按套件耗时把 CTest 拆成四组
+（快集 27.6 s / 坏输入 91.1 s / StreamingBudget 58.7 s / 真实交互 2.0 s），本套件独立为
+`sdk_badinput_tests`，`TIMEOUT 240`。分组只影响调度与超时口径，`ctest -R sdk_` 仍全跑。
 
 原因：基石 B4 要求量测仪器是**流式播放路径**，每条用例要把整份素材解到 EOS，
 ring 背压按 5 ms 轮询（`drainUntilSettled()` 的 `pollMs=5`）；素材是 `music/` 里几十秒到数分钟的成品。3 s 是按
@@ -614,7 +620,7 @@ else:                             next = offset + declared
 | 2 | flac 16MB 栈 VLA | `FLACExtractor.cpp:78-82` | 换 `std::vector<uint8_t>`；`blockSize` 设上界（`STREAMINFO` 恒 34 字节） |
 | 3 | asf/wma 死循环 + 日志洪水 | `sdk/extractor/asf/ASFExtractor.cpp:131/176` | 循环里强制「`offset` 严格前进」；`obj.size < sizeof(objectHeader)` 直接判损坏退出；另设对象数上限。按 `off64_t` 判，别写成 `int` |
 | 4 | aac 不校验头 | `sdk/extractor/aac/AACExtractor.cpp:105-123,150` | 校验 `syncWord == 0xFFF`、`channelConfiguration != 0`，不合格 `NO_INIT` |
-| 5 | ctest 无超时 | `sdk/test/CMakeLists.txt:174-177` | `set_tests_properties(sdk_unit_tests PROPERTIES TIMEOUT ...)`。没有这条，坏文件挂死会让 CI 卡到默认 1500s |
+| 5 | ctest 无超时 | `sdk/test/CMakeLists.txt`（`sdk_unit_tests` / `sdk_badinput_tests` 的 `set_tests_properties(... TIMEOUT)`） | 没有这条，坏文件挂死会让 CI 卡到默认 1500s。2026-11-06 起本套件有独立的 `sdk_badinput_tests`（`TIMEOUT 240`） |
 
 ### P1 语义缺口
 
@@ -643,11 +649,11 @@ else:                             next = offset + declared
 
 | # | 内容 |
 |---|---|
-| 24 | 新建 `sdk/test/unit/test_bad_input.cpp`，`TEST_SUITE("BadInput")`，挂进 `UNIT_TESTS_SOURCES`。**不新增 ctest 分组**（跟随 `sdk_unit_tests`，避免 CI 多起一次进程） |
+| 24 | 新建 `sdk/test/unit/test_bad_input.cpp`，`TEST_SUITE("BadInput")`，挂进 `UNIT_TESTS_SOURCES`。当时**不新增 ctest 分组**（跟随 `sdk_unit_tests`，避免 CI 多起一次进程）；2026-11-06 因全量撞 `TIMEOUT 180` 已拆出 `sdk_badinput_tests`，见 §2.2 |
 | 25 | 素材全部字节手术合成、不入库；写临时目录、跑完删；读源走 `FileSource`（中文名必需） |
 | 26 | 扩展名冲突组：同一份完好 wav 用 `.wav` / `.xyz` / `.mp3` 打开，三者 `createExtractor()` 均非空且 spec 一致（锁 H4） |
 | 27 | 反向用例：#8~#10 的坏帧、第 9 节整张表，断言「确实检不出」 |
-| 28 | 规模：源素材都 ≤ 4.8MB、字节手术合成不入库、跑完删；不新增 ctest 分组。**交付时估的「< 3 s」不成立**，实测 55 用例 / 396 断言 / 91.6 s，修正见 §2.2 |
+| 28 | 规模：源素材都 ≤ 4.8MB、字节手术合成不入库、跑完删。**交付时估的「< 3 s」不成立**，实测 55 用例 / 396 断言 / 91.6 s，修正见 §2.2；该耗时后来也是 ctest 拆组的直接原因 |
 
 ### 一条 ADR
 
