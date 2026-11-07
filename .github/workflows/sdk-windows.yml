@@ -64,6 +64,7 @@ jobs:
       # + 可选的三方库构建）。这里不另写一套安装逻辑，避免 CI 与本地环境漂移。
       # 缓存命中时跳过三方库构建；根工程配置脚本总会做。
       - name: Setup toolchain (Qt / MinGW / CMake) and 3rdparty
+        id: setup
         shell: pwsh
         run: |
           $extra = @()
@@ -101,6 +102,23 @@ jobs:
           & "$env:CMAKE_BIN\cmake.exe" --build build --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # 诊断用：素材里有一批中文文件名，Windows runner 上这批文件打不开而 ASCII 名的正常。
+      # 先确认是「检出时文件名被改写」还是「打开时的编码转换失败」——列目录 + 看 git 是否认为有改动。
+      - name: Diagnose media filenames (non-gating)
+        if: always()
+        shell: bash
+        continue-on-error: true
+        run: |
+          echo "=== git status（若检出改写了文件名，这里会显示删除）==="
+          git status --porcelain | head -30
+          echo "=== git ls-files（仓库里的名字）==="
+          git ls-files music | head -25
+          echo "=== 磁盘上的名字（python repr，看真实码点）==="
+          python -c "import os; [print(repr(n)) for n in sorted(os.listdir('music'))[:25]]"
+          echo "=== 纯 ASCII 与中文各挑一个做 open 测试 ==="
+          python -c "import io;print(io.open('music/music.wav','rb').read(4))"
+          python -c "import io,glob;f=[p for p in glob.glob('music/*.ogg')];print(f);print(io.open(f[0],'rb').read(4) if f else 'no ogg')"
+
       - name: Run SDK tests
         shell: pwsh
         run: |
@@ -121,8 +139,9 @@ jobs:
 
       # 冷缓存才需要回写；actions/cache 的 post 步骤只在 job 成功时保存，
       # 这里显式保存，避免「构建成功但后续测试红」时整轮 90 分钟白跑。
+      # 条件挂在 setup 的 outcome 上：只有第三方库真的构建成功才值得缓存。
       - name: Save 3rdparty dist cache
-        if: steps.dist.outputs.cache-hit != 'true'
+        if: steps.setup.outcome == 'success' && steps.dist.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
