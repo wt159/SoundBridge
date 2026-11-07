@@ -7,6 +7,9 @@
     -> 编译并安装 sdk/3rdparty -> 配置根工程。
     脚本是幂等的：已存在的组件会被跳过，可反复执行。
 
+    Qt 默认只装 qtbase（app 只用到 Qt5::Widgets；SDK 与两个测试可执行文件不链接
+    任何 Qt）。需要 windeployqt 做便携打包时加 -FullQt 装全量模块。
+
 .PARAMETER QtRoot
     Qt 安装根目录，最终路径为 <QtRoot>/<QtVersion>/<QtMingwDir>，
     同时会写入环境变量 QT_ROOT_PATH（cmake/toolchain 优先读取它）。
@@ -32,7 +35,13 @@ param(
     [string]$QtMirror = "https://mirrors.tuna.tsinghua.edu.cn/qt",
     [string]$PyPIIndex = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [switch]$SkipQt,
-    [switch]$SkipThirdParty
+    [switch]$SkipThirdParty,
+    # 默认只装 qtbase。项目只在 app 侧 find_package(Qt5 Widgets)，SDK 与两个测试
+    # 可执行文件（UnitTests / TestSdkSuite）都不链接任何 Qt——objdump 查依赖可证。
+    # 全量是 20+ 个模块约 95MB 下载，qtbase 单个 31MB；而 setup 耗时被外网镜像
+    # 波动支配，少下三分之二也把那个波动一起压掉了。
+    # 需要 windeployqt（便携打包 package_portable target）时加 -FullQt 装全量。
+    [switch]$FullQt
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,7 +96,9 @@ $qtToolsBin = Join-Path $QtRoot "Tools\$QtToolsMingwDir\bin"
 
 if (-not $SkipQt) {
     Write-Step "检查 Qt $QtVersion ($QtMingwDir) 与 MinGW"
-    $needQt = -not (Test-Path -LiteralPath (Join-Path $qtMingwPath "bin\windeployqt.exe"))
+    # 判断「Qt 是否已装」看 qmake.exe，不能看 windeployqt.exe：后者在 qttools 里，
+    # 只装 qtbase 时不存在，用它判断会让本机每次运行脚本都判定缺 Qt 而重装。
+    $needQt = -not (Test-Path -LiteralPath (Join-Path $qtMingwPath "bin\qmake.exe"))
     $needTool = -not (Test-Path -LiteralPath (Join-Path $qtToolsBin "g++.exe"))
 
     if ($needQt -or $needTool) {
@@ -123,8 +134,13 @@ if __name__ == "__main__":
 '@ | Set-Content -LiteralPath $wrapper -Encoding UTF8
 
         if ($needQt) {
-            Write-Step "安装 Qt $QtVersion"
-            python $wrapper install-qt windows desktop $QtVersion win64_mingw73 -O $QtRoot -b $QtMirror
+            if ($FullQt) {
+                Write-Step "安装 Qt $QtVersion（全模块）"
+                python $wrapper install-qt windows desktop $QtVersion win64_mingw73 -O $QtRoot -b $QtMirror
+            } else {
+                Write-Step "安装 Qt $QtVersion（仅 qtbase）"
+                python $wrapper install-qt windows desktop $QtVersion win64_mingw73 --archives qtbase -O $QtRoot -b $QtMirror
+            }
             if ($LASTEXITCODE -ne 0) { throw "Qt 安装失败" }
         }
         if ($needTool) {

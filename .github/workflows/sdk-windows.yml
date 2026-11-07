@@ -7,6 +7,12 @@ name: sdk-windows
 # 在 Windows 上只能源码构建，冷缓存一轮约 24 分钟；把 dist 目录整体缓存后，
 # 热缓存一轮约 7~8 分钟（2026-11-07 实测：run 42341337832 冷 24m05s，
 # run 42346594655 热 7m33s）。缓存键只包含第三方构建输入，业务代码改动不会让缓存失效。
+#
+# Qt 只装 qtbase。项目只在 app 侧 find_package(Qt5 Widgets)，SDK 与两个测试可执行
+# 文件（UnitTests / TestSdkSuite）经 objdump 确认不链接任何 Qt。全量是 20+ 个模块
+# 约 95MB 下载、解压 561MB；qtbase 单个 31MB、解压 199MB，本地装 36 秒。setup 的
+# 耗时受外网镜像波动支配（同一轮实测 141s ~ 992s，后者是 3rdparty 缓存 miss），
+# 少下三分之二也把那个波动一起压掉了。需要 windeployqt 做便携打包时用脚本的 -FullQt。
 on:
   push:
     branches:
@@ -113,6 +119,16 @@ jobs:
           & "$env:CMAKE_BIN\cmake.exe" --build build --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # 保持串行。并行（-j4）实测不可用，2026-11-07 三轮实验：
+      #   - 不加锁：dummy 驱动下 10 次里 1 次让 sdk_unit_tests 撞满 180s 超时
+      #     （正常只要 25s），非 dummy 下 7 次里 2 次失败
+      #   - 给 sdk_unit_tests 加 RUN_SERIAL 后仍 10 次里 1 次让 sdk_interaction_tests
+      #     失败，失败率没变
+      # 原因：并发敏感点不止一个，而 unit 与 interaction 都持有音频设备句柄。
+      # interaction 组当初就是为了「设备打不开或播放卡住不连累快集」单独拆出来的，
+      # 并行恰好把这个隔离拆掉了。
+      # 收益只有 205.88s → 124s，代价约 10% 的假红，不划算。要让并行重新可行，
+      # 得先把这几组改成不依赖真实音频设备，或按资源加锁后逐组验证——那是独立工作。
       - name: Run SDK tests
         shell: pwsh
         run: |
@@ -122,10 +138,16 @@ jobs:
       # 覆盖度矩阵的 declared / measured 只在断言失败时才由 doctest 打印，通过时数值不可见。
       # 用 -s 打开成功断言输出，把 Windows 侧实测毫秒数留在日志里，供与 Linux 侧逐项核对
       # （两侧必须落在同一容差内，见 doc/format-support.md）。与 Linux workflow 的同名步骤对齐。
-      # 这里直接起 exe，不经过 add_test 烘焙的 PATH，所以要自己补齐运行时 DLL 目录：
-      # 只补 3rdparty 时本地实测 UnitTests.exe 以 127 秒退且零输出（缺 Qt / MinGW 运行时），
-      # 而 pipefail 下 grep 无匹配同样返回 1，两者在日志里分不开。故先把 exe 的 rc 与输出
-      # 完整落盘再筛，失败也不阻塞 PR（与 Linux 侧同名步骤的观测定位一致）。
+      # 这里直接起 exe，不经过 add_test 烘焙的 PATH，所以运行时 DLL 目录要自己补齐。
+      #
+      # 纠正一条旧注释：UnitTests.exe 并不链接 Qt（objdump 实测依赖只有 KERNEL32 /
+      # SDL2 / avcodec / FLAC / vorbis / MinGW 运行时），当时「只补 3rdparty 就 127
+      # 秒退」缺的是 MinGW 运行时（libstdc++-6 / libgcc_s_seh-1 / libwinpthread-1）。
+      # 三个目录仍然都补：MinGW 运行时在 Tools/mingw730_64/bin、3rdparty DLL 在 dist
+      # 的 bin；Qt 的 bin 这个步骤用不上，留着是为了与下面的 PATH 导出清单一致。
+      #
+      # pipefail 下 grep 无匹配也返回 1，与 exe 起不来在日志里分不开，故先把 rc 与
+      # 输出完整落盘再筛，失败也不阻塞 PR（与 Linux 侧同名步骤的观测定位一致）。
       - name: Report coverage matrix numbers
         continue-on-error: true
         shell: bash

@@ -102,6 +102,16 @@ cmake --build build --target package_portable
   实测冷缓存约 24 分钟、缓存命中约 7.5 分钟（2026-11-07，run 42346594655）；改动 `sdk/3rdparty` 的构建输入（CMakeLists / build_option /
   toolchain / ffmpeg 与 boost 构建脚本）会让缓存失效。Windows 任务用脚本装好的 CMake 3.31.6 绝对路径，
   因为 runner 自带的 CMake 4.x 对 `cmake_minimum_required(3.5)` 直接报错。
+- **Qt 只装 qtbase，不需要全量**。项目只在 app 侧 `find_package(Qt5 Widgets)`；`UnitTests.exe`
+  与 `TestSdkSuite.exe` 经 `objdump -p` 核对**不链接任何 Qt**（依赖只有 KERNEL32 / SDL2 /
+  avcodec / FLAC / vorbis / MinGW 运行时）。`setup_windows_env.ps1` 默认走 `--archives qtbase`，
+  需要 `windeployqt`（`package_portable` target）时加 `-FullQt`。脚本用 `bin\qmake.exe` 判断
+  「Qt 是否已装」，不能用 `windeployqt.exe`——后者在 qttools 里，精简安装时不存在。
+- **ctest 不要并行**。`-j4` 实测：不加锁时 dummy 驱动下 10 次里 1 次让 `sdk_unit_tests` 撞满
+  180s TIMEOUT（正常 25s），非 dummy 下 7 次里 2 次失败；给 unit 加 `RUN_SERIAL` 后仍 10 次里
+  1 次让 `sdk_interaction_tests` 失败。并发敏感点不止一个，且 unit 与 interaction 都持有音频
+  设备句柄——interaction 组本来就是为「设备打不开或播放卡住不连累快集」单独拆出来的，并行等于
+  把这个隔离拆掉。收益 205.88s → 124s，不值一个约 10% 的假红。
 - **`if:` 不含状态检查函数时，Actions 会自动套一层隐式 `success()`**。所以「构建成功就回写缓存」这类
   步骤必须显式写 `(!cancelled()) && ...`，否则前面的用例一红它就跟着被跳过（2026-11-07 踩过：
   冷构建 24 分钟做完、缓存没写回，下一轮又白等一次冷构建）。
