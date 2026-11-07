@@ -102,6 +102,12 @@ cmake --build build --target package_portable
   缓存命中约 10~15 分钟，冷缓存 40~90 分钟；改动 `sdk/3rdparty` 的构建输入（CMakeLists / build_option /
   toolchain / ffmpeg 与 boost 构建脚本）会让缓存失效。Windows 任务用脚本装好的 CMake 3.31.6 绝对路径，
   因为 runner 自带的 CMake 4.x 对 `cmake_minimum_required(3.5)` 直接报错。
+- **`if:` 不含状态检查函数时，Actions 会自动套一层隐式 `success()`**。所以「构建成功就回写缓存」这类
+  步骤必须显式写 `(!cancelled()) && ...`，否则前面的用例一红它就跟着被跳过（2026-11-07 踩过：
+  冷构建 24 分钟做完、缓存没写回，下一轮又白等一次冷构建）。
+- **Windows 上非 ASCII 文件名必须按宽字符打开**：`sdk/extractor/FileSource.cpp` 用 `_wfopen`
+  + `sdk_utils::toWideString`；`toNativeString` 是 UTF-8 → ANSI(`CP_ACP`) 的有损转换，
+  在 en-US runner 上中文变 `?`，只保留给确实需要 ANSI 的老 API。不要再用它打开文件。
 - `sdk/cosmos/` 是 header-only 工具区；规则不够特殊，暂不单独挂子 AGENTS。
 - `music/` 里包含真实媒体样本；涉及 extractor / decode 的改动，优先补 `sdk_media_smoke` 或 `sdk_extractor_spec_tests`。
 - 用户口头说“提交一版”时，默认含义是：`git add` + `git commit` + `git push`；除非用户显式缩小范围，否则按这三个步骤执行。
