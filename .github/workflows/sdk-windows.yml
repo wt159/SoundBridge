@@ -140,8 +140,12 @@ jobs:
       # 冷缓存才需要回写；actions/cache 的 post 步骤只在 job 成功时保存，
       # 这里显式保存，避免「构建成功但后续测试红」时整轮 90 分钟白跑。
       # 条件挂在 setup 的 outcome 上：只有第三方库真的构建成功才值得缓存。
+      #
+      # !cancelled() 不能省：if 里不出现任何状态检查函数时，Actions 会自动套一层
+      # 隐式 success()，于是「测试红」会让本步骤连带被跳过——正好是它要救的场景
+      # （2026-11-07 run 42341337832 就是这样，构建成功但缓存没写回，白等一轮冷构建）。
       - name: Save 3rdparty dist cache
-        if: steps.setup.outcome == 'success' && steps.dist.outputs.cache-hit != 'true'
+        if: (!cancelled()) && steps.setup.outcome == 'success' && steps.dist.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
