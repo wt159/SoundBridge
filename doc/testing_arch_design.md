@@ -68,7 +68,7 @@ sdk/test/
 │   └── test_media_smoke.cpp          # 媒体冒烟测试
 ├── fixtures/
 │   ├── RealMediaFixture.hpp          # 真实媒体测试固件
-│   └── TempDirFixture.hpp            # 临时目录固件
+│   └── TestProcess.hpp               # 进程号 / 建目录：并行测试的路径隔离
 ├── mocks/
 │   ├── AudioMocks.hpp                # 音频回调 Mock
 │   └── PlayerMocks.hpp               # Player API Mock (新增)

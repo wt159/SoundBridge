@@ -145,9 +145,11 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - **迁移顺序 = 线性四步，不并行双跑**：① 加四个观测点 → ② 切增量实现 → ③ 迁移 2 条断言 → ④ 全量回归。仓库无 feature flag / 双跑机制，新增机制成本高于收益。
 - **CI 不拆快集 / 全量集**（沿用「决定不削用例」）；`TIMEOUT 180` 只挂在 `sdk_unit_tests`，保持不动；不新增耗时 gate；`Report coverage matrix numbers` 不改。
   **2026-11-06 更正**：全量 `UnitTests` 涨到 184 s 后该约定失效（`sdk_unit_tests` 实测 180.03 s 超时），
-  已按套件耗时拆成 `sdk_unit_tests`（快集）/ `sdk_badinput_tests` / `sdk_streaming_tests` /
-  `sdk_interaction_tests` 四组，各自设超时；`coverage` 经由 `ctest -R sdk_` 仍全跑，覆盖面不变。
-- **事实更正**：`sdk-coverage.yml` 实际跑的是 `cmake --build build --target coverage` + `UnitTests -ts=MediaCoverage -s`，**没有** `ctest -R sdk_` 命令；`ctest -R sdk_` 在 `scripts/coverage/run_linux.sh:29` 里由 `coverage` target 间接执行。11 组 `sdk_*`（7 组 `TestSdkSuite` + 4 组 `UnitTests` 分组）是本地 CTest 注册。
+  已按套件耗时拆成 `sdk_unit_tests`（快集）/ 坏输入四段 / `sdk_streaming_tests` /
+  `sdk_interaction_tests`，各自设超时；`coverage` 经由 `ctest -R sdk_` 仍全跑，覆盖面不变。
+  **2026-11-07 追加**：坏输入 55 例按实测耗时切成四段（`sdk_badinput_{rejection,frames,duration,tags}_tests`，
+  各 `TIMEOUT 120`），只为让 `ctest -j4` 的关键路径不再钉在单进程 94 s 上；用例数不变。
+- **事实更正**：`sdk-coverage.yml` 实际跑的是 `cmake --build build --target coverage` + `UnitTests -ts=MediaCoverage -s`，**没有** `ctest -R sdk_` 命令；`ctest -R sdk_` 在 `scripts/coverage/run_linux.sh:29` 里由 `coverage` target 间接执行。14 个 `sdk_*`（7 组 `TestSdkSuite` + 7 组 `UnitTests` 分组）是本地 CTest 注册。
 - 新增 suite 只需在 `UNIT_TEST_SOURCES` 加一个 .cpp（doctest 自动注册）。若新 suite 单独跑超过约 60 s，
   应挂进 `SB_TEST_*_SUITES` 分组并给它自己的 `add_test`，而不是抬高全局 `TIMEOUT`。
 
