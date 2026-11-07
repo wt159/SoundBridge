@@ -128,14 +128,21 @@ jobs:
       # 覆盖度矩阵的 declared / measured 只在断言失败时才由 doctest 打印，通过时数值不可见。
       # 用 -s 打开成功断言输出，把 Windows 侧实测毫秒数留在日志里，供与 Linux 侧逐项核对
       # （两侧必须落在同一容差内，见 doc/format-support.md）。与 Linux workflow 的同名步骤对齐。
-      # 这里直接起 exe，不经过 add_test 烘焙的 PATH，所以要自己补 3rdparty 的 DLL 目录。
+      # 这里直接起 exe，不经过 add_test 烘焙的 PATH，所以要自己补齐运行时 DLL 目录：
+      # 只补 3rdparty 时本地实测 UnitTests.exe 以 127 秒退且零输出（缺 Qt / MinGW 运行时），
+      # 而 pipefail 下 grep 无匹配同样返回 1，两者在日志里分不开。故先把 exe 的 rc 与输出
+      # 完整落盘再筛，失败也不阻塞 PR（与 Linux 侧同名步骤的观测定位一致）。
       - name: Report coverage matrix numbers
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          export PATH="$PWD/sdk/3rdparty/dist/windows_x86_64_gcc_debug/bin:$PATH"
-          ./build/sdk/test/UnitTests.exe -ts=MediaCoverage -s \
-            | grep -E "declared |coverage matrix covered"
+          QT="$(cygpath -u "$QT_ROOT_PATH")"
+          export PATH="$(cygpath -u 'sdk/3rdparty/dist/windows_x86_64_gcc_debug/bin'):$QT/5.14.2/mingw73_64/bin:$QT/Tools/mingw730_64/bin:$PATH"
+          ./build/sdk/test/UnitTests.exe -ts=MediaCoverage -s > coverage.log 2>&1
+          echo "UnitTests rc=$?  lines=$(wc -l < coverage.log)"
+          head -20 coverage.log
+          grep -E "declared |coverage matrix covered" coverage.log
 
       # 冷缓存才需要回写；actions/cache 的 post 步骤只在 job 成功时保存，
       # 这里显式保存，避免「构建成功但后续测试红」时整轮 90 分钟白跑。
