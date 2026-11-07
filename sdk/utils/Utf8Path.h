@@ -27,19 +27,39 @@ inline std::string toUtf8String(const boost::filesystem::path &p)
 #endif
 }
 
-// Convert UTF-8 string to native encoding for std::ifstream / fopen
+#ifdef _WIN32
+// Convert UTF-8 string to the Windows native wide string.
+// 打开文件应该走这条路径：宽字符与系统代码页无关，中文 / 日文 / emoji 之类的名字
+// 在任何语言的 Windows 上都能命中（见 FileSource 的 _wfopen）。
+inline std::wstring toWideString(const char *utf8)
+{
+    if (!utf8 || !utf8[0])
+        return std::wstring();
+    int wsize = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+    if (wsize <= 0)
+        return std::wstring();
+    std::wstring ws(static_cast<size_t>(wsize - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, &ws[0], wsize);
+    return ws;
+}
+#endif
+
+// Convert UTF-8 string to native encoding for narrow-char APIs (std::ifstream / fopen)
 // Windows: UTF-8 → ANSI (local codepage), Linux: pass-through
+//
+// 注意：Windows 上这一步是 UTF-8 → ANSI(CP_ACP)，**有损**。CP_ACP 随系统区域设置变化，
+// 中文系统(936)能表示中文而英文系统(1252)不能，映射不上的字符会被替换成 '?'，
+// 文件名随之失效。2026-11-07 Windows CI 就是因为这里在 en-US runner 上把中文名素材
+// 打成 "?????.ogg" 而整片测试变红。**不要再用它打开文件**，改用 toWideString + _wfopen。
 inline std::string toNativeString(const char *utf8)
 {
 #ifdef _WIN32
     if (!utf8 || !utf8[0])
         return std::string();
     // UTF-8 → wstring
-    int wsize = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
-    if (wsize <= 0)
+    const std::wstring ws = toWideString(utf8);
+    if (ws.empty())
         return std::string();
-    std::wstring ws(static_cast<size_t>(wsize - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, &ws[0], wsize);
     // wstring → ANSI
     int asize = WideCharToMultiByte(CP_ACP, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (asize <= 0)
