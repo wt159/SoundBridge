@@ -1,7 +1,12 @@
 name: sdk-coverage
 
 on:
+  # push 只对 master 生效：分支上的提交已经由 pull_request 触发一次，
+  # 两边都开会把同一份 commit 跑两遍（14 分钟 × 2，等待与配额都浪费）。
+  # 需要单独验证某个分支时用 workflow_dispatch。
   push:
+    branches:
+      - master
     paths:
       - 'CMakeLists.txt'
       - 'cmake/**'
@@ -17,6 +22,7 @@ on:
       - 'scripts/**'
       - 'sdk/**'
       - '.github/workflows/sdk-coverage.yml'
+  workflow_dispatch:
 
 jobs:
   coverage:

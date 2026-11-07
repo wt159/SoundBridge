@@ -6,7 +6,14 @@
 #include <ExtractorFactory.h>
 #include <ExtractorHelper.hpp>
 #include <FileSource.h>
+#include <Utf8Path.h>
+// Utf8Path.h 在 Windows 上会带上 <windows.h>，那里把 ERROR 定义成 0，
+// 会撞上本文件后面的 StreamDecoderState::ERROR，就地撤掉这个宏。
+#ifdef ERROR
+#undef ERROR
+#endif
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -243,6 +250,50 @@ TEST_SUITE("FileSource")
     {
         FileSource source(nullptr);
         REQUIRE(source.initCheck() == sdk_utils::NO_INIT);
+    }
+
+    // 2026-11-07：文件名必须按宽字符路径打开。旧实现是 UTF-8 → ANSI(CP_ACP) → std::ifstream，
+    // 这一步有损：CP_ACP 表示不了的字符会被换成 '?'，文件直接打不开。中文名在 en-US 系统上、
+    // emoji 在任何代码页下都会中招（Windows CI 首轮就是这么红的）。
+    // 这里故意用 emoji 命名，使这条用例在中文和英文 Windows 上都能复现旧实现的失败。
+    TEST_CASE("Non-ANSI filename opens through the wide path")
+    {
+        const std::string name = "file_source_\xF0\x9F\x98\x80.bin"; // U+1F600
+        const std::string path = createUnitFilePath(name);
+
+#ifdef _WIN32
+        // 建文件同理：窄路径写不出来，必须用宽字符。
+        const std::wstring widePath = sdk_utils::toWideString(path.c_str());
+        std::FILE *raw              = _wfopen(widePath.c_str(), L"wb");
+        REQUIRE(raw != nullptr);
+        REQUIRE(std::fwrite("ABCD", 1, 4, raw) == 4);
+        std::fclose(raw);
+#else
+        {
+            std::ofstream output(path.c_str(), std::ios::binary);
+            REQUIRE(output.good());
+            output.write("ABCD", 4);
+        }
+#endif
+
+        {
+            FileSource source(path.c_str());
+            CHECK(source.initCheck() == sdk_utils::OK);
+
+            off64_t size = 0;
+            CHECK(source.getSize(&size) == sdk_utils::OK);
+            CHECK(size == 4);
+
+            char buffer[5] = { 0 };
+            CHECK(source.readAt(0, buffer, 4) == 4);
+            CHECK(std::string(buffer) == "ABCD");
+        }
+
+#ifdef _WIN32
+        _wremove(sdk_utils::toWideString(path.c_str()).c_str());
+#else
+        std::remove(path.c_str());
+#endif
     }
 
     TEST_CASE("Path without extension returns no init")

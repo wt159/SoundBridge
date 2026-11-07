@@ -19,4 +19,8 @@ build-coverage/
 __pycache__/
 *.pyc
 ui_shot_*.png
+# setup_windows_env.ps1 里的 aqt 会把安装日志落在仓库根，CI 上会污染 git status
+aqtinstall.log
+# Windows 工作流「Report coverage matrix numbers」步骤的输出落盘
+coverage.log
 /log/

@@ -292,11 +292,22 @@ TEST_SUITE("MusicPlayer Track Navigation")
             return;
         }
 
+        // 两曲目录：本用例只需要「下一首确实能切」。整库扫描要读 20 个文件的头，
+        // 冷 cache 的 CI runner 上 5s 内拿不到曲目数（与 #72 修过的两条同源）。
+        TempMediaDir temp("nextadvance");
+        for (int i = 0; i < 2; ++i) {
+            const std::string name = std::string("track") + static_cast<char>('1' + i) + ".wav";
+            if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file(name))) {
+                skipCase("cannot synthesize two-track playlist");
+                return;
+            }
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
 
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
         if (!waitFor([&player]() { return player.getMusicCount() > 1; }, 5000)) {
             skipCase("playlist has fewer than two tracks");
             return;
@@ -342,11 +353,22 @@ TEST_SUITE("MusicPlayer Playlist Operations")
             return;
         }
 
+        // 两曲目录：这里要验的是「扫描目录能装进列表」，不是「20 种格式都能扫」。
+        // 用整库会让耗时被 I/O 主导，且冷 cache 的 runner 上可能撞 20s 上限（见 #72）。
+        TempMediaDir temp("adddir");
+        for (int i = 0; i < 2; ++i) {
+            const std::string name = std::string("track") + static_cast<char>('1' + i) + ".wav";
+            if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file(name))) {
+                skipCase("cannot synthesize two-track playlist");
+                return;
+            }
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
 
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
 
         auto start = std::chrono::steady_clock::now();
         while (listener.list_change_count == 0) {
@@ -576,11 +598,18 @@ TEST_SUITE("MusicPlayer Interactive Paths")
             return;
         }
 
+        // 单曲目录：seek 只需要一首够长的曲目，整库扫描只会加 I/O 且可能撞 5s 超时。
+        TempMediaDir temp("seekmiddle");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
 
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
         if (!waitFor([&player]() { return player.getMusicCount() > 0; }, 5000)) {
             skipCase("playlist empty");
             return;
@@ -944,10 +973,17 @@ TEST_SUITE("MusicPlayer Interactive Paths")
             return;
         }
 
+        // 单曲目录：停机语义只需要一首可播的曲目，整库扫描会撞 5s 超时（见 #72）。
+        TempMediaDir temp("stoppos");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
         if (!waitFor([&player]() { return player.getMusicCount() > 0; }, 5000)) {
             skipCase("playlist empty");
             return;
@@ -1002,10 +1038,17 @@ TEST_SUITE("MusicPlayer Interactive Paths")
             return;
         }
 
+        // 单曲目录：幂等性只需要一首可播的曲目，整库扫描会撞 5s 超时（见 #72）。
+        TempMediaDir temp("idempotent");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
         MockMusicPlayerListener listener;
         std::string logDir = "./log";
         MusicPlayer player(&listener, logDir);
-        player.addMusicDir(fixture.mediaDir());
+        player.addMusicDir(temp.dir());
         if (!waitFor([&player]() { return player.getMusicCount() > 0; }, 5000)) {
             skipCase("playlist empty");
             return;

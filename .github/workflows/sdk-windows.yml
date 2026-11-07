@@ -1,0 +1,153 @@
+name: sdk-windows
+
+# Windows 侧回归。项目主力是 Windows + MinGW，但此前只有 Linux 覆盖：
+# 2026-11-06 那个 seek 差异是 Linux 先撞出来的，反方向同样成立。
+#
+# 成本说明：3rdparty（Boost / FFmpeg / SDL2 / FLAC / Ogg / Vorbis / zlib / g3log / g3sinks）
+# 在 Windows 上只能源码构建，冷缓存一轮约 24 分钟；把 dist 目录整体缓存后，
+# 热缓存一轮约 7~8 分钟（2026-11-07 实测：run 42341337832 冷 24m05s，
+# run 42346594655 热 7m33s）。缓存键只包含第三方构建输入，业务代码改动不会让缓存失效。
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'app/**'
+      - 'scripts/**'
+      - 'sdk/**'
+      - '.github/workflows/sdk-windows.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'app/**'
+      - 'scripts/**'
+      - 'sdk/**'
+      - '.github/workflows/sdk-windows.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: sdk-windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    # 冷缓存（构建全部第三方库）留足余量；热缓存约 10~15 分钟。
+    timeout-minutes: 150
+    env:
+      # 无头 runner 没有音频设备，走 SDL 的 dummy 驱动（与 Linux 侧一致）。
+      SDL_AUDIODRIVER: dummy
+      QT_ROOT: C:\Qt
+      TOOLS_ROOT: C:\tools
+      # runner 自带 CMake 可能是 4.x，对 cmake_minimum_required(3.5) 直接报错。
+      # 全程使用 setup 脚本装好的 3.31.6，不依赖 PATH 顺序。
+      CMAKE_BIN: C:\tools\cmake-3.31.6-windows-x86_64\bin
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 第三方库是纯源码构建、与业务代码无关，按构建输入做键。
+      # 业务代码改动不会命中不同的 key，所以日常 PR 都走热缓存。
+      - name: Restore 3rdparty dist cache
+        id: dist
+        uses: actions/cache/restore@v4
+        with:
+          path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
+          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat') }}
+          restore-keys: |
+            3rdparty-win-
+
+      # 脚本本身是仓库里已验证的 Windows 一键环境（CMake 3.31.6 + Qt 5.14.2 + MinGW 7.3.0
+      # + 可选的三方库构建）。这里不另写一套安装逻辑，避免 CI 与本地环境漂移。
+      # 缓存命中时跳过三方库构建；根工程配置脚本总会做。
+      #
+      # 必须用**哈希表** splat：脚本的参数块里 $QtRoot / $ToolsRoot / $CmakeVersion ...
+      # 都是位置参数，数组 splat（$extra = @(); $extra += "-SkipThirdParty"）会把那个字符串
+      # 按位置塞进第一个未绑定参数，实测 $CmakeVersion 变成 "-SkipThirdParty"，
+      # 下载 URL 拼成 v-SkipThirdParty/cmake--SkipThirdParty-windows-x86_64.zip 然后 404。
+      - name: Setup toolchain (Qt / MinGW / CMake) and 3rdparty
+        id: setup
+        shell: pwsh
+        run: |
+          $params = @{
+            QtRoot    = $env:QT_ROOT
+            ToolsRoot = $env:TOOLS_ROOT
+            Jobs      = 4
+            QtMirror  = 'https://download.qt.io'
+            PyPIIndex = 'https://pypi.org/simple'
+          }
+          if ("${{ steps.dist.outputs.cache-hit }}" -eq "true") {
+            Write-Host "3rdparty dist cache hit: skip building dependencies"
+            $params.SkipThirdParty = $true
+          } else {
+            Write-Host "3rdparty dist cache miss: building dependencies from source"
+          }
+          ./scripts/setup_windows_env.ps1 @params
+
+      # 每个 step 都是新进程，脚本内改的 $env:Path 不会传给后续步骤，必须显式导出。
+      # 注意顺序：这些 PATH 必须在配置根工程之前就位——sdk/test/CMakeLists.txt 会把
+      # $ENV{PATH} 烘焙进 add_test 的 PATH，改晚了测试会找不到 DLL（0xc0000135）。
+      # 脚本在最后一节已经用这份 PATH 配置过根工程，这里导出是为了后续 build / ctest 步骤。
+      - name: Export PATH for later steps
+        shell: pwsh
+        run: |
+          @(
+            "$env:QT_ROOT\Tools\mingw730_64\bin",
+            "$env:QT_ROOT\5.14.2\mingw73_64\bin",
+            "$env:TOOLS_ROOT\cmake-3.31.6-windows-x86_64\bin"
+          ) | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+          "QT_ROOT_PATH=$env:QT_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Boost 的中间产物体量很大，构建完就删，避免把 runner 磁盘吃满。
+      - name: Drop 3rdparty build tree
+        if: steps.dist.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: Remove-Item -LiteralPath sdk/3rdparty/build -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Build
+        shell: pwsh
+        run: |
+          & "$env:CMAKE_BIN\cmake.exe" --build build --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run SDK tests
+        shell: pwsh
+        run: |
+          & "$env:CMAKE_BIN\ctest.exe" --test-dir build -R sdk_ --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # 覆盖度矩阵的 declared / measured 只在断言失败时才由 doctest 打印，通过时数值不可见。
+      # 用 -s 打开成功断言输出，把 Windows 侧实测毫秒数留在日志里，供与 Linux 侧逐项核对
+      # （两侧必须落在同一容差内，见 doc/format-support.md）。与 Linux workflow 的同名步骤对齐。
+      # 这里直接起 exe，不经过 add_test 烘焙的 PATH，所以要自己补齐运行时 DLL 目录：
+      # 只补 3rdparty 时本地实测 UnitTests.exe 以 127 秒退且零输出（缺 Qt / MinGW 运行时），
+      # 而 pipefail 下 grep 无匹配同样返回 1，两者在日志里分不开。故先把 exe 的 rc 与输出
+      # 完整落盘再筛，失败也不阻塞 PR（与 Linux 侧同名步骤的观测定位一致）。
+      - name: Report coverage matrix numbers
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          QT="$(cygpath -u "$QT_ROOT_PATH")"
+          export PATH="$(cygpath -u 'sdk/3rdparty/dist/windows_x86_64_gcc_debug/bin'):$QT/5.14.2/mingw73_64/bin:$QT/Tools/mingw730_64/bin:$PATH"
+          ./build/sdk/test/UnitTests.exe -ts=MediaCoverage -s > coverage.log 2>&1
+          echo "UnitTests rc=$?  lines=$(wc -l < coverage.log)"
+          head -20 coverage.log
+          grep -E "declared |coverage matrix covered" coverage.log
+
+      # 冷缓存才需要回写；actions/cache 的 post 步骤只在 job 成功时保存，
+      # 这里显式保存，避免「构建成功但后续测试红」时整轮 90 分钟白跑。
+      # 条件挂在 setup 的 outcome 上：只有第三方库真的构建成功才值得缓存。
+      #
+      # !cancelled() 不能省：if 里不出现任何状态检查函数时，Actions 会自动套一层
+      # 隐式 success()，于是「测试红」会让本步骤连带被跳过——正好是它要救的场景
+      # （2026-11-07 run 42341337832 就是这样，构建成功但缓存没写回，白等一轮冷构建）。
+      - name: Save 3rdparty dist cache
+        if: (!cancelled()) && steps.setup.outcome == 'success' && steps.dist.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
+          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat') }}

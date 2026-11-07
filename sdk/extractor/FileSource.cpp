@@ -9,7 +9,11 @@
 using namespace sdk_utils;
 
 FileSource::FileSource(const char *filename)
-    : m_file(sdk_utils::toNativeString(filename), std::ios::binary)
+#ifdef _WIN32
+    : m_fp(nullptr)
+#else
+    : m_file()
+#endif
     , m_offset(0)
     , m_length(-1)
     , m_name("<null>")
@@ -21,6 +25,28 @@ FileSource::FileSource(const char *filename)
     }
 
     LOG_DEBUG(LOG_TAG, "%s", filename ? filename : "(null)");
+
+#ifdef _WIN32
+    // 宽字符路径：与系统代码页无关，非 ANSI 的文件名（中文、日文、emoji）都能打开。
+    if (filename && filename[0] != '\0') {
+        const std::wstring wide = sdk_utils::toWideString(filename);
+        if (!wide.empty()) {
+            m_fp = _wfopen(wide.c_str(), L"rb");
+        }
+    }
+    if (m_fp != nullptr) {
+        if (_fseeki64(m_fp, 0, SEEK_END) == 0) {
+            m_length = static_cast<int64_t>(_ftelli64(m_fp));
+            _fseeki64(m_fp, 0, SEEK_SET);
+        }
+        LOGI("file size: %lld", (long long)m_length);
+    } else {
+        LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename ? filename : "(null)");
+    }
+#else
+    if (filename && filename[0] != '\0') {
+        m_file.open(filename, std::ios::in | std::ios::binary);
+    }
     if (m_file.is_open()) {
         m_file.seekg(0, std::ios::end);
         m_length = m_file.tellg();
@@ -29,23 +55,40 @@ FileSource::FileSource(const char *filename)
     } else {
         LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename ? filename : "(null)");
     }
+#endif
 }
 
 FileSource::~FileSource()
 {
+#ifdef _WIN32
+    if (m_fp != nullptr) {
+        std::fclose(m_fp);
+        m_fp = nullptr;
+    }
+#else
     if (m_file.is_open()) {
         m_file.close();
     }
+#endif
+}
+
+bool FileSource::isOpen() const
+{
+#ifdef _WIN32
+    return m_fp != nullptr;
+#else
+    return m_file.is_open();
+#endif
 }
 
 status_t FileSource::initCheck() const
 {
-    return m_file.is_open() ? OK : NO_INIT;
+    return isOpen() ? OK : NO_INIT;
 }
 
 ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
 {
-    if (!m_file.is_open()) {
+    if (!isOpen()) {
         return NO_INIT;
     }
     std::lock_guard<std::mutex> lock(m_lock);
@@ -60,6 +103,20 @@ ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
         }
     }
 
+#ifdef _WIN32
+    if (_fseeki64(m_fp, offset + m_offset, SEEK_SET) != 0) {
+        LOG_ERROR(LOG_TAG, "seek to %lld failed", (long long)(offset + m_offset));
+        return UNKNOWN_ERROR;
+    }
+
+    const size_t got = std::fread(data, 1, size, m_fp);
+    if (got != size && std::ferror(m_fp) != 0) {
+        LOG_ERROR(LOG_TAG, "read file failed");
+        return FAILED_TRANSACTION;
+    }
+
+    return static_cast<ssize_t>(got);
+#else
     m_file.seekg(offset + m_offset);
     if (m_file.fail()) {
         LOG_ERROR(LOG_TAG, "seek to %lld failed", (long long)(offset + m_offset));
@@ -74,13 +131,14 @@ ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
     }
 
     return size;
+#endif
 }
 
 status_t FileSource::getSize(off64_t *size)
 {
     std::lock_guard<std::mutex> lock(m_lock);
 
-    if (!m_file.is_open()) {
+    if (!isOpen()) {
         return NO_INIT;
     }
 
