@@ -12,7 +12,7 @@
 让本地音频文件的播放满足**边解边播**这一数据供给契约：解码与消费并行推进，播放期间为当前曲目持有的音频数据量不随素材时长增长。
 
 - **只含本地文件**。网络流 / URL / HTTP 数据源 / 边下边播 / 断线重连不在范围内。
-- 播放器状态机与 app UI（`PlayerState` 三态、`durationMs == 0` 的显示与 seek 禁用、事件回调语义）不在范围内，留给独立地图。
+- 播放器状态机与 app UI（`PlayerState` 三态、`durationMs == 0` 的显示与 seek 禁用、事件回调语义）不在本图范围内；**该独立地图 [#75](https://github.com/wt159/SoundBridge/issues/75) 已于 2026-11-07 收口**，结论见 [`doc/player-state-contract.md`](player-state-contract.md) 与 [ADR 0004](../docs/adr/0004-player-state-three-values.md)。
 - 设备抽象 `IAudioSink`、听感与重采样质量、格式扩展与提取器插件化不在范围内。
 - 用例与断言的实现不在本图内；本文件只给判据与决策。
 - **#8「support stream programme」保持 OPEN** 作目的地锚点。其正文 *Streaming decoding and playback scheme for local music players* 讲的是本地文件边解边播，旧文档里的「网络流」是措辞偏差。
@@ -62,6 +62,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 | EOS 汇总 | 解码侧单一汇总，包耗尽 + ring 排空后发一次 | 不新增错误码 / 时机；已消费 PCM 算数、不回滚不重播 |
 
 基准 = `MusicPlayerState`；`PlayerState` 与 `StreamDecoderState` 只作投影 / 诊断，**不新增状态机**。
+
+> **2026-11-07 术语回填（地图 #75）**：本表中的 `IDLE / ERROR / SWITCHING / SEEKING` 是**播放任务状态**（单次任务的解码 / 切换诊断），不是对外播放状态；对外只有 `Playing / Paused / Stopped` 三态，切歌前后均为 Playing、不闪 Stopped，错误由 `onError` 表达。术语见 `GLOSSARY.md`，契约见 [`doc/player-state-contract.md`](player-state-contract.md) §2；**本迁移表一字不动**。
 
 ### 4.2 生命周期硬约束
 
@@ -119,7 +121,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 | 顺序重放 | 其余 9 种 | 重启解码任务，`nextPacket()` 从起点按包迭代到目标、丢弃目标前 PCM | 受下述判据约束 | 是（不重建整首 payload 缓存） | 峰值不随目标位置增长（常驻上界） |
 
 - 对外只保留按时间 `seekToMs`，目标 = 期望的已消费 PCM 时间（与 `positionMs` 同源）；不引入按包 / 按采样的第二套 API，也不引入相对定位。
-- `durationMs == 0` → 显式返回现有 `INVALID_OPERATION`（`pos == 0` 例外）；目标超出可解内容 → EOS 汇总 `DataTruncated`。**降级只有这两类，不写「不支持 seek」**，seek 不新增错误码。
+- `durationMs == 0` → 内部按现有 `INVALID_OPERATION` 降级（`pos == 0` 例外）；目标超出可解内容 → EOS 汇总 `DataTruncated`。**降级只有这两类，不写「不支持 seek」**，seek 不新增错误码。
+  - **2026-11-07 公开契约回填（地图 #75）**：`INVALID_OPERATION` 实为 `sdk_utils::status_t = -ENOSYS`，是内部降级码、**不对外暴露**；`soundbridge::Player::seek()` 保持 `void`，该场景对调用方表现为「空操作」：位置不回退、不发新回调、不改状态、不发 `onError`。调用方以 `duration() == 0` 判断不可 seek，不引入能力位。见 [`doc/player-state-contract.md`](player-state-contract.md) §7。
 - 精度：① `|实际首帧时间 − target| ≤ max(target×1%, 150ms)`（复用 `RealMediaFixture::coverageToleranceMs()` 形式、不新造数值）；② `|seek 后交付 PCM 字节数 − 整段解码从目标点起的期望字节数| ≤ 同一容差折算字节数`。**不逐位一致**（现有零容差差分比的是累计标量，PCM 在 `drainUntilSettled()` 丢弃；逐位需新增能力且有损格式会假红）。
 - SEEKING 静音沿用 #48 豁免；ring reset 时序、join、`Abort` 传播归第 4 节；EOS 用 `m_seekBaseMs + 解出时长` 与标称时长比，`durationMs == 0` 时 `haveNominal=false` 不报 `DataTruncated`。
 
@@ -208,7 +211,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - 地图 #42 已关闭、第 9 节编号已落地、`GLOSSARY.md` 的「边解边播」词条已提交。
 - 跨平台改动（条件编译 / POSIX 头 / 文件路径 API）必须等 Linux `sdk-coverage` 编译过；本地 Windows 全绿不算完成（根 `AGENTS.md` 约定）。
 - CI 仍按 #52 定案：不拆快集、`TIMEOUT 180` 不动、不新增耗时 gate。
-- 实现属**图外新 effort**：本图 Notes 明确把用例与断言实现、播放器状态机、网络流划到界外；这些不要混进 `/to-tickets` 的票里。
+- 实现属**图外新 effort**：本图 Notes 明确把用例与断言实现、播放器状态机、网络流划到界外；这些不要混进 `/to-tickets` 的票里。其中「播放器状态机与公开 API 契约」已由独立地图 [#75](https://github.com/wt159/SoundBridge/issues/75) 于 2026-11-07 收口，规格与实现清单见 [`doc/player-state-contract.md`](player-state-contract.md) §10。
 - 仓库约定：CRLF、`git add` + `commit` + `push`、提交信息前缀 `feat:`/`fix:`/`build:`/`docs:`/`chore:`；Grep 必须限定 `path`（`sdk/3rdparty` 有 8 万+ 已追踪文件）。
 
 ## 11. 已知代价与事实更正
