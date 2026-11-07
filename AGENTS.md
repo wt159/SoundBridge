@@ -96,6 +96,12 @@ cmake --build build --target package_portable
 
 ## NOTES
 - `doc/` 与 `README.md` 提供背景，但真实构建/测试入口以当前 `CMakeLists.txt` 为准。
+- **CI 有两个工作流**：`sdk-coverage`（Linux x86_64，含覆盖率门禁）与 `sdk-windows`（windows-latest + MinGW）。
+  两者的 `push` 都只对 `master` 生效，分支验证走 `pull_request`；需要单独验证某个分支用
+  `gh workflow run <name> --ref <branch>`。Windows 侧的 3rdparty 走 `sdk/3rdparty/dist` 缓存，
+  缓存命中约 10~15 分钟，冷缓存 40~90 分钟；改动 `sdk/3rdparty` 的构建输入（CMakeLists / build_option /
+  toolchain / ffmpeg 与 boost 构建脚本）会让缓存失效。Windows 任务用脚本装好的 CMake 3.31.6 绝对路径，
+  因为 runner 自带的 CMake 4.x 对 `cmake_minimum_required(3.5)` 直接报错。
 - `sdk/cosmos/` 是 header-only 工具区；规则不够特殊，暂不单独挂子 AGENTS。
 - `music/` 里包含真实媒体样本；涉及 extractor / decode 的改动，优先补 `sdk_media_smoke` 或 `sdk_extractor_spec_tests`。
 - 用户口头说“提交一版”时，默认含义是：`git add` + `git commit` + `git push`；除非用户显式缩小范围，否则按这三个步骤执行。

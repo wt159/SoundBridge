@@ -159,9 +159,13 @@ if (-not $SkipThirdParty) {
     Push-Location $tpBuild
     try {
         # -DVERSION 用于跳过 g3log 中依赖 git 的版本号推导（该处嵌套引号在 Windows 上不可靠）
+        # -DVAR=值 必须整体加引号：PowerShell 对未加引号的 -Name=Value 令牌不做变量展开，
+        # 会把 -DCMAKE_BUILD_TYPE=$BuildType 原样传给 cmake，导致 CMAKE_BUILD_TYPE 字面量是
+        # "$BuildType"、dist 目录名变成 windows_x86_64_gcc_$buildtype，而 '$' 在 mingw32-make
+        # 里是变量前缀，最终 include 路径被吃成空目录（2026-11-07 Windows CI 变红的根因）。
         cmake .. -G "MinGW Makefiles" `
-            -DCMAKE_BUILD_TYPE=$BuildType `
-            -DCMAKE_TOOLCHAIN_FILE="$RepoRoot\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake" `
+            "-DCMAKE_BUILD_TYPE=$BuildType" `
+            "-DCMAKE_TOOLCHAIN_FILE=$RepoRoot\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake" `
             -DVERSION=2.1.0 -UBUILD_OPTION_G3LOG -UBoost_USE_STATIC_LIBS
         if ($LASTEXITCODE -ne 0) { throw "第三方库配置失败" }
 
@@ -192,9 +196,10 @@ $buildDir = Join-Path $RepoRoot "build"
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 Push-Location $buildDir
 try {
+    # 同样必须整体加引号，原因见上面第三方库那处的注释。
     cmake .. -G "MinGW Makefiles" `
-        -DCMAKE_BUILD_TYPE=$BuildType `
-        -DCMAKE_TOOLCHAIN_FILE="$RepoRoot\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake"
+        "-DCMAKE_BUILD_TYPE=$BuildType" `
+        "-DCMAKE_TOOLCHAIN_FILE=$RepoRoot\cmake\toolchain\toolchain.windows_x86_64_mingw.cmake"
     if ($LASTEXITCODE -ne 0) { throw "根工程配置失败" }
 } finally {
     Pop-Location
