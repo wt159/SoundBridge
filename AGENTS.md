@@ -99,7 +99,8 @@ cmake --build build --target package_portable
 - **CI 有两个工作流**：`sdk-coverage`（Linux x86_64，含覆盖率门禁）与 `sdk-windows`（windows-latest + MinGW）。
   两者的 `push` 都只对 `master` 生效，分支验证走 `pull_request`；需要单独验证某个分支用
   `gh workflow run <name> --ref <branch>`。Windows 侧的 3rdparty 走 `sdk/3rdparty/dist` 缓存，
-  实测冷缓存约 24 分钟、缓存命中约 7.5 分钟（2026-11-07，run 42346594655）；改动 `sdk/3rdparty` 的构建输入（CMakeLists / build_option /
+  实测冷缓存约 24 分钟、缓存命中约 7 分钟（2026-11-07：run 42346594655 热 7m33s；改为只装
+  qtbase 后 run 42372880538 热 7m13s，setup 那一步 141s → 97s）；改动 `sdk/3rdparty` 的构建输入（CMakeLists / build_option /
   toolchain / ffmpeg 与 boost 构建脚本）会让缓存失效。Windows 任务用脚本装好的 CMake 3.31.6 绝对路径，
   因为 runner 自带的 CMake 4.x 对 `cmake_minimum_required(3.5)` 直接报错。
 - **Qt 只装 qtbase，不需要全量**。项目只在 app 侧 `find_package(Qt5 Widgets)`；`UnitTests.exe`
