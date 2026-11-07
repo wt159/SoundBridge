@@ -24,8 +24,9 @@
 | 建联接用 PowerShell，不要 `cmd //c` / `mklink` | 仍有效 |
 | `-j4` 而不是 `-j8`（多个 implementer 并行编译） | 视并行度而定，单人开发可以 `-j8` |
 
-已过时：集成分支名、`ctest -R sdk_unit_tests` 跑全量（现在是 `sdk_unit_tests` / `sdk_badinput_tests` /
-`sdk_streaming_tests` / `sdk_interaction_tests` 四组）、`.worktrees/_shared/` 共享笔记机制。
+已过时：集成分支名、`ctest -R sdk_unit_tests` 跑全量（现在是 14 个目标：7 个 `TestSdkSuite` 分组 +
+快集 / 坏输入四段 / `sdk_streaming_tests` / `sdk_interaction_tests`，2026-11-07 起 `sdk-windows.yml`
+用 `ctest -j4` 跑）、`.worktrees/_shared/` 共享笔记机制。
 
 ---
 

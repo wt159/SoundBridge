@@ -10,6 +10,7 @@
 #include "LogWrapper.h"
 #include "MusicPlayer.h"
 #include "fixtures/RealMediaFixture.hpp"
+#include "fixtures/TestProcess.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -140,10 +141,11 @@ bool check(bool condition, const char *message)
 
 bool init_logger()
 {
-    std::string log_file  = "sdk_test_suite";
+    std::string log_file  = "sdk_test_suite_" + std::to_string(sb_test::processId());
     std::string log_dir   = "./log";
     constexpr int k5MB    = 5 * 1024 * 1024;
     constexpr int k5Files = 5;
+    sb_test::ensureDirectory(log_dir);
     LogWrapper::getInstanceInitialize(log_dir, log_file, k5MB, k5Files);
     LOG_INFO("TestSdkSuite", "logger initialized");
     return check(LogWrapper::getInstance() != nullptr, "LogWrapper init");

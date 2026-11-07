@@ -108,11 +108,13 @@ cmake --build build --target package_portable
   avcodec / FLAC / vorbis / MinGW 运行时）。`setup_windows_env.ps1` 默认走 `--archives qtbase`，
   需要 `windeployqt`（`package_portable` target）时加 `-FullQt`。脚本用 `bin\qmake.exe` 判断
   「Qt 是否已装」，不能用 `windeployqt.exe`——后者在 qttools 里，精简安装时不存在。
-- **ctest 不要并行**。`-j4` 实测：不加锁时 dummy 驱动下 10 次里 1 次让 `sdk_unit_tests` 撞满
-  180s TIMEOUT（正常 25s），非 dummy 下 7 次里 2 次失败；给 unit 加 `RUN_SERIAL` 后仍 10 次里
-  1 次让 `sdk_interaction_tests` 失败。并发敏感点不止一个，且 unit 与 interaction 都持有音频
-  设备句柄——interaction 组本来就是为「设备打不开或播放卡住不连累快集」单独拆出来的，并行等于
-  把这个隔离拆掉。收益 205.88s → 124s，不值一个约 10% 的假红。
+- **ctest 可以并行，前提是「每个测试进程只写自己的文件」**。2026-11-07 之前 `-j4` 的假红全部来自
+  这一点：四个 `UnitTests` 进程共用 `./log/unittest_<秒级时间戳>.log`，同一秒启动就撞名，先打开的
+  那个轮转/删除时另一个 `open` 直接 EIO（实测 5 轮 1 次，报 `Failed to open file for writing:
+  Input/output error`）。现在日志名与临时目录都带进程号（`sdk/test/fixtures/TestProcess.hpp` 的
+  `sb_test::processId()`），坏输入 55 例按实测耗时切成四段（24/27/15/28 s）摊到各核，
+  `sdk-windows.yml` 用 `ctest -j4`。实测：串行 197.58s → `-j4` 58~76s；`-j4` 连跑 10 轮、
+  `-j8` 超订连跑 5 轮全绿。新增用例若往固定名字的共享路径写东西，会把这个稳定性还回去。
 - **`if:` 不含状态检查函数时，Actions 会自动套一层隐式 `success()`**。所以「构建成功就回写缓存」这类
   步骤必须显式写 `(!cancelled()) && ...`，否则前面的用例一红它就跟着被跳过（2026-11-07 踩过：
   冷构建 24 分钟做完、缓存没写回，下一轮又白等一次冷构建）。

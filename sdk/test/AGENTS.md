@@ -9,9 +9,9 @@ sdk/test/
 ├── CMakeLists.txt            # 所有 CTest 名称都在这里注册
 ├── TestSdkSuite.cpp          # 自定义 check(...) 框架
 ├── unit/*.cpp                # doctest 主力测试；看 unit/AGENTS.md
-├── fixtures/                 # 真实媒体 / 临时目录夹具
+├── fixtures/                 # 真实媒体 / 并行隔离工具
 │   ├── RealMediaFixture.hpp  # 真实媒体路径获取（推荐使用）
-│   └── TempDirFixture.hpp    # 临时目录固件
+│   └── TestProcess.hpp       # processId() / ensureDirectory()：并行测试的路径隔离
 ├── mocks/                    # 音频 mock
 └── thirdparty/doctest/       # 本地 doctest 头文件；不要手改
 ```
@@ -92,6 +92,16 @@ ctest --test-dir build -R sdk_player_tests --output-on-failure
 ctest --test-dir build -R sdk_extractor_spec_tests --output-on-failure
 ctest --test-dir build -R sdk_media_smoke --output-on-failure
 ```
+
+## CTest 分组与并行
+`ctest -R sdk_` 共 14 个目标：7 个 `TestSdkSuite` 分组 + 7 个 `UnitTests` 分组
+（快集 / 坏输入四段 / 边解边播 / 交互）。`sdk-windows.yml` 用 `ctest -j4` 跑。
+
+**并行前提：每个测试进程写出去的路径必须带进程号**（`fixtures/TestProcess.hpp` 的
+`sb_test::processId()`）。反例：曾经四个 `UnitTests` 进程共用 `./log/unittest_<秒级时间戳>.log`，
+同一秒启动就撞名字，先打开的那个轮转时另一个 `open` 直接 EIO。
+`TempFileSet`（`test_bad_input.cpp`）、`TempMediaDir`（`test_player_integration.cpp`）
+都已经是 pid 前缀；新增临时目录请照抄。
 
 ## NOTES
 - `doc/testing_arch_design.md` 是测试设计背景；当前命令与注册名仍以本目录 `CMakeLists.txt` 为准。

@@ -911,7 +911,14 @@ bool patchMp4StsdSpec(std::vector<char> &data, uint32_t sampleRate, uint16_t cha
 
 } // namespace
 
-TEST_SUITE("BadInput")
+// 55 条用例共 94 s，是串行 ctest 里最大的一块，单进程跑完会拖住整条并行骨架。
+// 按实测耗时（`-d`）切成四段，套件名即分段含义，单段约 24 / 27 / 15 / 28 s：
+//   Rejection  错误上报、批量拒绝、头部与工厂校验、各种截断
+//   Frames     坏帧「跳过继续」与不可解包上限
+//   Duration   坏帧不可检的静音、时长与规格声明的真伪
+//   Tags       标签定位 clamp 与容器字段不外泄
+// 切分只影响 ctest 调度，用例一条不少、断言一条不改。
+TEST_SUITE("BadInput Rejection")
 {
     TEST_CASE("corrupted mid-stream reports DataCorrupted after audio was heard")
     {
@@ -1773,7 +1780,10 @@ TEST_SUITE("BadInput")
         CHECK(!bad.opened);      // 播放期包耗尽：唯一出口兜底拒绝后没有产出
         CHECK(bad.bytes == 0);   // ring 累计 0 字节（数值不变）
     }
+} // TEST_SUITE("BadInput Rejection")
 
+TEST_SUITE("BadInput Frames")
+{
     // ---- 以下用例来自 #37（坏帧：跳过继续）----
     //
     // 规格 4.1 的判别原则：坏帧之后还有数据，截断之后没有。所以判据只有两条——
@@ -1953,7 +1963,10 @@ TEST_SUITE("BadInput")
         CHECK(devBytesToMs(bad.bytes) * 10 <= goodMs * 7);
         CHECK(bad.code == sdk::ErrorCode::DataCorrupted);
     }
+} // TEST_SUITE("BadInput Frames")
 
+TEST_SUITE("BadInput Duration")
+{
     // 规格 F4 / 第 9 节：wav、aiff、mkv 的坏帧**不可检测**——坏字节直接变成错误样本，
     // 长度不变、内容变了，没有任何帧级校验。这三条是反向用例：将来谁加了假信号，它们就红。
     TEST_CASE("wav bad frame stays silent because it is undetectable")
@@ -2181,7 +2194,10 @@ TEST_SUITE("BadInput")
         // 同一个文件被当成半速播放：听起来长了一倍（不是「检测出来」，是慢放）。
         CHECK(after.decodedMs + after.decodedMs / 10 >= before.decodedMs * 2);
     }
+} // TEST_SUITE("BadInput Duration")
 
+TEST_SUITE("BadInput Tags")
+{
     // ---- 以下用例来自 #40（tag 定位 clamp）----
 
     // 规格 7.2 第 2 条 / 7.3 M2：真正坏事的不是「超大」，是「声明与文件长度矛盾」。
