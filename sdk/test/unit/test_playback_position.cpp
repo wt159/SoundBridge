@@ -125,8 +125,13 @@ TEST_SUITE("PlaybackPosition")
     TEST_CASE("seek lands on the target and ring reset keeps the segment base")
     {
         AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
-        AudioSpec spec = makeSpec(3000);
-        PcmExtractor extractor(spec, pcmBytesForMs(3000));
+        // 素材必须远大于 ring（kDefaultCapacity = 256 KB）。3 s 的 PCM 只有 288 KB，
+        // 仅比 ring 大 26 KB：主线程 drain 出 500 ms 空间后，解码线程会把剩下的一口气
+        // 写完并 EOS 退出，之后的 seekToMs 没有任何线程接，位置永远停在 500 ms——
+        // 实测 20 次里有 2 次踩到这个竞态（REQUIRE( 500 == 2000 )）。30 s 是 ring 的
+        // 11 倍，seek 之前不可能走到 EOS。
+        AudioSpec spec = makeSpec(30000);
+        PcmExtractor extractor(spec, pcmBytesForMs(30000));
         AudioStreamDecoder decoder(&ring, spec);
 
         REQUIRE(decoder.start(&extractor) == sdk_utils::OK);

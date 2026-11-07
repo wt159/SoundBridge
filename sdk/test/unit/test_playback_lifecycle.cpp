@@ -169,11 +169,19 @@ TEST_SUITE("PlaybackLifecycle")
         REQUIRE(decoder.start(&extractor) == sdk_utils::OK);
 
         decoder.seekToMs(900);
-        // 解码线程把状态置成 SEEKING 之后才开始清 ring；等到它即说明第一次 seek 已被取走。
+        // 等到第一次 seek 被解码线程取走，判据给两个：窗口出现，或者它已经落地。
+        //
+        // 只等 SEEKING 是错的：这个窗口只有 12 ms——解码线程进入后 sleep_for(12ms) 才去
+        // 清 ring；而 waitUntil 的 1 ms 采样在 Windows 上会退到 15.6 ms 计时器粒度，
+        // 高负载下主线程调度还会更晚，窗口可以整段落在两次采样之间。那时再等 5 s 也等
+        // 不到（CI 与本机全量并行时都红过）。「位置变成 900」是同一件事的可观察结果，
+        // 且不受采样粒度影响，两种情形都说明第一次 seek 已被取走、可以发第二次了。
         REQUIRE_MESSAGE(waitUntil([&decoder]() {
-                            return decoder.state() == StreamDecoderState::SEEKING;
+                            return decoder.state() == StreamDecoderState::SEEKING
+                                || decoder.positionMs() == 900;
                         }, 5000),
-                        "解码线程没有进入 SEEKING");
+                        "第一次 seek 既没进 SEEKING 窗口也没落地，位置停在 "
+                            << decoder.positionMs() << " ms");
         decoder.seekToMs(1900);
 
         // 后一次 seek 必须覆盖前一次：段基准落在 1900 ms。
