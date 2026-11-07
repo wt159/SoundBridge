@@ -63,18 +63,29 @@ jobs:
       # 脚本本身是仓库里已验证的 Windows 一键环境（CMake 3.31.6 + Qt 5.14.2 + MinGW 7.3.0
       # + 可选的三方库构建）。这里不另写一套安装逻辑，避免 CI 与本地环境漂移。
       # 缓存命中时跳过三方库构建；根工程配置脚本总会做。
+      #
+      # 必须用**哈希表** splat：脚本的参数块里 $QtRoot / $ToolsRoot / $CmakeVersion ...
+      # 都是位置参数，数组 splat（$extra = @(); $extra += "-SkipThirdParty"）会把那个字符串
+      # 按位置塞进第一个未绑定参数，实测 $CmakeVersion 变成 "-SkipThirdParty"，
+      # 下载 URL 拼成 v-SkipThirdParty/cmake--SkipThirdParty-windows-x86_64.zip 然后 404。
       - name: Setup toolchain (Qt / MinGW / CMake) and 3rdparty
         id: setup
         shell: pwsh
         run: |
-          $extra = @()
+          $params = @{
+            QtRoot    = $env:QT_ROOT
+            ToolsRoot = $env:TOOLS_ROOT
+            Jobs      = 4
+            QtMirror  = 'https://download.qt.io'
+            PyPIIndex = 'https://pypi.org/simple'
+          }
           if ("${{ steps.dist.outputs.cache-hit }}" -eq "true") {
             Write-Host "3rdparty dist cache hit: skip building dependencies"
-            $extra += "-SkipThirdParty"
+            $params.SkipThirdParty = $true
           } else {
             Write-Host "3rdparty dist cache miss: building dependencies from source"
           }
-          ./scripts/setup_windows_env.ps1 -QtRoot $env:QT_ROOT -ToolsRoot $env:TOOLS_ROOT -Jobs 4 -QtMirror https://download.qt.io -PyPIIndex https://pypi.org/simple @extra
+          ./scripts/setup_windows_env.ps1 @params
 
       # 每个 step 都是新进程，脚本内改的 $env:Path 不会传给后续步骤，必须显式导出。
       # 注意顺序：这些 PATH 必须在配置根工程之前就位——sdk/test/CMakeLists.txt 会把
