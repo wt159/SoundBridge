@@ -4,9 +4,9 @@ name: sdk-windows
 # 2026-11-06 那个 seek 差异是 Linux 先撞出来的，反方向同样成立。
 #
 # 成本说明：3rdparty（Boost / FFmpeg / SDL2 / FLAC / Ogg / Vorbis / zlib / g3log / g3sinks）
-# 在 Windows 上只能源码构建，首次约 40~90 分钟。因此把 dist 目录整体缓存，
-# 缓存命中时走 setup_windows_env.ps1 的 -SkipThirdParty，单次约 10~15 分钟。
-# 缓存键只包含第三方构建输入，业务代码改动不会让缓存失效。
+# 在 Windows 上只能源码构建，冷缓存一轮约 24 分钟；把 dist 目录整体缓存后，
+# 热缓存一轮约 7~8 分钟（2026-11-07 实测：run 42341337832 冷 24m05s，
+# run 42346594655 热 7m33s）。缓存键只包含第三方构建输入，业务代码改动不会让缓存失效。
 on:
   push:
     branches:
@@ -112,23 +112,6 @@ jobs:
         run: |
           & "$env:CMAKE_BIN\cmake.exe" --build build --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # 诊断用：素材里有一批中文文件名，Windows runner 上这批文件打不开而 ASCII 名的正常。
-      # 先确认是「检出时文件名被改写」还是「打开时的编码转换失败」——列目录 + 看 git 是否认为有改动。
-      - name: Diagnose media filenames (non-gating)
-        if: always()
-        shell: bash
-        continue-on-error: true
-        run: |
-          echo "=== git status（若检出改写了文件名，这里会显示删除）==="
-          git status --porcelain | head -30
-          echo "=== git ls-files（仓库里的名字）==="
-          git ls-files music | head -25
-          echo "=== 磁盘上的名字（python repr，看真实码点）==="
-          python -c "import os; [print(repr(n)) for n in sorted(os.listdir('music'))[:25]]"
-          echo "=== 纯 ASCII 与中文各挑一个做 open 测试 ==="
-          python -c "import io;print(io.open('music/music.wav','rb').read(4))"
-          python -c "import io,glob;f=[p for p in glob.glob('music/*.ogg')];print(f);print(io.open(f[0],'rb').read(4) if f else 'no ogg')"
 
       - name: Run SDK tests
         shell: pwsh
