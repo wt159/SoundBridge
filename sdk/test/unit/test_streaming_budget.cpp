@@ -91,6 +91,35 @@ TEST_SUITE("StreamingBudget")
             return decoder.state() == StreamDecoderState::SEEKING;
         }
 
+        // 发起 seek，并紧轮询直到 SEEKING 窗口打开，在窗口打开处补记一次静音填充。
+        //
+        // 为什么要紧轮询：SEEKING 窗口的长度是固定的——解码线程进入 SEEKING 后会
+        // sleep 12 ms（AudioStreamDecoder.cpp 的 seek 分支），窗口就这么长。而主循环
+        // 是 `sleep_for(5ms)` 一次采样，Windows 上这个睡眠可能落到 15.6 ms 的计时器粒度，
+        // 于是 12 ms 的窗口可以整个落在两次采样之间，「窗口内计数」就变成了依赖机器
+        // 定时器行为的断言（CI 上实测漏过一次：silenceFills == 0，而 seek 本身是成功的）。
+        // 这里从 seek 发出的同一刻开始逐次读 state()（单次约 30 ns），本地 10/10 都在
+        // 窗口打开后几微秒内命中，不再依赖 sleep 的实际粒度。
+        //
+        // 只补记「一次」是刻意的：计数器口径是「消费端在窗口内交付了一块静音」，
+        // 紧轮询里的每一次读不是一次交付，多记会把数值变成与机器速度相关的随机量。
+        // 窗口内后续的记账仍由主循环按原口径完成。
+        void seekAndCatchSilenceWindow(AudioStreamDecoder &decoder, uint64_t targetMs)
+        {
+            decoder.seekToMs(targetMs);
+            // 上限 200 万次读：只防「seek 因为超界之类的原因根本不落地」时死循环，
+            // 正常路径都在窗口打开的第一时间就 return。
+            for (int spin = 0; spin < 2000000; ++spin) {
+                if (decoder.state() == StreamDecoderState::SEEKING) {
+                    decoder.noteSilenceFill();
+                    return;
+                }
+                if (decoder.positionMs() == targetMs) {
+                    return; // 窗口已经整段过去（或本来就无需等待），交给主循环判落地
+                }
+            }
+        }
+
         // 一次播放的可选驱动参数。
         struct PlaybackPlan {
             // 消费端取走这么多字节后发起一次 seek；0 表示不 seek。
@@ -140,7 +169,7 @@ TEST_SUITE("StreamingBudget")
                     seeked                 = true;
                     counting               = false;
                     observation.seekIssued = true;
-                    decoder.seekToMs(plan.seekTargetMs);
+                    seekAndCatchSilenceWindow(decoder, plan.seekTargetMs);
                 }
 
                 if (!counting) {
@@ -896,7 +925,10 @@ TEST_SUITE("StreamingBudget")
         PlaybackObservation seekRun
             = playWholeTrack(fixture.mediaDir(), kShortOgg, ".ogg", 60000, seeking);
         REQUIRE(seekRun.opened);
-        CHECK_MESSAGE(seekRun.metrics.silenceFills > 0, "SEEKING 窗口里的静音填充没有计数");
+        CHECK_MESSAGE(seekRun.metrics.silenceFills > 0,
+                      "SEEKING 窗口里的静音填充没有计数（seekIssued="
+                          << seekRun.seekIssued << ", seekCompleted=" << seekRun.seekCompleted
+                          << "）");
         CHECK_MESSAGE(seekRun.bytes > 0, "seek 之后没有继续交付 PCM");
     }
 
