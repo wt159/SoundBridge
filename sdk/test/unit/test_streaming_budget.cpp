@@ -65,6 +65,9 @@ TEST_SUITE("StreamingBudget")
             bool seekCompleted               = false;
             uint64_t firstPcmMsAfterSeek     = 0;
             size_t bytesAfterSeek            = 0;
+            // O1（票 #105）：稳态窗口内 S(t)/P(t) 同步快照序列，只记录、不判红绿。
+            // 本节数值只作观测记录，**不作为失败门禁**；记录失败（素材缺失 / 命令异常 / 无输出）不得让 CI 失败，也不得被解读为判据通过。
+            std::vector<AudioStreamDecoder::ClockSnapshot> clockSamples;
         };
 
         // 把 ring 里可读的 PCM 全部取走；counter 非空时累加取走的字节数。
@@ -164,6 +167,12 @@ TEST_SUITE("StreamingBudget")
             const bool hasSeek = plan.seekAfterBytes > 0;
             bool counting      = true;
             int elapsed        = 0;
+            // O1：按 §4.2 的稳态播放进度间隔取快照（每 10% 标称时长一点，至少 5 点）。
+            // 只在 DECODING 的非静默窗口采，避开启动 / seek / EOS；不新增播放、不新增断言。
+            const uint64_t nominalMs    = decoder.durationMs();
+            const uint64_t sampleStepMs = nominalMs > 0
+                ? std::max<uint64_t>(1, nominalMs / 10) : 0;
+            uint64_t nextSampleMs = 0;
             while (elapsed <= timeoutMs) {
                 if (!seeked && hasSeek && observation.bytes >= plan.seekAfterBytes) {
                     seeked                 = true;
@@ -194,6 +203,16 @@ TEST_SUITE("StreamingBudget")
                     size_t *afterSeek
                         = (seeked && counting) ? &observation.bytesAfterSeek : nullptr;
                     observation.bytes += drainRing(ring, buf, afterSeek);
+                    if (sampleStepMs > 0 && counting && !hasSeek
+                        && decoder.state() == StreamDecoderState::DECODING
+                        && observation.clockSamples.size() < 16) {
+                        // 单次调用同返 S/P，禁止两值异步各取一次（规格 §4.4）。
+                        const AudioStreamDecoder::ClockSnapshot snap = decoder.clockSnapshot();
+                        if (snap.playMs >= nextSampleMs) {
+                            observation.clockSamples.push_back(snap);
+                            nextSampleMs = snap.playMs + sampleStepMs;
+                        }
+                    }
                 }
 
                 StreamDecoderState state = decoder.state();
@@ -213,6 +232,15 @@ TEST_SUITE("StreamingBudget")
                 // 判据要比「整首解出多少字节」，就把尾巴一起排掉。
                 size_t *afterSeek = (seeked && counting) ? &observation.bytesAfterSeek : nullptr;
                 observation.bytes += drainRing(ring, buf, afterSeek);
+            }
+            // O1：快照序列只打到 stdout，行内刻意不含 CI 观测 step 的六个 grep 关键字，
+            // 因此不会改变 O5 归档的每 run 24 行基线；不写任何断言 / 阈值 / add_test。
+            for (size_t i = 0; i < observation.clockSamples.size(); ++i) {
+                const AudioStreamDecoder::ClockSnapshot &snap = observation.clockSamples[i];
+                std::printf("[clock-snapshot] #%llu src=%llu play=%llu (observation only, non-gating)\n",
+                            static_cast<unsigned long long>(i),
+                            static_cast<unsigned long long>(snap.sourceMs),
+                            static_cast<unsigned long long>(snap.playMs));
             }
             decoder.stop();
             return observation;

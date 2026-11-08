@@ -65,6 +65,19 @@ public:
     // 本票只要求可读、可复现，不在这里对任何数值判红绿。
     // 线程安全：可从消费线程读取，不影响解码线程。
     StreamMetrics metrics() const;
+
+    // O1（票 #105）：drift 的最小取数点（规格 §4.4）。S(t) / P(t) 必须在
+    // 同一次调用里取，分成两次异步采样会把调度抖动凭空算成 drift。
+    // sourceMs = 解码侧产出的源时间轴位置（与 EOS 汇总的 measuredMs 同源），
+    // playMs = 消费端 positionMs()；两者相差一个 ring 深度造成的恒定偏置 D₀，
+    // 按规格 §4.1 不计入 ΔD。只读，不设阈值、不进判据、不新增记录面。
+    // 本节数值只作观测记录，**不作为失败门禁**；记录失败（素材缺失 / 命令异常 / 无输出）不得让 CI 失败，也不得被解读为判据通过。
+    struct ClockSnapshot {
+        uint64_t sourceMs = 0;
+        uint64_t playMs   = 0;
+    };
+    ClockSnapshot clockSnapshot() const;
+
     // 消费端在静默窗口交付一块静音时调用，供 metrics().silenceFills 记账。
     // 生产消费端（MusicPlayer::Impl::consumeAudioData）与判据套件的消费端走同一个入口。
     // 只有解码器自己看得见的静默窗口（SEEKING / 已请求停止 / 已置取消位）里的调用才计数。
@@ -123,6 +136,8 @@ private:
     // 重新算一次「当前持有量」并喂给峰值：解码侧手上的包 + 提取器的解复用缓冲 + 解码器
     // 自己那两块固定缓冲（O(1)）。ring 与 AVIO 是判据公式里的独立项，不在这里计。
     void refreshHeldPeak();
+    // O1：把源时钟发布成原子量，只由解码线程调用（每帧一次 / seek 段基准更新后）。
+    void publishSourceClockMs();
     // 唯一的 ERROR 出口：先记原因，再置状态（状态是发布信号）。
     void setError(sdk::ErrorCode code, const char *detail);
 
@@ -166,6 +181,9 @@ private:
     size_t m_pcmFrameBytes;
     // seek 之后 measured 从 seek 目标算起，否则会被判成「短于标称」
     uint64_t m_seekBaseMs;
+    // O1：解码线程写、消费线程读的源时钟（ms）。用原子量而不是直接读
+    // m_decodedFrames / m_decodedRate —— 那两个是普通成员，跨线程读是数据竞争。
+    std::atomic<uint64_t> m_sourceClockMs;
 
     // 坏帧（规格 4.1 / F1）：跳过的帧/页/包数只进日志与 detail，不做机器可读字段。
     uint64_t m_skippedFrames;
