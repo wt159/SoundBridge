@@ -697,10 +697,13 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
         m_audioDev->stop();
         m_audioDev->close();
     }
-    updatePlayState(MusicPlayerState::StoppedState);
+    // 契约（doc/player-state-contract.md §3 / #87）：原因先于结果，onError 在状态变化之前。
+    // autoSkip 跳轨成功时状态可能根本不变；失败时这里同步置 Stopped 就是那「一次状态事件」，
+    // 不再补发（updatePlayState 去重保证状态序列无相邻重复）。
     if (m_listener != nullptr) {
         m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
     }
+    updatePlayState(MusicPlayerState::StoppedState);
     if (shouldAutoSkipOnError()) {
         m_skipFailures.fetch_add(1);
         m_workQueue.asyncRunTask([this]() {
@@ -720,6 +723,11 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
 {
     if (isShuttingDown()) {
+        return;
+    }
+    // 契约（规格 §3 / §4）：重复控制命令不重复发 onStateChanged，状态序列无相邻重复。
+    // m_state 仍是唯一权威；相同值只跳过通知，不改变查询值。
+    if (m_state.load() == state) {
         return;
     }
     m_state.store(state);

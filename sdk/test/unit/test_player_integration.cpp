@@ -245,6 +245,26 @@ TEST_SUITE("MusicPlayer Error Handling")
         CHECK(listener.error_count > 0);
     }
 
+    // #87 / T02：错误不进状态面（规格 §2 / §3）。无曲目时 play() 只发 onError，
+    // 不产生任何 onStateChanged —— autoSkip 跳轨成功时「状态可能根本不变」的极端情形。
+    TEST_CASE("play without track reports error without a state event")
+    {
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+
+        player.play();
+        REQUIRE(waitFor([&listener]() { return listener.error_count.load() > 0; }, 3000));
+
+        const std::vector<std::string> events = listener.eventSequence();
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "error") == 1,
+                      "无曲目时 play() 应且仅应上报一次错误");
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "state") == 0,
+                      "错误不得进状态面：不该收到 onStateChanged");
+        REQUIRE_FALSE(events.empty());
+        CHECK_MESSAGE(events.front() == "error", "错误必须是这个场景的第一个事件");
+    }
+
     TEST_CASE("autoSkipOnError is enabled by default")
     {
         MockMusicPlayerListener listener;
