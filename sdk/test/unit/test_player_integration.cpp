@@ -1,5 +1,6 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include "../mocks/PlayerMocks.hpp"
+#include <AudioDevice.h>
 #include <FileSource.h>
 #include <MusicPlayer.h>
 #include <algorithm>
@@ -45,6 +46,16 @@ bool waitFor(Predicate predicate, int timeoutMs, int stepMs = 20)
     }
     return predicate();
 }
+
+// 票 #110：设备错误注入开关的 RAII guard，保证 REQUIRE 抛异常时也恢复默认状态，
+// 不把进程级开关泄漏给同一测试二进制里的后续用例。
+class ForceAudioDeviceOpenFailure {
+public:
+    ForceAudioDeviceOpenFailure() { AudioDevice::setForceOpenFailureForTest(true); }
+    ~ForceAudioDeviceOpenFailure() { AudioDevice::setForceOpenFailureForTest(false); }
+    ForceAudioDeviceOpenFailure(const ForceAudioDeviceOpenFailure &) = delete;
+    ForceAudioDeviceOpenFailure &operator=(const ForceAudioDeviceOpenFailure &) = delete;
+};
 
 // 位置推进速率回落到「实时」才算进入稳态：起播后消费端会先把设备队列填到高水位
 // （256KB），这段时间 position 按 2x 左右飞奔；队列满了才 1:1 跟墙钟。用连续两个
@@ -265,6 +276,106 @@ TEST_SUITE("MusicPlayer Error Handling")
                       "错误不得进状态面：不该收到 onStateChanged");
         REQUIRE_FALSE(events.empty());
         CHECK_MESSAGE(events.front() == "error", "错误必须是这个场景的第一个事件");
+    }
+
+    // #110 / C1 + C5 端到端判据：设备错误必须 error→state(Stopped) 且不跳轨。
+    // 注入点只在 AudioDevice::open() 包装层，播放链走的是生产里真实的设备失败
+    // 分支（MusicPlayer.cpp:326-330 → onMusicPlayListError:707），不改写播放逻辑。
+    TEST_CASE("audio device error reports error before state and does not skip track")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+        // 两首曲目：C5 要能红能绿，必须存在「可以跳过去的下一首」。
+        // 单曲列表里 skipToNextPlayable() 只会失败，跳轨与否几乎不可观测。
+        TempMediaDir temp("deverror");
+        const std::vector<char> intact = readAllBytes(fixture.mediaPath("music.wav"));
+        if (intact.empty() || !writeAllBytes(temp.file("first.wav"), intact)
+            || !writeAllBytes(temp.file("second.wav"), intact)) {
+            skipCase("cannot synthesize two-track playlist");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 2; }, 5000)
+            || !waitFor([&listener]() { return listener.list_change_count.load() > 0; }, 5000)) {
+            skipCase("two-track playlist did not load");
+            return;
+        }
+        player.setCurrentIndex(0);
+        if (!waitFor([&listener]() { return listener.last_current_index.load() == 0; }, 2000)) {
+            skipCase("cannot select the track");
+            return;
+        }
+
+        // 只观察 play() 之后新增的事件，避免把选曲 / 列表回调算进顺序判据。
+        const size_t eventBaseline = listener.eventSequence().size();
+        const int stateBaseline    = listener.state_change_count.load();
+
+        ForceAudioDeviceOpenFailure forceFailure;
+        player.play();
+        // 不写成 REQUIRE：设备错误被误判为可跳轨时，同步 error→state 序列可能
+        // 根本不出现；用 CHECK 让后续 C1 / C5 断言也跑完，红色信息更具体。
+        const bool sequenceArrived = waitFor([&listener, stateBaseline]() {
+            return listener.error_count.load() > 0
+                && listener.state_change_count.load() > stateBaseline;
+        }, 3000);
+        CHECK_MESSAGE(sequenceArrived,
+                      "设备错误应同步产出 error→state 序列，不得转入跳轨分支");
+
+        // 队列屏障：onMusicPlayListError 的跳轨分支会把 _play() 再排进 WorkQueue，
+        // 它的第二次 error / 索引变化是异步尾巴。等 error / state / index 三个计数
+        // 连续 4 次采样都不变再取数，避免把「尾巴还没到」误判成「没有跳轨」。
+        // 这是「稳定后取数」的屏障，不是绝对时长判据，也不落解码 / 消费线程。
+        int quietSamples = 0;
+        int lastError = -1, lastState = -1, lastIndex = -1;
+        const bool queueQuiet = waitFor([&]() {
+            const int e = listener.error_count.load();
+            const int s = listener.state_change_count.load();
+            const int i = listener.index_change_count.load();
+            if (e == lastError && s == lastState && i == lastIndex) {
+                ++quietSamples;
+            } else {
+                quietSamples = 0;
+                lastError = e; lastState = s; lastIndex = i;
+            }
+            return quietSamples >= 4;
+        }, 2000, 25);
+        CHECK_MESSAGE(queueQuiet, "队列应在 error→state 之后稳定，不得持续跳轨重试");
+
+        // eventSequence() 取锁返回后，回调线程对 last_state / last_error_code 的写
+        // 已对测试线程可见；与既有用例的读法一致。
+        const std::vector<std::string> allEvents = listener.eventSequence();
+        REQUIRE(allEvents.size() >= eventBaseline);
+        const std::vector<std::string> events(allEvents.begin() + eventBaseline,
+                                              allEvents.end());
+        const size_t errAt = MockMusicPlayerListener::firstEvent(events, "error");
+        const size_t stAt  = MockMusicPlayerListener::firstEvent(events, "state");
+
+        // C1：原因先于结果，且发且仅发一次状态事件（m_stateNotified 初值为 false，
+        // 首播即失败仍要通知一次，见 MusicPlayer.cpp 的 updatePlayState 注释）。
+        CHECK_MESSAGE(errAt < events.size(), "设备错误必须上报 onError");
+        CHECK_MESSAGE(stAt < events.size(), "设备错误必须发一次状态事件");
+        CHECK_MESSAGE(errAt < stAt, "onError 必须早于 onStateChanged");
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "state") == 1,
+                      "设备错误应发且仅发一次状态事件");
+        CHECK(listener.last_state == MusicPlayerState::StoppedState);
+        CHECK(listener.last_error_code == ErrorCode::AudioDeviceOpenFailed);
+
+        // C5：设备错误是 StopPlayback，默认开启自动跳轨也不得跳到第二首。
+        // play() 自己会上报一次当前索引（"track" 事件），所以判据用「索引值」
+        // 与「只有一次 error」，而不是「没有 index 回调」。
+        CHECK(player.autoSkipOnError() == true);
+        CHECK_MESSAGE(listener.last_current_index.load() == 0,
+                      "设备错误不该把当前曲目跳到第二首");
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "error") == 1,
+                      "设备错误不得触发第二次播放尝试（应且仅应上报一次）");
+        player.stop();
     }
 
     TEST_CASE("autoSkipOnError is enabled by default")

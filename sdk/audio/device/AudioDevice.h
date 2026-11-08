@@ -27,6 +27,11 @@ public:
     int getDeviceSpec(AudioSpec &spec);
     int selectDevice(uint64_t id);
     int open();
+    // 仅供单元测试（票 #110）：强制 open() 返回失败，用来构造「设备错误 →
+    // error→state」的端到端判据。默认关闭；读点只在控制线程调用 open() 时，
+    // 不进 Impl::open()、不碰 SDL。AudioDevice 是 SDK 内部类型，本钩子不进入
+    // soundbridge::Player 的对外公开 API（票 #109 的一次限定例外）。
+    static void setForceOpenFailureForTest(bool enabled);
     int close();
     bool isOpen() const;
     int start();

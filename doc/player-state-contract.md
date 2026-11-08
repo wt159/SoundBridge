@@ -149,6 +149,7 @@
 
 - **判据不新造**：沿用 `max(1%,150ms)`、`r × good`、5pp、零容差差分与上述既有数值；坏输入 55 例 / 覆盖度 15 行是不可动基线。
 - 线程契约用 `promise/future` 或轮询验证状态迁移（`sdk/test/unit/AGENTS.md:34`），不裸 sleep；重入 / 所有权 / ABI 类只写头文件注释 + 本规格，**不做最小可测替身**（回调内发命令会自锁，测不出有效结论）。
+- **2026-11-08 条款重审（[#109](https://github.com/wt159/SoundBridge/issues/109)）**：上面「判据不新造 / 不做最小可测替身」禁止的是**为验证而造第二套可测替身或另立判据数值**；C1 / C5 的缺口属于「契约已有、但无法注入错误」的另一类问题。[#109](https://github.com/wt159/SoundBridge/issues/109) 单开 effort 重审后批准**一个**默认关闭的注入点（`AudioDevice::setForceOpenFailureForTest()`，落点见 §10.4），不新增判据数值、不改既有判据、不新增 `add_test` 分组。这是**一次限定例外**，不构成可推广的新接缝惯例；将来若要再新增注入点须另开票重审。
 - 落点分工：头文件注释 = 线程 / 重入 / 异常 / 所有权；本规格 = 全部契约表；ADR 0004 = 仅「三态」这一条。
 - **CI 不动**：14 个 `sdk_*` 目标、TIMEOUT、快集 / 全量集划分、耗时 gate 全部沿用 #52 决策；StreamingBudget 仍是「只记录不设门槛」的先例。新增用例若写文件必须带 pid（`#76` 与 `sdk-windows.yml -j4` 的教训）。
 
@@ -195,7 +196,7 @@
 - fog「契约漂移的长期观测口径」→ **2026-11-08 已由地图「观测指标、drift 判定与契约漂移守护」（[#94](https://github.com/wt159/SoundBridge/issues/94)）收口**，见 `doc/observability-contract.md` §7：观测对象限定为公开契约面，长期观测 = 规格 / ADR 版本化记录 + 既有可红可绿判据，不新增 CI step / 日志摘要 / 第二个真相源；「不作为失败门禁」的标准措辞见其 §3.1，并明确「观测记录非门禁」与「契约本身仍由既有判据门禁覆盖」二者不互替。本图不新开 ADR。
 - **已知代价**：三态无法区分「准备中」与「停止」，调用方只能靠 `trackCount()` / 回调组合判断；error→state 的顺序调整会让播放列表错误路径的 UI 提示相对状态晚一步，属可接受代价（避免 autoSkip 场景下先发一个不存在的状态）。
 - 端到端 drift / 切换开销 / 观测指标判据仍是 #42 残留 fog 与 #68 交棒的另一 effort，与本图无关。**2026-11-08 更新**：该 effort 已由 [#94](https://github.com/wt159/SoundBridge/issues/94) 裁决完毕，见 `doc/observability-contract.md` §4–§6；数值阈值仍按定标流程留待后续 effort，本图不改。
-- §10.4 的 **C1 / C5 端到端判据缺口保持登记状态**：#94 的「只观测不注入」覆盖不到带状态变化的错误路径，界外已排除「新增可注入错误接缝」，见 `doc/observability-contract.md` §7.4。**2026-11-08 O 链收口后复核**：O1–O6 均已有终态，本项是**唯一仍保留的判据缺口**，且属「已登记、已解释、已给未来条件」的已知代价，不是待裁决 fog。要补判据必须单开 effort 重审 §8「不新造接缝」的界外条款（须由人拍板）并提供可控的错误注入接缝；在此之前维持现状，不改写 C1 / C5 的实现与落点。
+- §10.4 的 **C1 / C5 端到端判据缺口**曾长期保持登记状态：#94 的「只观测不注入」覆盖不到带状态变化的错误路径，界外已排除「新增可注入错误接缝」，见 `doc/observability-contract.md` §7.4；O 链收口时本项曾是「唯一仍保留的判据缺口」，属已登记 / 已解释 / 已给未来条件的已知代价，不是待裁决 fog。**2026-11-08 进展**：用户拍板单开 effort，[#109](https://github.com/wt159/SoundBridge/issues/109) 重审 §8「不新造接缝」并批准一个默认关闭的注入点，[#110](https://github.com/wt159/SoundBridge/issues/110) 在集成分支落地判据；落点、变异验证与 `ctest -j4` 对照证据见 §10.4。**此时尚未收口**：PR 合并、Linux / Windows CI 双绿与票 #110 关闭并留 resolution 之后才能称「缺口已补齐」，见 §10.4 的待验证项。此前「要补判据须由人拍板 / 在此之前维持现状」是收口前的历史表述，保留作决策留痕。
 
 ### 10.4 实现落地记录（2026-11-08）
 
@@ -210,5 +211,10 @@
 
 - **回归与审查**：本地 `ctest -j4` 14/14 绿（含坏输入四段与覆盖度）；一次 `code-review` 提出的 4 条 Major（会话代际漏钳制、状态去重键错误、用例与目标路径错配、裸 sleep / 无声卡 flaky）与 4 条 Minor 已在一个修复提交里全部处理，细节见各票 resolution comment。既有容差数值、坏输入 55 例、14 个 `sdk_*` 目标与 TIMEOUT 全部未动。
 - **务实取舍**：C1–C6 都改同一批文件，且本机 Qt/ffmpeg 依赖与 `build/` 缓存绑定主工作区，多 worktree 独立编译不可行；故 implementer 按拓扑序在同一 integration branch 上逐票提交，task graph、原生阻塞边与一次 `code-review` 均保留。
-- **已知判据缺口**：C1 的 error→state 顺序与 C5 的「设备错误不跳轨」缺端到端判据 —— 现有接缝无法稳定注入「带状态变化的错误」，而新增可注入接缝违反 §8「不新造接缝」。这两条由生产链改动 + 代码审查 + 全量回归锁定；将来若出现可控的错误注入接缝，应补判据。
-- **fog**：契约漂移的长期观测口径本 effort 未裁决，交后续 effort；若只记录不设门槛，须写明「不作为失败门禁」。
+- **C1 / C5 端到端判据已在集成分支落地（2026-11-08，[#109](https://github.com/wt159/SoundBridge/issues/109) / [#110](https://github.com/wt159/SoundBridge/issues/110)；收口待 CI）**：原缺口「现有接缝无法稳定注入带状态变化的错误」由 `AudioDevice::setForceOpenFailureForTest()` 解决 —— 只在 `AudioDevice::open()` 包装层短路返回失败，播放链走生产里**真实存在**的设备失败分支（`MusicPlayer.cpp:326-330` → `onMusicPlayListError:707`），`MusicPlayer.cpp` 播放逻辑零改动。新增用例 `test_player_integration.cpp` 的 `audio device error reports error before state and does not skip track` 用一条 `AudioDeviceOpenFailed` 序列同时验证 C1（`onError` 早于 `onStateChanged(Stopped)`、发且仅发一次、错误码正确）与 C5（默认 autoSkip 开启也不跳到第二首、不触发第二次播放尝试）。
+  - **可红可绿证据（变异验证）**：去掉 `ErrorAction::SkipTrack` 检查 → 6 条断言红（含 C5 的「索引不变」「只报一次 error」）；把 `onError` 挪到状态事件之后 → `errAt < stAt` 精确红；还原后 12/12 断言绿。
+  - **稳定性证据（O1 闸门，逐轮耗时 s）**：分支 `59.05, 59.17, 58.87, 56.65, 57.26, 57.60, 58.00, 57.60, 57.43, 58.04` → **10 / 10 轮全绿 14/14**；master `58.81, 59.91, 59.69, 58.61, 57.77, 58.23, 57.24, 59.42, 59.61, 57.94` → **9 / 10 轮全绿**（第 9 轮 `sdk_interaction_tests` 一次既有低概率 flake，与本用例无关）。分支假红率不高于基线，注入开关只在控制线程读一次，未重现 O1 那种约 30% 假红放大。
+  - 用例归属 **`sdk_unit_tests`**（`-tse` 排除集不含 `MusicPlayer Error Handling` suite），**不在** `sdk_interaction_tests`；票 #110 正文的目标名有误，已在其 comment 更正。
+  - 不新增 `add_test` 分组、不改 14 个目标 / TIMEOUT / CI 配置 / 任何既有判据数值。**反悔**：若将来要撤掉注入点，须另开新票并同时处理这两条判据的归属，不得只删判据留下「契约无门禁」；该反悔条款同时适用于 `doc/observability-contract.md` §1 / §7.4 的界外例外。
+  - **待验证（收口前不得称完成）**：本地 Windows 全绿按 AGENTS.md **不算完成**；须等 PR 合并后 Linux `sdk-coverage` 与 Windows `sdk-windows` 双绿，并关闭 [#110](https://github.com/wt159/SoundBridge/issues/110) 留完整 resolution。在此之前本节的「落地」只描述集成分支状态。
+- **fog**（起图时的历史记录）：契约漂移的长期观测口径本 effort 未裁决，交后续 effort；若只记录不设门槛，须写明「不作为失败门禁」。**2026-11-08 状态**：该 fog 已由地图 [#94](https://github.com/wt159/SoundBridge/issues/94) 裁决完毕，见 `doc/observability-contract.md` §7；此行保留作当时留痕。
