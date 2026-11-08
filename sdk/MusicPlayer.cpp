@@ -283,6 +283,9 @@ void MusicPlayer::Impl::_play()
     m_decodeErrorHandled.store(false);
     if (m_state == MusicPlayerState::StoppedState) {
         bumpTraceId("play");
+        // 一次 _play 从停机起步 = 新的播放会话：位置单调基准必须跟着归零，
+        // 否则 stop 后重播同曲（不经过 putMusicPlayListCurBuf）会被上一轮 floor 钳住。
+        m_positionFloor.store(0);
     }
     MusicPropertiesPtr cur;
     {
