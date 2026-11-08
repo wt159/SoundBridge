@@ -239,7 +239,7 @@
 | **O5** | 按 §3.2 采集 ≥10 次成功 CI run 的定标样本（**2026-11-08 已完成**，见 `docs/research/observability-calibration.md`） | 与 E 链并行，纯观测 |
 | **O6** | 公开契约变更时的规格 / GLOSSARY 回填 checklist（§7.2） | 随任何改公开头的 effort 执行 |
 
-**2026-11-08 事实更正（E 链接口）**：本表 O1 / O4 的「须在 E 链之前落地」写于 #94 起图时，当时假设 #42 第 10 章的 E1–E15 实现 effort 尚未执行。实际该 effort **早已由 Spec [#55](https://github.com/wt159/SoundBridge/issues/55)、执行票 #56–#68 与 PR [#69](https://github.com/wt159/SoundBridge/pull/69) 全部落地**（#67 明写 StreamingBudget 四条判据全绿），其中 #58 已改播放位置单轨化、#65 已改 seek 精度。因此 O1 / O4 的「前置」前提已失效，两项现应理解为**回溯补做**：若未来再有时钟 / 消费模型改动，按 O1 / O4 的口径先补取数点与触发条件清单；本表其余行的「与 E 链并行」不受影响。[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点，不重开 E 链。
+**2026-11-08 事实更正（E 链接口）**：本表 O1 / O4 的「须在 E 链之前落地」写于 #94 起图时，当时假设 #42 第 10 章的 E1–E15 实现 effort 尚未执行。实际该 effort **早已由 Spec [#55](https://github.com/wt159/SoundBridge/issues/55)、执行票 #56–#68 与 PR [#69](https://github.com/wt159/SoundBridge/pull/69) 全部落地**（#67 明写 StreamingBudget 四条判据全绿），其中 #58 已改播放位置单轨化、#65 已改 seek 精度。因此 O1 / O4 的「前置」前提已失效，两项现应理解为**回溯补做**：若未来再有时钟 / 消费模型改动，按 O1 / O4 的口径先补取数点与触发条件清单；本表其余行的「与 E 链并行」不受影响。[#8](https://github.com/wt159/SoundBridge/issues/8) **当时**按约定只作目的地锚点、不重开 E 链（**2026-11-08 终态：该票已由用户拍板 CLOSED，锚点约定终止**，见 [resolution](https://github.com/wt159/SoundBridge/issues/8#issuecomment-6720428994)；本段保留作当时状态的留痕）。
 
 **2026-11-08 O 清单状态核对（#104 收口时）**：六项在起图时统称「图外、不发射」，容易让后来者误以为全都没做。逐条核对实际状态：
 
@@ -254,7 +254,7 @@
 
 因此（**2026-11-08 O 链收口之前的状态**）真正剩余的只有 **O1 / O2 / O3**：O1 需动生产代码、O2 需先重审自身约束、O3 为纯校验。三者当时都**需要新 effort 授权**，本图与 #104 均不发射。此前把 O 项笼统记作「O1–O4 / O6 全未做」不准确，已在项目记忆中更正。**收口后的终态以下一段与状态核对表为准。**
 
-**2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 实现一版后由 `ctest -j4` 对照实验否掉，裁为不落地并留下取数点设计与实测证据（§4.4）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。**三票最终均未改动 `sdk/` / `.github/` 与任何既有判据数值 / 用例断言**，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点。
+**2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 实现一版后由 `ctest -j4` 对照实验否掉，裁为不落地并留下取数点设计与实测证据（§4.4）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。**三票最终均未改动 `sdk/` / `.github/` 与任何既有判据数值 / 用例断言**，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) **当时**按约定只作目的地锚点（**2026-11-08 终态：已 CLOSED、锚点约定终止**，见 [resolution](https://github.com/wt159/SoundBridge/issues/8#issuecomment-6720428994)）。
 
 ### 8.4 回归影响
 
@@ -269,7 +269,7 @@
 - `doc/player-state-contract.md` §10.3：删除已闭合的「契约漂移长期观测口径」fog，改为指向本规格 §7；§10.4 的 C1 / C5 缺口按 §7.4 加指针。
 - `GLOSSARY.md`：新增「观测与判定」章节，收四个词条（§2）。
 - `doc/开发方向建议.md`：方向里「在长时播放中实现 drift 检测」加指针到本规格 §4。
-- #42 / #75 两张已关闭地图：Not yet specified 各加一行「已由本地图收口」的指针，**不改历史结论**；#8 保持 OPEN、不并入。
+- #42 / #75 两张已关闭地图：Not yet specified 各加一行「已由本地图收口」的指针，**不改历史结论**；#8 当时保持 OPEN、不并入（**2026-11-08 终态：该票已 CLOSED，本条是起图时的历史记录**）。
 
 ### 9.2 事实更正（来自事实基线，以实测为准）
 

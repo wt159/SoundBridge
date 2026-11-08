@@ -16,7 +16,7 @@
 - 错误码体系沿用 [ADR 0001](../docs/adr/0001-error-code-expresses-cause.md)；本规格只裁上报范围与先后，**不新增错误码、不改 `onError` 签名**。
 - API 文档 / 时序图 / CLI 接入示例、代码与用例实现都不在图内。
 - 沿用 [本地文件边解边播规格](streaming-playback-spec.md) §4.1 / §4.4 / §6 的**不可推翻前提**：状态基准是 `MusicPlayerState`、`PlayerState` 与 `StreamDecoderState` 只作投影 / 诊断、不新增状态机；控制事件在 WorkQueue 单线程串行；`m_abortDecode` 是唯一取消信号；错误码只表达原因。
-- [#8 support stream programme](https://github.com/wt159/SoundBridge/issues/8) 保持 OPEN，是上一张图的锚点，与本图无关。
+- [#8 support stream programme](https://github.com/wt159/SoundBridge/issues/8) **起图时**保持 OPEN，是上一张图的锚点，与本图无关（**2026-11-08 终态：已由用户拍板 CLOSED，锚点约定终止**，依据见该票 [resolution comment](https://github.com/wt159/SoundBridge/issues/8#issuecomment-6720428994)）。
 
 ### 1.1 一次性批量授权
 
