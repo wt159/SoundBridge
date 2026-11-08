@@ -59,6 +59,7 @@ protected:
 
 private:
     void updatePlayState(MusicPlayerState state);
+    void reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor);
     std::string newTraceId();
     void bumpTraceId(const char *reason);
     bool shouldAutoSkipOnError() const;
@@ -89,6 +90,11 @@ private:
     std::atomic<bool> m_shuttingDown;
     // 本次播放（一次 _play）里本次曲目的解码失败只上报一次，避免 10ms 消费循环刷屏
     std::atomic<bool> m_decodeErrorHandled;
+    // 契约（规格 §3 / §5 / #88）：同曲会话内 onPositionChanged 单调不回退、换曲归零。
+    // 六个回调都在同一条 WorkQueue 串行线程发出，这里只钳制二次 asyncRunTask
+    // 回投 priority_queue 时同刻乱序带来的旧值；position() 查询口径不变。
+    std::atomic<uint64_t> m_positionFloor;
+    std::atomic<int> m_positionTrackIndex;
     WorkQueue m_workQueue;
     WorkQueue::TaskID m_consumerTaskID;
 };
@@ -105,6 +111,8 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_switching(false)
     , m_shuttingDown(false)
     , m_decodeErrorHandled(false)
+    , m_positionFloor(0)
+    , m_positionTrackIndex(-1)
     , m_workQueue()
     , m_consumerTaskID(WorkQueue::TaskID_Error)
 {
@@ -389,7 +397,8 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
     // 消费端不再自己维护字节偏移，避免 seek 目标与播放进度两套口径互相打架。
     cur->signalProperties.curPositionMs = pos;
     task->decoder->seekToMs(pos);
-    m_listener->onMusicPlayerPositionChanged(pos);
+    // seek 是合法回退：重置单调基准并立即上报一次（规格 §3 / §7）。
+    reportPosition(pos, static_cast<int>(cur->index), true);
 }
 
 void MusicPlayer::Impl::_next()
@@ -531,9 +540,11 @@ void MusicPlayer::Impl::consumeAudioData()
         signalProperties.curPositionMs     = curPositionMs;
 
         if (!isShuttingDown()) {
-            m_workQueue.asyncRunTask([this, curPositionMs]() {
-                if (!isShuttingDown()) {
-                    m_listener->onMusicPlayerPositionChanged(curPositionMs);
+            const int trackIndex = static_cast<int>(cur->index);
+            m_workQueue.asyncRunTask([this, curPositionMs, trackIndex]() {
+                // 旧曲的迟到任务不得写进新曲会话（换曲归零后基准已重置）。
+                if (!isShuttingDown() && trackIndex == m_positionTrackIndex.load()) {
+                    reportPosition(curPositionMs, trackIndex, false);
                 }
             });
         }
@@ -652,7 +663,9 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     }
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
-    m_listener->onMusicPlayerPositionChanged(property->signalProperties.curPositionMs);
+    // 新曲会话：重置单调基准，位置从该曲的 curPositionMs（通常 0）重新起算。
+    reportPosition(property->signalProperties.curPositionMs,
+                   static_cast<int>(property->index), true);
 }
 
 void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
@@ -718,6 +731,26 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
             }
         });
     }
+}
+
+void MusicPlayer::Impl::reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor)
+{
+    if (isShuttingDown() || m_listener == nullptr) {
+        return;
+    }
+    // 回调单线程串行（#76 事实基线），普通 load/store 即可；这里只做通知侧的钳制，
+    // 不回写 signalProperties.curPositionMs，也不影响 position() 的实时查询。
+    if (resetFloor || trackIndex != m_positionTrackIndex.load()) {
+        m_positionTrackIndex.store(trackIndex);
+        m_positionFloor.store(positionMs);
+        m_listener->onMusicPlayerPositionChanged(positionMs);
+        return;
+    }
+    if (positionMs < m_positionFloor.load()) {
+        return;
+    }
+    m_positionFloor.store(positionMs);
+    m_listener->onMusicPlayerPositionChanged(positionMs);
 }
 
 void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)

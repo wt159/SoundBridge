@@ -27,6 +27,8 @@ public:
     std::vector<soundbridge::PlayerState> state_sequence;
     // #86 / T01：六个回调按到达顺序留档，供「曲目三连」「error→state」等契约判据复用。
     std::vector<std::string> event_sequence;
+    // #88 / T03：位置值序列，用于断言同曲单调 / 换曲归零 / seek 合法回退。
+    std::vector<uint64_t> position_values;
     soundbridge::PlayerState last_state    = soundbridge::PlayerState::Stopped;
     soundbridge::ErrorCode last_error_code = soundbridge::ErrorCode::Unknown;
     std::string last_error_detail;
@@ -48,6 +50,7 @@ public:
         track_names.clear();
         state_sequence.clear();
         event_sequence.clear();
+        position_values.clear();
         last_state = soundbridge::PlayerState::Stopped;
     }
 
@@ -70,6 +73,12 @@ public:
     {
         std::lock_guard<std::mutex> lock(mutex);
         return event_sequence;
+    }
+
+    std::vector<uint64_t> positionValues() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return position_values;
     }
 
     // 找不到返回 events.size()；调用方可用它断言两个事件的先后。
@@ -122,6 +131,7 @@ public:
         last_position.store(positionMs);
         std::lock_guard<std::mutex> lock(mutex);
         event_sequence.push_back("position");
+        position_values.push_back(positionMs);
     }
 
     void onPlaylistChanged(const std::list<soundbridge::TrackInfo> &tracks) override

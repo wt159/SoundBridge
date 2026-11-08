@@ -1215,6 +1215,86 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         CHECK(stopped);
     }
 
+    // #88 / T03：同曲会话内 position 回调单调不回退；seek 是合法回退，不能被单调钳制吞掉。
+    // 判据沿用既有「回调值序列」接缝，不新造数值、不裸 sleep 兜底。
+    TEST_CASE("position callbacks stay monotonic and a legal seek still rewinds")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("monotonic");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor([&player]() { return player.trackCount() > 0; }, 5000)) {
+            skipCase("playlist empty");
+            return;
+        }
+
+        player.play();
+        if (!waitFor(
+                [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                3000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+
+        const bool sampled = waitFor(
+            [&callbacks]() {
+                return callbacks.positionValues().size() >= 3
+                    && callbacks.last_position.load() > 500;
+            },
+            3000);
+        const std::vector<uint64_t> first = callbacks.positionValues();
+        bool monotonic = true;
+        for (size_t i = 1; i < first.size(); ++i) {
+            if (first[i] < first[i - 1]) {
+                monotonic = false;
+            }
+        }
+
+        CHECK_MESSAGE(sampled, "稳态播放期间没有积累到足够的 position 回调");
+        REQUIRE(first.size() >= 3);
+        CHECK_MESSAGE(monotonic, "同曲会话内 position 回调出现回退");
+
+        const uint64_t before     = first.back();
+        const size_t beforeCount  = first.size();
+        REQUIRE(before > 500);
+        player.seek(100);
+        const bool rewound = waitFor(
+            [&callbacks, beforeCount, before]() {
+                const std::vector<uint64_t> vals = callbacks.positionValues();
+                for (size_t i = beforeCount; i < vals.size(); ++i) {
+                    if (vals[i] < before) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            3000);
+        const std::vector<uint64_t> after = callbacks.positionValues();
+        bool afterMonotonic = true;
+        for (size_t i = beforeCount + 1; i < after.size(); ++i) {
+            if (after[i] < after[i - 1]) {
+                afterMonotonic = false;
+            }
+        }
+        player.stop();
+
+        CHECK_MESSAGE(rewound, "seek 的合法回退被单调钳制吞掉了");
+        CHECK_MESSAGE(afterMonotonic, "seek 之后的新位置会话里出现回退");
+    }
+
     // #72 / P2-11
     TEST_CASE("state callback sequence has no duplicate adjacent states")
     {
