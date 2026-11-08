@@ -1,6 +1,7 @@
 ﻿#include "AudioDevice.h"
 #include "LogWrapper.h"
 #include <SDL.h>
+#include <atomic>
 #include <iostream>
 #include <map>
 
@@ -299,8 +300,24 @@ int AudioDevice::selectDevice(uint64_t id)
     return m_impl->selectDevice(id);
 }
 
+namespace {
+// C1 / C5 端到端判据（票 #110）：默认关闭的设备错误注入开关。
+// 只在 AudioDevice::open() 里读一次，而 open() 由控制线程的 _play() 调用；
+// 绝不落在解码线程 / 10 ms 消费主循环 / 判据主循环，避免放大 ctest -j4 的
+// 调度抖动（O1 对照实验：额外写曾把既有判据假红率从 0 抬到约 30%）。
+std::atomic<bool> g_forceOpenFailure(false);
+} // namespace
+
+void AudioDevice::setForceOpenFailureForTest(bool enabled)
+{
+    g_forceOpenFailure.store(enabled, std::memory_order_relaxed);
+}
+
 int AudioDevice::open()
 {
+    if (g_forceOpenFailure.load(std::memory_order_relaxed)) {
+        return -1;
+    }
     return m_impl->open();
 }
 
