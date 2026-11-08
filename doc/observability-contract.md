@@ -127,6 +127,10 @@
 
 现状 `StreamMetrics` 无 drift 仪表。实现 effort 需要的最小改动是：在消费端提供 `S(t)` 与 `P(t)` 的**同一时刻同步快照**，禁止两值异步各取一次（会凭空造出抖动）。不新增同步解码入口、不改 `positionMs` 归消费端的归属、不改 10 ms push 节奏。
 
+**2026-11-08 O1 落地（[#105](https://github.com/wt159/SoundBridge/issues/105)）**：`AudioStreamDecoder` 新增只读 `clockSnapshot()`（单次调用同返 `sourceMs` / `playMs`）与解码线程写的原子 `m_sourceClockMs`；`sourceMs` 复用 EOS 汇总 `measuredMs` 的公式，`playMs` 直接取 `positionMs()`。判据套件的稳态消费循环按 10% 标称时长只记录快照序列。未碰 `MusicPlayer.cpp` / `StreamMetrics.h` / CI / 任何既有 `MESSAGE` 与断言。
+
+**口径限制（重要）**：`sourceMs` 是解码侧**产出**的源时间轴位置，与「已交付 PCM」差一个 ring 深度造成的恒定偏置 `D₀`（§4.1 明确不计入 `ΔD`）；且源钟按源采样率整数除法换算、播放钟按设备 PCM 字节 / `bytesPerMs` 换算，两者存在系统性比例差（长素材上 `D` 随进度缓慢变化）。因此本快照只能用于**同一实现内的纵向比较**，不得把绝对 `D` 当作产品 drift、不得跨源比较、不得据此拍 `R`；[#104](https://github.com/wt159/SoundBridge/issues/104)「不设任何数值阈值」的裁决不变。
+
 ### 4.5 定标流程
 
 按 §3.2 五步；素材只用现有 15 行里时长最长的若干首，不合成长音频；冷 / 热 runner 各取一组；`ρ` 的分布稳定之前不谈 `R`。
@@ -228,14 +232,16 @@
 
 | 编号 | 规格层 | 实现层 | 剩余动作与约束 |
 |---|---|---|---|
-| O1 | 已定义（§4.4 同步快照） | **未落地** | 需改生产代码；E 链已跑完，属回溯补做。硬约束：不新增同步解码入口、不改 `positionMs` 归属、不改 10 ms push |
-| O2 | 已定义 | **未落地** | **须先重审口径**：§5 明写「不得为可见性去跑播放器生产链」，而 CI 只跑测试二进制 / ctest，两者在现行条件下互斥；约束被重审前 O2 不可直接执行 |
-| O3 | 已定义（L3 待验） | **未落地** | 纯测试 / 校验，不改生产代码；§6 已裁不补素材、不改 `P`；事实基线显示 aac / m4a 已有同格式长短对，可做有限校验 |
+| O1 | 已定义（§4.4 同步快照） | **已落地**（[#105](https://github.com/wt159/SoundBridge/issues/105)） | `AudioStreamDecoder::clockSnapshot()` + `StreamingBudget` 稳态只记录序列；口径限制见 §4.4。不新增同步解码入口、不改 `positionMs` 归属、不改 10 ms push |
+| O2 | 已定义 | **已裁决不实现**（[#106](https://github.com/wt159/SoundBridge/issues/106)，已关闭） | §5 两条硬约束与「CI 只跑测试二进制 / ctest」互斥；#104 永久不设阈值后可见性无消费方。反悔须另开新票重审约束并重走 §3.2 五步 |
+| O3 | 已定义（L3 待验） | **已落地**（[#107](https://github.com/wt159/SoundBridge/issues/107)，纯文档） | `docs/research/peak-gap-crosscheck.md` 给验证步骤与已归档数值；不补素材、不改 `P`、不加断言；两处口径限制已显式登记 |
 | O4 | **已落地**（§3.4 三条触发条件） | 规格层完成 | 仅剩「测试注释」可选；不重开稳态欠流判据 |
 | O5 | **已完成**（`docs/research/observability-calibration.md`） | 完成 | 第 4 步已由 #104 裁决，见 §3.5 |
 | O6 | **已落地**（§7.2 回填要求） | 规格层完成 | 「每次公开契约变更须同步更新规格 §10 / GLOSSARY / 必要时 ADR 0004 并在 PR 引用」已成规格条款；独立 checklist 文件可选 |
 
 因此真正剩余的只有 **O1 / O2 / O3**：O1 需动生产代码、O2 需先重审自身约束、O3 为纯校验。三者都**需要新 effort 授权**，本图与 #104 均不发射。此前把 O 项笼统记作「O1–O4 / O6 全未做」不准确，已在项目记忆中更正。
+
+**2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 落地最小取数点（只记录、不设阈值）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。三者均不改任何既有判据数值 / 用例断言 / CI 配置，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点。
 
 ### 8.4 回归影响
 
