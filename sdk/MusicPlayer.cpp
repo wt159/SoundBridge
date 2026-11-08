@@ -59,7 +59,9 @@ protected:
 
 private:
     void updatePlayState(MusicPlayerState state);
-    void reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor);
+    void reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor,
+                        uint64_t epoch);
+    void bumpPositionSession();
     std::string newTraceId();
     void bumpTraceId(const char *reason);
     bool shouldAutoSkipOnError() const;
@@ -95,6 +97,13 @@ private:
     // 回投 priority_queue 时同刻乱序带来的旧值；position() 查询口径不变。
     std::atomic<uint64_t> m_positionFloor;
     std::atomic<int> m_positionTrackIndex;
+    // 会话代际：seek / 换曲 / 从停机重播都会递增，让回投队列里同曲的旧任务整体失效，
+    // 否则 reset 之前已投递、携带较大值的 position 任务会把新会话的基准重新抬高。
+    std::atomic<uint64_t> m_positionEpoch;
+    // 状态通知去重以「最近真正发出去的事件」为键，而不是 m_state 的初值：
+    // 初值 Stopped 从未对外发过，首播失败 / skip 失败时仍必须通知一次。
+    bool m_stateNotified;
+    MusicPlayerState m_lastReportedState;
     WorkQueue m_workQueue;
     WorkQueue::TaskID m_consumerTaskID;
 };
@@ -113,6 +122,9 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_decodeErrorHandled(false)
     , m_positionFloor(0)
     , m_positionTrackIndex(-1)
+    , m_positionEpoch(0)
+    , m_stateNotified(false)
+    , m_lastReportedState(MusicPlayerState::StoppedState)
     , m_workQueue()
     , m_consumerTaskID(WorkQueue::TaskID_Error)
 {
@@ -283,9 +295,9 @@ void MusicPlayer::Impl::_play()
     m_decodeErrorHandled.store(false);
     if (m_state == MusicPlayerState::StoppedState) {
         bumpTraceId("play");
-        // 一次 _play 从停机起步 = 新的播放会话：位置单调基准必须跟着归零，
-        // 否则 stop 后重播同曲（不经过 putMusicPlayListCurBuf）会被上一轮 floor 钳住。
-        m_positionFloor.store(0);
+        // 一次 _play 从停机起步 = 新的播放会话：递增代际并归零基准，
+        // 让在途旧任务失效，且重播同曲（不经过 putMusicPlayListCurBuf）不被上一轮 floor 钳住。
+        bumpPositionSession();
     }
     MusicPropertiesPtr cur;
     {
@@ -401,7 +413,8 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
     cur->signalProperties.curPositionMs = pos;
     task->decoder->seekToMs(pos);
     // seek 是合法回退：重置单调基准并立即上报一次（规格 §3 / §7）。
-    reportPosition(pos, static_cast<int>(cur->index), true);
+    bumpPositionSession();
+    reportPosition(pos, static_cast<int>(cur->index), true, m_positionEpoch.load());
 }
 
 void MusicPlayer::Impl::_next()
@@ -544,10 +557,13 @@ void MusicPlayer::Impl::consumeAudioData()
 
         if (!isShuttingDown()) {
             const int trackIndex = static_cast<int>(cur->index);
-            m_workQueue.asyncRunTask([this, curPositionMs, trackIndex]() {
-                // 旧曲的迟到任务不得写进新曲会话（换曲归零后基准已重置）。
-                if (!isShuttingDown() && trackIndex == m_positionTrackIndex.load()) {
-                    reportPosition(curPositionMs, trackIndex, false);
+            const uint64_t epoch  = m_positionEpoch.load();
+            m_workQueue.asyncRunTask([this, curPositionMs, trackIndex, epoch]() {
+                // 会话代际已变（seek / 换曲 / 重播）的迟到任务整体丢弃；
+                // 旧曲的迟到任务也不得写进新曲会话。
+                if (!isShuttingDown() && epoch == m_positionEpoch.load()
+                    && trackIndex == m_positionTrackIndex.load()) {
+                    reportPosition(curPositionMs, trackIndex, false, epoch);
                 }
             });
         }
@@ -666,9 +682,10 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     }
     m_listener->onMusicPlayerListCurrentIndexChanged(property->index);
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
-    // 新曲会话：重置单调基准，位置从该曲的 curPositionMs（通常 0）重新起算。
+    // 新曲会话：递增代际、重置单调基准，位置从该曲的 curPositionMs（通常 0）重新起算。
+    bumpPositionSession();
     reportPosition(property->signalProperties.curPositionMs,
-                   static_cast<int>(property->index), true);
+                   static_cast<int>(property->index), true, m_positionEpoch.load());
 }
 
 void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
@@ -713,36 +730,50 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
         m_audioDev->stop();
         m_audioDev->close();
     }
-    // 契约（doc/player-state-contract.md §3 / #87）：原因先于结果，onError 在状态变化之前。
-    // autoSkip 跳轨成功时状态可能根本不变；失败时这里同步置 Stopped 就是那「一次状态事件」，
-    // 不再补发（updatePlayState 去重保证状态序列无相邻重复）。
+    // 契约（规格 §3 / #87）：原因先于结果，onError 在状态变化之前。
     if (m_listener != nullptr) {
         m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
     }
-    updatePlayState(MusicPlayerState::StoppedState);
-    // 规格 §6.3 / #90：与解码错误路径的 handleDecodeError 统一，自动跳轨以
-    // ErrorAction::SkipTrack 为准。设备错误是 StopPlayback，不该靠跳轨绕过。
+    // 规格 §6.3 / #90：与 handleDecodeError 统一，自动跳轨以 SkipTrack 为准；
+    // 设备错误是 StopPlayback，不该靠跳轨绕过。
     const bool canAutoSkip = shouldAutoSkipOnError()
         && GetErrorInfo(code).action == ErrorAction::SkipTrack;
-    if (canAutoSkip) {
-        m_skipFailures.fetch_add(1);
-        m_workQueue.asyncRunTask([this]() {
-            if (isShuttingDown()) {
-                return;
-            }
-            if (m_musicList->skipToNextPlayable()) {
-                _play();
-            } else {
-                LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, m_traceId,
-                                   "auto-skip failed: no playable track");
-            }
-        });
+    if (!canAutoSkip) {
+        // 不跳轨：停在当前处置结果上，发且仅发一次状态事件。
+        updatePlayState(MusicPlayerState::StoppedState);
+        return;
     }
+    // autoSkip 成功时状态可能根本不变（切歌前后都是 Playing，不闪 Stopped）；
+    // 只有跳轨失败才补那「一次状态事件」，避免先发一个不存在的状态。
+    m_skipFailures.fetch_add(1);
+    m_workQueue.asyncRunTask([this]() {
+        if (isShuttingDown()) {
+            return;
+        }
+        if (m_musicList->skipToNextPlayable()) {
+            _play();
+        } else {
+            LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, m_traceId,
+                               "auto-skip failed: no playable track");
+            updatePlayState(MusicPlayerState::StoppedState);
+        }
+    });
 }
 
-void MusicPlayer::Impl::reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor)
+void MusicPlayer::Impl::bumpPositionSession()
+{
+    m_positionEpoch.fetch_add(1);
+    m_positionFloor.store(0);
+}
+
+void MusicPlayer::Impl::reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor,
+                                       uint64_t epoch)
 {
     if (isShuttingDown() || m_listener == nullptr) {
+        return;
+    }
+    // 会话代际已变（seek / 换曲 / 重播）的迟到任务整体丢弃，不能让它把新基准抬高。
+    if (epoch != m_positionEpoch.load()) {
         return;
     }
     // 回调单线程串行（#76 事实基线），普通 load/store 即可；这里只做通知侧的钳制，
@@ -766,11 +797,14 @@ void MusicPlayer::Impl::updatePlayState(MusicPlayerState state)
         return;
     }
     // 契约（规格 §3 / §4）：重复控制命令不重复发 onStateChanged，状态序列无相邻重复。
-    // m_state 仍是唯一权威；相同值只跳过通知，不改变查询值。
-    if (m_state.load() == state) {
+    // 去重键是「最近对外发出的状态」而非 m_state：初值 Stopped 从未发过，
+    // 首播即失败 / skip 失败时仍要通知一次，不能静默停在 Stopped。
+    if (m_stateNotified && m_lastReportedState == state) {
         return;
     }
     m_state.store(state);
+    m_lastReportedState = state;
+    m_stateNotified     = true;
     m_listener->onMusicPlayerStateChanged(state);
 }
 

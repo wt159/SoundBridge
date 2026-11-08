@@ -142,7 +142,8 @@ TEST_SUITE("sdk::ErrorCode")
     // #90 / T05：播放列表错误路径的自动跳轨门槛依赖 ErrorAction（规格 §6.3）。
     // 这张表把「决定口径的输入值」钉成可红可绿判据；生产链据此只对 SkipTrack 跳轨。
     // 有码但不承诺上报的三码（PlaylistEmpty / ResampleInitFailed / ResampleFailed）
-    // 由 #76 实测确认生产链零上报点，调用方不得等待其 onError（规格 §6）。
+    // 由 #76 实测确认生产链零上报点，调用方不得等待其 onError（规格 §6）；
+    // 后两者 action 是 SkipTrack，将来若新增上报点会直接走自动跳轨，须先显式重审。
     TEST_CASE("auto-skip gate action table")
     {
         CHECK(sdk::GetErrorInfo(sdk::ErrorCode::ExtractorUnsupported).action
@@ -165,6 +166,10 @@ TEST_SUITE("sdk::ErrorCode")
               == sdk::ErrorAction::None);
         CHECK(sdk::GetErrorInfo(sdk::ErrorCode::PlaylistEmpty).action
               == sdk::ErrorAction::None);
+        CHECK(sdk::GetErrorInfo(sdk::ErrorCode::ResampleInitFailed).action
+              == sdk::ErrorAction::SkipTrack);
+        CHECK(sdk::GetErrorInfo(sdk::ErrorCode::ResampleFailed).action
+              == sdk::ErrorAction::SkipTrack);
     }
 
     TEST_CASE("ToString for ErrorModule returns correct strings")

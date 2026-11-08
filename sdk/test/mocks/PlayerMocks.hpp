@@ -48,9 +48,12 @@ public:
         last_position         = 0;
         last_trace_id.clear();
         track_names.clear();
-        state_sequence.clear();
-        event_sequence.clear();
-        position_values.clear();
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            state_sequence.clear();
+            event_sequence.clear();
+            position_values.clear();
+        }
         last_state = soundbridge::PlayerState::Stopped;
     }
 
@@ -207,8 +210,11 @@ public:
         last_duration         = 0;
         last_position         = 0;
         last_trace_id.clear();
-        music_list.clear();
-        event_sequence.clear();
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            music_list.clear();
+            event_sequence.clear();
+        }
         last_state = sdk::MusicPlayerState::StoppedState;
     }
 
