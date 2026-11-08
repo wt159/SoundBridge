@@ -118,6 +118,9 @@ cmake --build build --target package_portable
 - **`if:` 不含状态检查函数时，Actions 会自动套一层隐式 `success()`**。所以「构建成功就回写缓存」这类
   步骤必须显式写 `(!cancelled()) && ...`，否则前面的用例一红它就跟着被跳过（2026-11-07 踩过：
   冷构建 24 分钟做完、缓存没写回，下一轮又白等一次冷构建）。
+- **判定 CI 成败只认 `gh run view <id> --json status,conclusion,attempt`**。`gh run watch <id> --exit-status | tail` 未加 `set -o pipefail` 时退出码取 `tail` 的 0，失败 run 会被看成成功（2026-11-08 踩过一次假绿）。纯 `doc/` / `docs/` / `AGENTS.md` 提交不触发 CI：两个 workflow 的 `push` 与 `pull_request` 都带 `paths` 过滤（`CMakeLists.txt` / `cmake/**` / `app/**` / `scripts/**` / `sdk/**` / workflow 自身），这类提交不出现在 run 列表里属预期，别误判成「CI 挂了没跑」。
+- **判 flake 四条证据**：① 同一代码在 PR run 已绿；② 失败目标不在本次改动文件；③ 该目标常态耗时吻合；④ `gh run rerun <id> --failed` 全绿。Linux 侧有低概率单目标 flake（2026-11-08：`sdk_badinput_rejection_tests` 的 `getMusicCount()==1` 20s 等待超时；PR #111 合并后 `sdk_interaction_tests` 的 `seek to middle moves position forward` 还出现过 `SIGSEGV` 进程崩溃、14 断言全过的新形态）。**别为此放宽超时或改动 BadInput 55 例基线**，只做一次 rerun 取证。当 ② 不成立时用替代取证：比对 merge commit 与 PR 分支头的 tree（相同即逐字节同代码）、用 doctest suite 过滤器确认失败用例与新增用例零交集、确认生产包装层默认关闭时行为等价。日志里 grep 到的 `sigsegv` 多数是 g3log 示例 `main_sigsegv.cpp` 的编译输出，别当成历史崩溃。
+- **新增测试专用钩子（哪怕默认关闭）也要走稳定性闸门**：release/acquire 内存序、只在控制线程读写、绝不落解码线程 / 消费主循环 / 判据主循环；放行前必须做 master 与分支**同轮数** `ctest -j4` 对照（2026-11-08 C1/C5：分支 10/10 vs master 9/10 才放行），单目标串行绿不算证据。落在解码线程或判据主循环的额外写会把 `-j4` 假红率从 0 抬到约 30%（O1 对照实验）。
 - **Windows 上非 ASCII 文件名必须按宽字符打开**：`sdk/extractor/FileSource.cpp` 用 `_wfopen`
   + `sdk_utils::toWideString`；`toNativeString` 是 UTF-8 → ANSI(`CP_ACP`) 的有损转换，
   在 en-US runner 上中文变 `?`，只保留给确实需要 ANSI 的老 API。不要再用它打开文件。
