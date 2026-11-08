@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-07
-- 来源：[#77「播放状态集合与术语边界」](https://github.com/wt159/SoundBridge/issues/77)、[#75「地图：播放器状态与公开 API 契约」](https://github.com/wt159/SoundBridge/issues/75)；事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76)
+- 来源：[#77「播放状态集合与术语边界」](https://github.com/wt159/SoundBridge/issues/77)、[#75「地图：播放器状态与公开 API 契约」](https://github.com/wt159/SoundBridge/issues/75)；事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76) 与 [`docs/research/public-api-contract-facts.md`](../research/public-api-contract-facts.md)
 
 ## 背景
 

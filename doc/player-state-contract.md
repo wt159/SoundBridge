@@ -6,8 +6,7 @@
 > **本文件是规格，不是实现。** 代码、头文件注释与用例改动走图外执行票；实现清单见第 10 章。
 > 术语以 [`GLOSSARY.md`](../GLOSSARY.md) 为准；难逆转的架构决策见
 > [`docs/adr/0004`](../docs/adr/0004-player-state-three-values.md)。
-> 事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76) 与
-> [`research/public-api-contract-facts`](https://github.com/wt159/SoundBridge/blob/research/public-api-contract-facts/docs/research/public-api-contract-facts.md)。
+> 事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76) 与 [`docs/research/public-api-contract-facts.md`](../docs/research/public-api-contract-facts.md)（2026-11-08 由研究分支归档进 `master`，来源提交 `8d1e8adfa`；行号基于 2026-11-07 基线，C1–C6 落地后的现行契约以本规格为准）。
 
 ## 1. 目的地与范围
 

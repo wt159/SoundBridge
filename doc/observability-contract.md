@@ -2,7 +2,7 @@
 
 > 地图「观测指标、drift 判定与契约漂移守护」（[#94](https://github.com/wt159/SoundBridge/issues/94)）的收口产物，2026-11-08。
 > 本规格只裁一件事：**观测数值如何变成判定，以及不参与判定时该怎么写才不会被误读成门禁**。不改任何代码、用例、CI 配置与既有判据数值。
-> 事实基线见 [CI 观测现状与数值基线的事实核对](https://github.com/wt159/SoundBridge/issues/95) 产出的 [`docs/research/observability-facts.md`](https://github.com/wt159/SoundBridge/blob/research/observability-facts/docs/research/observability-facts.md)；凡本规格与旧文档冲突，以该实测为准（更正清单见 §9）。
+> 事实基线见 [CI 观测现状与数值基线的事实核对](https://github.com/wt159/SoundBridge/issues/95) 产出的 [`docs/research/observability-facts.md`](../docs/research/observability-facts.md)（2026-11-08 由研究分支归档进 `master`，来源提交 `85f93970`）；凡本规格与旧文档冲突，以该实测为准（更正清单见 §9）。该文是当时的事实快照，与现行规格冲突处以本规格为准，见文首归档说明。
 
 ## 1. 目的地与范围
 

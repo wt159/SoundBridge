@@ -155,7 +155,7 @@ graph TD
 
 ### 3.2 优化方案：双线程模型
 
-> **2026-11-07 事实更正（#76 实测）**：以下 3.2 是**未落地的历史优化设想**，不是现状描述。当前实现仍是单条 `WorkQueue` 线程：`consumeAudioData` 只是同队列 `startTimerTask(true, 10, ...)` 定时任务（`sdk/MusicPlayer.cpp:622`），六个 `PlayerCallbacks` 也都在该线程同步发出；不存在独立的「数据流线程」。事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76)，线程契约见 [`doc/player-state-contract.md`](player-state-contract.md) §3。
+> **2026-11-07 事实更正（#76 实测）**：以下 3.2 是**未落地的历史优化设想**，不是现状描述。当前实现仍是单条 `WorkQueue` 线程：`consumeAudioData` 只是同队列 `startTimerTask(true, 10, ...)` 定时任务（`sdk/MusicPlayer.cpp:622`），六个 `PlayerCallbacks` 也都在该线程同步发出；不存在独立的「数据流线程」。事实基线见 [#76](https://github.com/wt159/SoundBridge/issues/76) 与 [`docs/research/public-api-contract-facts.md`](../docs/research/public-api-contract-facts.md)，线程契约见 [`doc/player-state-contract.md`](player-state-contract.md) §3。
 
 将控制流（状态管理、列表操作、文件 IO）与数据流（音频数据读取、SDL 写入）彻底分离，引入专门的音频消费线程。
 

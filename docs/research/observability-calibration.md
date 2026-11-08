@@ -2,7 +2,7 @@
 
 > 本文是 [`doc/observability-contract.md`](../../doc/observability-contract.md) §3.2 第 1–3 步与图外清单 **O5** 的产出，**只给事实与分布**。
 > **不作为失败门禁、不拍任何数值阈值**。第 4 步「单开票拍板」由一张独立 issue 承接；第 5 步「生效前禁止写入断言、注册 `add_test` 分组、把观测 step 改成门禁」仍然生效。
-> CI 步骤 / 素材矩阵 / 播放器可观测面的事实基线另见 `research/observability-facts` 分支 `85f93970`，两者不重复；本文只做「跨运行数值分布」。
+> CI 步骤 / 素材矩阵 / 播放器可观测面的事实基线另见 [同目录下的事实核对](./observability-facts.md)（原 `research/observability-facts` 分支 `85f93970`，2026-11-08 已归档进 `master`），两者不重复；本文只做「跨运行数值分布」。
 > 阈值拍板票：[#104 后续 effort：L1/L2 观测指标与 drift 的数值阈值拍板](https://github.com/wt159/SoundBridge/issues/104)。
 
 ## 1. 样本范围与口径
@@ -146,7 +146,7 @@ CI 观测 step `Report streaming budget instruments (observation only, non-gatin
 | 4 单开票拍板 | **已裁决，[#104](https://github.com/wt159/SoundBridge/issues/104) 已关闭** | 结论：**不设任何数值阈值、维持只记录**；五项逐项依据见 `../../doc/observability-contract.md` §3.5 |
 | 5 生效前禁止 | **永久生效** | 本次未拍板任何阈值，故永久不写入断言 / `add_test` / CI 变更；将来要设阈值须另开新票重走五步 |
 
-**已裁决不拍**（[#104](https://github.com/wt159/SoundBridge/issues/104)，2026-11-08）：drift 的 `R`、`ρ` 门槛、`initScanUs` / `startToFirstPcmUs` 上界、`boundaryMicros` 门槛、`open_file_ms` / `track_switch_ms` 是否设限，全部维持「只记录、不设数值阈值」。依据与反悔通道见 `../../doc/observability-contract.md` §3.5。两个生产链指标在 CI 至今 **0 匹配、完全不可见**（见 `research/observability-facts` 与规格 §5），本文**没有**它们的样本，图外 O2 未做。
+**已裁决不拍**（[#104](https://github.com/wt159/SoundBridge/issues/104)，2026-11-08）：drift 的 `R`、`ρ` 门槛、`initScanUs` / `startToFirstPcmUs` 上界、`boundaryMicros` 门槛、`open_file_ms` / `track_switch_ms` 是否设限，全部维持「只记录、不设数值阈值」。依据与反悔通道见 `../../doc/observability-contract.md` §3.5。两个生产链指标在 CI 至今 **0 匹配、完全不可见**（见[事实核对](./observability-facts.md)「表 2」与规格 §5），本文**没有**它们的样本，图外 O2 未做。
 
 **零改动声明**：本文只新增一份 `docs/research/` 文档，不改代码、用例、CI 配置与任何既有判据数值；14 个 `sdk_*` 目标、7 组 `TIMEOUT`、既有容差与 BadInput / 覆盖度基线全部一字不动。
 

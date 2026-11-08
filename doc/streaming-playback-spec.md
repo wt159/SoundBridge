@@ -251,7 +251,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 ### 12.4 后续 effort 输入说明
 
-> 2026-11-08 地图「观测指标、drift 判定与契约漂移守护」（[#94](https://github.com/wt159/SoundBridge/issues/94)）已逐条裁决并产出 `doc/observability-contract.md`。以下保留原五条并附裁决状态；**冲突处以实测与新规格为准**，事实基线见 `research/observability-facts` 分支。
+> 2026-11-08 地图「观测指标、drift 判定与契约漂移守护」（[#94](https://github.com/wt159/SoundBridge/issues/94)）已逐条裁决并产出 `doc/observability-contract.md`。以下保留原五条并附裁决状态；**冲突处以实测与新规格为准**，事实基线见 [`docs/research/observability-facts.md`](../docs/research/observability-facts.md)（原 `research/observability-facts` 分支，2026-11-08 已归档进 `master`）。
 
 1. 三个独立指标（12.2）只有数值与口径、没有阈值；后续 effort 要立判据，须先用本票留下的 CI 日志数值定标，再决定阈值，别在缺基线时拍板。
    → **部分过时**：实测四个观测仪表在 CI 有数值，但 `open_file_ms` / `track_switch_ms` 两个生产链指标在 CI **完全不可见**（`metric=` 及两指标名 0 匹配，CI 只跑测试二进制 / ctest，不跑播放器生产链）。定标已写成五步流程（新规格 §3.2），两指标口径见新规格 §5。
