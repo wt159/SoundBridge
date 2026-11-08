@@ -15,7 +15,7 @@
 - 播放器状态机与 app UI（`PlayerState` 三态、`durationMs == 0` 的显示与 seek 禁用、事件回调语义）不在本图范围内；**该独立地图 [#75](https://github.com/wt159/SoundBridge/issues/75) 已于 2026-11-07 收口**，结论见 [`doc/player-state-contract.md`](player-state-contract.md) 与 [ADR 0004](../docs/adr/0004-player-state-three-values.md)。
 - 设备抽象 `IAudioSink`、听感与重采样质量、格式扩展与提取器插件化不在范围内。
 - 用例与断言的实现不在本图内；本文件只给判据与决策。
-- **#8「support stream programme」保持 OPEN** 作目的地锚点。其正文 *Streaming decoding and playback scheme for local music players* 讲的是本地文件边解边播，旧文档里的「网络流」是措辞偏差。
+- **#8「support stream programme」保持 OPEN** 作目的地锚点。其正文 *Streaming decoding and playback scheme for local music players* 讲的是本地文件边解边播，旧文档里的「网络流」是措辞偏差。**2026-11-08 补充**：该功能已由 E 链 #55–#69（PR #69，2026-11-06 合并）完整落地，本票保持 OPEN 只是锚点约定，**不代表功能未完成**；网络流 / URL 数据源属本规格界外，若要做得另开新票重新裁决，不要挂到 #8 上。
 
 ### 1.1 现状基线（2026-11-04 实测）
 
