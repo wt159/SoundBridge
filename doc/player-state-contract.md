@@ -167,7 +167,7 @@
 
 ## 10. 从决策到实现
 
-### 10.1 实现清单（图外执行票，本图不建票、不落代码）
+### 10.1 实现清单（已由图外执行票落地）
 
 | 编号 | 内容 |
 |---|---|
@@ -178,9 +178,9 @@
 | C5 | 播放列表错误路径是否补 `ErrorAction::SkipTrack` 检查（§6.3 登记项） |
 | C6 | 回调顺序 / 幂等 / 必须上报清单的补强用例（不改既有数值） |
 
-实现路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆执行票 + 原生阻塞边 → `/implement-spec` 在 frontier 上并行 implementer 子 agent、integration branch、一次 `/code-review`。**本图收口时 spec 刚产出，尚无可执行的执行票，故本轮不启动 `/implement-spec`。**
+实现路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆执行票 + 原生阻塞边 → `/implement-spec` 在 integration branch 上实现、一次 `/code-review`。**该链已于 2026-11-08 跑完**：Spec [#85](https://github.com/wt159/SoundBridge/issues/85)、执行票 [#86](https://github.com/wt159/SoundBridge/issues/86)–[#92](https://github.com/wt159/SoundBridge/issues/92)、集成分支 `implement/player-state-contract`；C1–C6 全部落地，逐项落点见 §10.4。
 
-### 10.2 `player.h` 建议注释文本（交 C3 落地，本图不改代码）
+### 10.2 `player.h` 建议注释文本（已由 [T01 / #86](https://github.com/wt159/SoundBridge/issues/86) 落地）
 
 ```
 // 回调在 SDK 内部单一串行线程上同步发出，不在调用者线程、不并发。
@@ -193,6 +193,22 @@
 
 - fog「公开 API 的兼容 / 演进策略」→ 因不改签名而闭合，删除（§4）。
 - fog「能力查询是否独立成 API」→ 裁定不需要，删除（§7）。
-- fog「契约漂移的长期观测口径」→ 不在本图收口，作为后续执行 effort 的输入；若像 #68 的 StreamingBudget 一样只记录不设门槛，须写明「不作为失败门禁」。
+- fog「契约漂移的长期观测口径」→ 本图与后续实现 effort 均未裁决，仍交后续 effort；若像 #68 的 StreamingBudget 一样只记录不设门槛，须写明「不作为失败门禁」。
 - **已知代价**：三态无法区分「准备中」与「停止」，调用方只能靠 `trackCount()` / 回调组合判断；error→state 的顺序调整会让播放列表错误路径的 UI 提示相对状态晚一步，属可接受代价（避免 autoSkip 场景下先发一个不存在的状态）。
 - 端到端 drift / 切换开销 / 观测指标判据仍是 #42 残留 fog 与 #68 交棒的另一 effort，与本图无关。
+
+### 10.4 实现落地记录（2026-11-08）
+
+| 编号 | 落点 |
+|---|---|
+| C1 | `sdk/MusicPlayer.cpp::onMusicPlayListError` 先 `onError`、仅在「不跳轨 / 跳轨失败」时发状态；`updatePlayState` 以「最近真正发出去的状态」去重 |
+| C2 | `reportPosition` 统一 seek / 消费循环 / 切歌三个位置出口，用 `m_positionFloor` + `m_positionTrackIndex` + `m_positionEpoch` 保证同曲单调、换曲归零、旧会话在途任务失效 |
+| C3 | `sdk/include/soundbridge/player.h` 按 §10.2 落地五条注释 |
+| C4 | `sdk/test/unit/test_player_integration.cpp` 两条空操作判据（无曲目 `duration()==0` / 起播后超界 seek） |
+| C5 | 播放列表错误路径补 `ErrorAction::SkipTrack` 检查；`sdk/test/unit/test_error.cpp` 的 action 表锁住口径输入值 |
+| C6 | 曲目三连、重复命令幂等、状态序列无相邻重复的补强用例 |
+
+- **回归与审查**：本地 `ctest -j4` 14/14 绿（含坏输入四段与覆盖度）；一次 `code-review` 提出的 4 条 Major（会话代际漏钳制、状态去重键错误、用例与目标路径错配、裸 sleep / 无声卡 flaky）与 4 条 Minor 已在一个修复提交里全部处理，细节见各票 resolution comment。既有容差数值、坏输入 55 例、14 个 `sdk_*` 目标与 TIMEOUT 全部未动。
+- **务实取舍**：C1–C6 都改同一批文件，且本机 Qt/ffmpeg 依赖与 `build/` 缓存绑定主工作区，多 worktree 独立编译不可行；故 implementer 按拓扑序在同一 integration branch 上逐票提交，task graph、原生阻塞边与一次 `code-review` 均保留。
+- **已知判据缺口**：C1 的 error→state 顺序与 C5 的「设备错误不跳轨」缺端到端判据 —— 现有接缝无法稳定注入「带状态变化的错误」，而新增可注入接缝违反 §8「不新造接缝」。这两条由生产链改动 + 代码审查 + 全量回归锁定；将来若出现可控的错误注入接缝，应补判据。
+- **fog**：契约漂移的长期观测口径本 effort 未裁决，交后续 effort；若只记录不设门槛，须写明「不作为失败门禁」。
