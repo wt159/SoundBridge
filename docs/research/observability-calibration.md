@@ -143,10 +143,10 @@ CI 观测 step `Report streaming budget instruments (observation only, non-gatin
 | 1 取数 | **完成** | 本文 §1.4 的 13 个成功 master push run，逐 run 下载日志核对 |
 | 2 归档 | **完成** | 本文 §2–§5，按观测点与格式分组，附 run id 与日志行号 |
 | 3 看分布 | **完成** | §2 / §4 的 min / 中位数 / max 与离群归因；结构值恒定、µs 时间值高波动 |
-| 4 单开票拍板 | **已开 [#104](https://github.com/wt159/SoundBridge/issues/104)** | 票内列候选量与依据，**不填阈值数字** |
-| 5 生效前禁止 | **仍然生效** | 本文不构成门禁，不写入任何断言 / `add_test` / CI 变更 |
+| 4 单开票拍板 | **已裁决，[#104](https://github.com/wt159/SoundBridge/issues/104) 已关闭** | 结论：**不设任何数值阈值、维持只记录**；五项逐项依据见 `../../doc/observability-contract.md` §3.5 |
+| 5 生效前禁止 | **永久生效** | 本次未拍板任何阈值，故永久不写入断言 / `add_test` / CI 变更；将来要设阈值须另开新票重走五步 |
 
-**明确不拍**：drift 的 `R`、`ρ` 门槛、`open_file_ms` / `track_switch_ms` 是否设限。两个生产链指标在 CI 至今 **0 匹配、完全不可见**（见 `research/observability-facts` 与规格 §5），本文**没有**它们的样本，图外 O2 未做。
+**已裁决不拍**（[#104](https://github.com/wt159/SoundBridge/issues/104)，2026-11-08）：drift 的 `R`、`ρ` 门槛、`initScanUs` / `startToFirstPcmUs` 上界、`boundaryMicros` 门槛、`open_file_ms` / `track_switch_ms` 是否设限，全部维持「只记录、不设数值阈值」。依据与反悔通道见 `../../doc/observability-contract.md` §3.5。两个生产链指标在 CI 至今 **0 匹配、完全不可见**（见 `research/observability-facts` 与规格 §5），本文**没有**它们的样本，图外 O2 未做。
 
 **零改动声明**：本文只新增一份 `docs/research/` 文档，不改代码、用例、CI 配置与任何既有判据数值；14 个 `sdk_*` 目标、7 组 `TIMEOUT`、既有容差与 BadInput / 覆盖度基线全部一字不动。
 
