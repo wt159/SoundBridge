@@ -245,6 +245,28 @@ TEST_SUITE("MusicPlayer Error Handling")
         CHECK(listener.error_count > 0);
     }
 
+    // #87 / T02：错误不进状态面（规格 §2 / §3）。无曲目时 play() 只发 onError，
+    // 不产生任何 onStateChanged。注意这条走 _play() 的 cur==nullptr 分支，不经过
+    // onMusicPlayListError；C1 的 error→state 顺序由生产链改动与 code-review 锁定，
+    // 现有接缝无法稳定注入「带状态变化的错误」，不新造接缝（规格 §8）。
+    TEST_CASE("play without track reports error without a state event")
+    {
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+
+        player.play();
+        REQUIRE(waitFor([&listener]() { return listener.error_count.load() > 0; }, 3000));
+
+        const std::vector<std::string> events = listener.eventSequence();
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "error") == 1,
+                      "无曲目时 play() 应且仅应上报一次错误");
+        CHECK_MESSAGE(MockMusicPlayerListener::countEvents(events, "state") == 0,
+                      "错误不得进状态面：不该收到 onStateChanged");
+        REQUIRE_FALSE(events.empty());
+        CHECK_MESSAGE(events.front() == "error", "错误必须是这个场景的第一个事件");
+    }
+
     TEST_CASE("autoSkipOnError is enabled by default")
     {
         MockMusicPlayerListener listener;
@@ -1193,6 +1215,319 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         CHECK_MESSAGE(apiPosition - callbackPosition <= 50,
                       "position getter 与回调相差 " << (apiPosition - callbackPosition) << "ms");
         CHECK(stopped);
+    }
+
+    // 判据沿用既有「回调值序列」接缝，不改任何既有容差数值。
+    // 判据沿用既有「回调值序列」接缝，不新造数值、不裸 sleep 兜底。
+    TEST_CASE("position callbacks stay monotonic and a legal seek still rewinds")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("monotonic");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor([&player]() { return player.trackCount() > 0; }, 5000)) {
+            skipCase("playlist empty");
+            return;
+        }
+
+        player.play();
+        if (!waitFor(
+                [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                3000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+
+        const bool sampled = waitFor(
+            [&callbacks]() {
+                return callbacks.positionValues().size() >= 3
+                    && callbacks.last_position.load() > 500;
+            },
+            3000);
+        const std::vector<uint64_t> first = callbacks.positionValues();
+        bool monotonic = true;
+        for (size_t i = 1; i < first.size(); ++i) {
+            if (first[i] < first[i - 1]) {
+                monotonic = false;
+            }
+        }
+
+        CHECK_MESSAGE(sampled, "稳态播放期间没有积累到足够的 position 回调");
+        REQUIRE(first.size() >= 3);
+        CHECK_MESSAGE(monotonic, "同曲会话内 position 回调出现回退");
+
+        const uint64_t before     = first.back();
+        const size_t beforeCount  = first.size();
+        REQUIRE(before > 500);
+        player.seek(100);
+        const bool rewound = waitFor(
+            [&callbacks, beforeCount, before]() {
+                const std::vector<uint64_t> vals = callbacks.positionValues();
+                for (size_t i = beforeCount; i < vals.size(); ++i) {
+                    if (vals[i] < before) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            3000);
+        const std::vector<uint64_t> after = callbacks.positionValues();
+        bool afterMonotonic = true;
+        for (size_t i = beforeCount + 1; i < after.size(); ++i) {
+            if (after[i] < after[i - 1]) {
+                afterMonotonic = false;
+            }
+        }
+        player.stop();
+
+        CHECK_MESSAGE(rewound, "seek 的合法回退被单调钳制吞掉了");
+        CHECK_MESSAGE(afterMonotonic, "seek 之后的新位置会话里出现回退");
+    }
+
+    // #89 / T04：标称时长为 0 时 seek 是空操作（规格 §7）。INVALID_OPERATION 是内部
+    // #89 / T04：标称时长为 0 时 seek 是空操作（规格 §7）。INVALID_OPERATION 是内部
+    // 降级码、不对外暴露；对调用方的可见结果是「位置不回退、无新回调、无状态、无错误」。
+    // 用例一覆盖「无曲目且 duration()==0」，用一次必然上报的 play() 作队列屏障；
+    // 用例二先起播让 currentTask 存在，才真正进入 pos > durationMs 的降级 return，
+    // 与 durationMs==0 && pos>0 同源。
+    TEST_CASE("seek with no current track is a silent no-op")
+    {
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+
+        CHECK(player.duration() == 0);
+        CHECK(player.position() == 0);
+        player.seek(5000);
+        // 队列屏障：play() 排在 seek 之后，无曲目时必定上报一次 onError；它到达即说明
+        // seek 已被队列取出处理，此时再取否定断言，不用裸 sleep 兜底。
+        player.play();
+        REQUIRE(waitFor([&callbacks]() { return callbacks.error_count.load() > 0; }, 3000));
+
+        const std::vector<std::string> events = callbacks.eventSequence();
+        CHECK_MESSAGE(MockPlayerCallbacks::countEvents(events, "state") == 0,
+                      "空播放列表的 seek 不应改变状态");
+        CHECK_MESSAGE(MockPlayerCallbacks::countEvents(events, "position") == 0,
+                      "空播放列表的 seek 不应产生位置回调");
+        CHECK_MESSAGE(MockPlayerCallbacks::countEvents(events, "error") == 1,
+                      "唯一的错误应来自屏障 play()，seek 自身不报错");
+        CHECK(player.position() == 0);
+        CHECK(player.state() == soundbridge::PlayerState::Stopped);
+    }
+
+    TEST_CASE("seek beyond nominal duration is a silent no-op")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("seeknoop");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor(
+                [&player]() { return player.trackCount() > 0 && player.duration() > 0; },
+                5000)) {
+            skipCase("playlist or duration unavailable");
+            return;
+        }
+
+        // 必须先起播：只有 currentTask 存在时 _setPosition 才会走到
+        // pos > durationMs 的降级 return，否则在「无任务」处就早退了。
+        player.play();
+        if (!waitFor(
+                [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                3000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        if (!waitFor(
+                [&callbacks]() { return callbacks.positionValues().size() >= 2; }, 3000)) {
+            skipCase("playback never produced position callbacks");
+            return;
+        }
+
+        const int errBefore      = callbacks.error_count.load();
+        const int stateBefore    = callbacks.state_change_count.load();
+        const uint64_t duration  = player.duration();
+        const uint64_t target    = duration + 1000;
+        const size_t beforeCount = callbacks.positionValues().size();
+
+        player.seek(target);
+        // 用「又来了一个 position 回调」作为队列已推进的确定信号，再在这个窗口里
+        // 检查位置没有跳到超界目标、错误与状态都没有变化。
+        const bool advanced = waitFor(
+            [&callbacks, beforeCount]() {
+                return callbacks.positionValues().size() > beforeCount;
+            },
+            3000);
+        const std::vector<uint64_t> values = callbacks.positionValues();
+        bool jumpedToTarget = false;
+        for (size_t i = beforeCount; i < values.size(); ++i) {
+            if (values[i] >= target) {
+                jumpedToTarget = true;
+            }
+        }
+
+        CHECK_MESSAGE(advanced, "seek 后播放没有继续推进，判据窗口无效");
+        CHECK_MESSAGE(!jumpedToTarget, "超界 seek 竟然把位置落到了目标");
+        CHECK(callbacks.error_count.load() == errBefore);
+        CHECK(callbacks.state_change_count.load() == stateBefore);
+        CHECK(player.position() < target);
+        player.stop();
+    }
+
+    // #91 / T06：曲目切换固定三连（规格 §3），duration 每曲一次且与 getter 一致。
+    TEST_CASE("track change emits the fixed three-callback sequence")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("triple");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor(
+                [&]() {
+                    return player.trackCount() > 0
+                        && callbacks.duration_change_count.load() > 0;
+                },
+                5000)) {
+            skipCase("playlist or duration callback unavailable");
+            return;
+        }
+
+        const std::vector<std::string> events = callbacks.eventSequence();
+        const size_t track = MockPlayerCallbacks::firstEvent(events, "track");
+        const size_t duration = MockPlayerCallbacks::firstEvent(events, "duration");
+        const size_t position = MockPlayerCallbacks::firstEvent(events, "position");
+        CHECK_MESSAGE(track < events.size(), "曲目切换没有发 onTrackChanged");
+        CHECK_MESSAGE(track < duration, "onTrackChanged 必须早于 onDurationChanged");
+        CHECK_MESSAGE(duration < position, "onDurationChanged 必须早于 onPositionChanged");
+        // 只数「首个曲目切换窗口」（首个 position 之前）内的 duration，避免稳态播放
+        // 或后续选曲追加的事件让计数断言失真。
+        size_t durationInWindow = 0;
+        for (size_t i = 0; i < position && i < events.size(); ++i) {
+            if (events[i] == "duration") {
+                ++durationInWindow;
+            }
+        }
+        CHECK_MESSAGE(durationInWindow == 1, "首个曲目切换窗口内只应报一次 duration");
+        CHECK(callbacks.last_duration.load() == player.duration());
+    }
+
+    // #91 / T06：重复控制命令不重复发状态（规格 §4），状态序列无相邻重复。
+    TEST_CASE("repeated control commands do not duplicate state callbacks")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("idempotent");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor([&player]() { return player.trackCount() > 0; }, 5000)) {
+            skipCase("playlist empty");
+            return;
+        }
+
+        player.play();
+        if (!waitFor(
+                [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                3000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+
+        // 每个重复命令后面接一个「必定改变状态」的哨兵命令作为队列屏障：
+        // 屏障生效后再取计数，不用裸 sleep 猜命令何时出队。
+        const int afterPlay = callbacks.state_change_count.load();
+        player.play();   // 重复
+        player.pause();  // 屏障：Paused
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Paused; },
+            3000));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterPlay + 1,
+                      "Playing 下重复 play() 发了额外的状态回调");
+
+        const int afterPause = callbacks.state_change_count.load();
+        player.pause();  // 重复
+        player.play();   // 屏障：Playing
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+            3000));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterPause + 1,
+                      "Paused 下重复 pause() 发了额外的状态回调");
+
+        const int afterResume = callbacks.state_change_count.load();
+        player.stop();
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+            3000));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterResume + 1,
+                      "stop() 应且仅应发一次状态回调");
+
+        const int afterStop = callbacks.state_change_count.load();
+        player.stop();   // 重复
+        player.play();   // 屏障：Playing
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+            3000));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterStop + 1,
+                      "Stopped 下重复 stop() 发了额外的状态回调");
+        player.stop();
+
+        const std::vector<soundbridge::PlayerState> states = callbacks.stateSequence();
+        bool duplicate = false;
+        for (size_t i = 1; i < states.size(); ++i) {
+            if (states[i] == states[i - 1]) {
+                duplicate = true;
+            }
+        }
+        CHECK_MESSAGE(!duplicate, "状态序列里出现了相邻重复项");
     }
 
     // #72 / P2-11

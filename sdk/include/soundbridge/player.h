@@ -22,6 +22,13 @@ struct PlayerConfig {
     bool autoSkipOnError = true;
 };
 
+// 回调在 SDK 内部单一串行线程上同步发出，不在调用者线程、不并发。
+// 调用方自行 marshal 到自己的线程。回调内禁止调用 Player 的任何控制命令，
+// 禁止析构 Player，禁止抛异常。callbacks 由调用方持有，须活过 Player 析构；
+// 停机期间不保证也不发送任何回调。
+//
+// 完整契约（状态取值、回调顺序、控制命令语义、错误先后）见
+// doc/player-state-contract.md。
 class PlayerCallbacks {
 public:
     virtual ~PlayerCallbacks()                                         = default;
