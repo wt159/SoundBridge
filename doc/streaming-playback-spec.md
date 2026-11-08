@@ -251,12 +251,21 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 ### 12.4 后续 effort 输入说明
 
+> 2026-11-08 地图「观测指标、drift 判定与契约漂移守护」（[#94](https://github.com/wt159/SoundBridge/issues/94)）已逐条裁决并产出 `doc/observability-contract.md`。以下保留原五条并附裁决状态；**冲突处以实测与新规格为准**，事实基线见 `research/observability-facts` 分支。
+
 1. 三个独立指标（12.2）只有数值与口径、没有阈值；后续 effort 要立判据，须先用本票留下的 CI 日志数值定标，再决定阈值，别在缺基线时拍板。
-2. 端到端 drift 仍未判：先定义「播放时钟 / 源时钟」的取数点与量纲，再谈判定与阈值（参见 `doc/开发方向建议.md` 的「长时播放 drift 检测」）。本票不新增仪表、不给数值判据。
-3. 跨素材峰值差判据（`|peak_long − peak_short| ≤ P`）因素材矩阵缺口（ogg / wma 各仅 1 首、无同格式长短配对）不可验，#67 已如实标注；补素材后再验。
-4. 本地 `ctest` 的 `sdk_unit_tests` 在修好 SIGSEGV 后全量约 191 s、命中 `TIMEOUT 180`，本地 ctest 7/8；票面记「CI 路径不经它、不受影响」，12.5 补记显示 coverage 脚本间接会跑它，CI 实况本机未验证。是否调整交用户决策，本票不动 `TIMEOUT`。
-5. 全量 `UnitTests.exe`（不带参数）在 integration 上已验证 492 用例 / 50078 断言 / 0 failed / exit 0；Linux `sdk-coverage` 本机未验证；**本票 CI 观测是否真的在 GitHub Actions 显示数值，本机无法运行，未在真实 CI 验证**。
+   → **部分过时**：实测四个观测仪表在 CI 有数值，但 `open_file_ms` / `track_switch_ms` 两个生产链指标在 CI **完全不可见**（`metric=` 及两指标名 0 匹配，CI 只跑测试二进制 / ctest，不跑播放器生产链）。定标已写成五步流程（新规格 §3.2），两指标口径见新规格 §5。
+2. 端到端 drift 仍未判：先定义「播放时钟 / 源时钟」的取数点与量纲，再谈判定与阈值（参见 `doc/开发方向建议.md` 的「长时播放 drift 检测」）。
+   → **已裁决（定义层）**：取数点、量纲与判定式 `ρ ≤ R` 见新规格 §4；`R` 仍不拍，按 §3.2 定标后单开票。最小取数点归图外 O1。
+3. ~~跨素材峰值差判据（`|peak_long − peak_short| ≤ P`）因素材矩阵缺口（ogg / wma 各仅 1 首、无同格式长短配对）不可验，#67 已如实标注；补素材后再验。~~
+   → **已更正（原文与实测冲突，见新规格 §6）**：本规格 §5 要求的是「15 行**任意**长短素材对」，从不要求同格式；#67 票面验收项明写「长短配对（3.7 s ogg ↔ 259 s wma）峰值差 ≤ P」，resolution 明写「StreamingBudget 四条判据全绿」，两个成功 CI run 也都有 `peakHeldBytes` 数值。故判据状态是**已通过**（L0），`P` / 15 行 / 表达式一字不动、不降级为只记录；「无同格式长短配对」只是格式内交叉校验未做，登记为 L3 待验、归图外 O3，不补素材。
+4. ~~本地 `ctest` 的 `sdk_unit_tests` 在修好 SIGSEGV 后全量约 191 s、命中 `TIMEOUT 180`，本地 ctest 7/8 … 是否调整交用户决策。~~
+   → **已过时 / 已裁决**：该目标现已拆分，CI 实测 14 个 `sdk_*` 目标全绿、总测试时间 67–97 s，`TIMEOUT` 未命中。裁定 `TIMEOUT` 与快集 / 全量集划分维持不动（新规格 §3.3）。
+5. ~~**本票 CI 观测是否真的在 GitHub Actions 显示数值，本机无法运行，未在真实 CI 验证**。~~
+   → **已闭合**：两个成功 run（`42442116861` attempt 2、`42442016087`）的 job 日志里四个仪表**全部可见且带数值**（各 24 / 7 / 12 / 11 行），`boundaryMicros` / `packets` / `packetsPulled` 也在。Linux `sdk-coverage` 2026-11-08 实测 14/14 全绿。
 
 ### 12.5 CI 事实补记（与票面 / 第 8 节措辞的出入）
 
-`sdk-coverage.yml` 文本里确实没有 `ctest -R sdk_` 命令；但 `coverage` target 经 `scripts/coverage/run_linux.sh:29` **间接**执行 `ctest -R sdk_`（含 `sdk_unit_tests` 全量与 `TIMEOUT 180`）以生成 `.gcda`。因此「CI 只跑 coverage target + MediaCoverage」是 workflow 文本层面的陈述：完整执行链里 8 组 CTest 在 CI 也会跑，只是不带 `-s`、`--output-on-failure` 只在失败时输出，四个仪表数值仍不可见，12.1 的观测 step 仍必要。此出入如实登记，本票不改 coverage 脚本。
+`sdk-coverage.yml` 文本里确实没有 `ctest -R sdk_` 命令；但 `coverage` target 经 `scripts/coverage/run_linux.sh:29` **间接**执行 `ctest -R sdk_` 以生成 `.gcda`。因此「CI 只跑 coverage target + MediaCoverage」是 workflow 文本层面的陈述：完整执行链里 CTest 分组在 CI 也会跑，只是不带 `-s`、`--output-on-failure` 只在失败时输出，12.1 的观测 step 仍必要。此出入如实登记，本票不改 coverage 脚本。
+
+**2026-11-08 事实更正（[#94](https://github.com/wt159/SoundBridge/issues/94) 的事实基线，见 `doc/observability-contract.md` §9.2）**：本段的「8 组 CTest」已过时，现在是 **14 个 `sdk_*` 目标**，`TIMEOUT` 挂 7 组（快集 / streaming / interaction 180，坏输入四段 120）；`StreamingBudget` 有独立目标 `sdk_streaming_tests`（`sdk/test/CMakeLists.txt:223`，TIMEOUT 180），且被 `sdk_unit_tests` 的 `-tse` 排除。「四个仪表数值仍不可见」**仅对 coverage 主链成立**：12.1 的独立观测 step 实测确实把四个仪表数值打进了 CI 日志。另更正 12.1 的一处落点笔误：`MESSAGE(...)` 实际在 `sdk/test/unit/test_streaming_budget.cpp` 与 `test_media_coverage.cpp`，不在 `sdk/test/TestSdkSuite.cpp`。
