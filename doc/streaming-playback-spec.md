@@ -217,9 +217,10 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 ## 11. 已知代价与事实更正
 
 - 「边解边播」是规范术语，但代码符号仍是 `startStreaming` / `AudioStreamDecoder`；不回改，记为已知代价。
-- `segmentBaseBytes` 全仓业务代码**未落地**（现状走 `m_consumedBytes` / `curDataOffset`）；它不是现状 bug，而是按 #47 契约改造后的缺口，归 E3。
+- ~~`segmentBaseBytes` 全仓业务代码**未落地**（现状走 `m_consumedBytes` / `curDataOffset`）；它不是现状 bug，而是按 #47 契约改造后的缺口，归 E3。~~
+  → **已过时 / 已落地（2026-11-08 更正）**：E 链的 E3（[#55](https://github.com/wt159/SoundBridge/issues/55) §9 实现清单 / [#58](https://github.com/wt159/SoundBridge/issues/58) T03）已把它落为 `AudioStreamDecoder::m_segmentBaseBytes`（[`sdk/audio/decode/AudioStreamDecoder.h`](../sdk/audio/decode/AudioStreamDecoder.h):154），`positionMs = (segmentBaseBytes + 段内已读字节) / bytesPerMs` 在同目录 `.cpp:440`；`m_consumedBytes` / `curDataOffset` 在 `sdk/` 已无匹配。[#55](https://github.com/wt159/SoundBridge/issues/55)–[#68](https://github.com/wt159/SoundBridge/issues/68) 十四张票全 CLOSED，PR [#69](https://github.com/wt159/SoundBridge/pull/69) 于 2026-11-06 合并。原文是 E 链开工前（#42 图）的历史快照，保留仅为溯源，「归 E3」不再是待办；本规格 §3 / §5 / §10 的契约描述与现行代码一致。
 - `shouldFillSilence()` 不含「ring 空」条件、`got==0` 静默跳过；`m_seekDiscardBytes` 仅通用解码分支设值（FLAC / Vorbis 分支清零）；`AudioRingBuffer.h:7-9` 注释与现状不符。
-- 首播判据不含 init 扫描与切歌窗口，端到端体验仍有随文件大小增长的**启动开销**与**切换开销**；两个指标只记录、不设阈值，drift 测量留作后续 effort 输入。
+- 首播判据不含 init 扫描与切歌窗口，端到端体验仍有随文件大小增长的**启动开销**与**切换开销**；两个指标只记录、不设阈值，drift 测量留作后续 effort 输入。**2026-11-08 更新**：该输入已由地图 [#94](https://github.com/wt159/SoundBridge/issues/94) 与票 [#104](https://github.com/wt159/SoundBridge/issues/104) 裁决完毕 —— 维持只记录、不设任何数值阈值，`doc/observability-contract.md` §3.2 第 5 步永久生效；drift 取数点 O1（[#105](https://github.com/wt159/SoundBridge/issues/105)）裁为不落地、两个生产链指标的 CI 可见性 O2（[#106](https://github.com/wt159/SoundBridge/issues/106)）裁为不实现，依据见该规格 §3.5 / §4.4 / §8.3。
 - 稳态欠流判据假定测试环境消费端不按实时墙钟节流；若将来改水位驱动或出现真实解码慢于消费的用例，须回来重开此判据。
 - 两处文档偏差已回填：`doc/bad-input-spec.md` 的「1 ms 轮询」→ 5 ms、`#8` 的「网络流 / 边下边播」措辞更正。
 
@@ -256,7 +257,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 1. 三个独立指标（12.2）只有数值与口径、没有阈值；后续 effort 要立判据，须先用本票留下的 CI 日志数值定标，再决定阈值，别在缺基线时拍板。
    → **部分过时**：实测四个观测仪表在 CI 有数值，但 `open_file_ms` / `track_switch_ms` 两个生产链指标在 CI **完全不可见**（`metric=` 及两指标名 0 匹配，CI 只跑测试二进制 / ctest，不跑播放器生产链）。定标已写成五步流程（新规格 §3.2），两指标口径见新规格 §5。
 2. 端到端 drift 仍未判：先定义「播放时钟 / 源时钟」的取数点与量纲，再谈判定与阈值（参见 `doc/开发方向建议.md` 的「长时播放 drift 检测」）。
-   → **已裁决（定义层）**：取数点、量纲与判定式 `ρ ≤ R` 见新规格 §4；`R` 仍不拍，按 §3.2 定标后单开票。最小取数点归图外 O1。
+   → **已裁决（定义层）**：取数点、量纲与判定式 `ρ ≤ R` 见新规格 §4；`R` 仍不拍（[#104](https://github.com/wt159/SoundBridge/issues/104) 已裁「不设任何数值阈值」，§3.2 第 5 步永久生效）。最小取数点原归图外 O1，[#105](https://github.com/wt159/SoundBridge/issues/105) 已裁**不落地生产代码**（`ctest -j4` 对照实验见新规格 §4.4）；将来真要定标须另开新票重走 §3.2 五步。
 3. ~~跨素材峰值差判据（`|peak_long − peak_short| ≤ P`）因素材矩阵缺口（ogg / wma 各仅 1 首、无同格式长短配对）不可验，#67 已如实标注；补素材后再验。~~
    → **已更正（原文与实测冲突，见新规格 §6）**：本规格 §5 要求的是「15 行**任意**长短素材对」，从不要求同格式；#67 票面验收项明写「长短配对（3.7 s ogg ↔ 259 s wma）峰值差 ≤ P」，resolution 明写「StreamingBudget 四条判据全绿」，两个成功 CI run 也都有 `peakHeldBytes` 数值。故判据状态是**已通过**（L0），`P` / 15 行 / 表达式一字不动、不降级为只记录；「无同格式长短配对」只是格式内交叉校验未做，登记为 L3 待验、归图外 O3，不补素材。
 4. ~~本地 `ctest` 的 `sdk_unit_tests` 在修好 SIGSEGV 后全量约 191 s、命中 `TIMEOUT 180`，本地 ctest 7/8 … 是否调整交用户决策。~~

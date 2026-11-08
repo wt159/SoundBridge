@@ -3,6 +3,7 @@
 > **归档说明（2026-11-08，地图 #94 收口）**：本文原产于 `research/observability-facts` 分支提交 `85f93970`（票 #95 的一手事实核对），此前只以孤立分支形式存在。因 `doc/observability-contract.md` 多处引用本文、且 §3.2 第 2 步要求事实基线归档在 `docs/research/`，现原样收进 `master`，仅补本说明，正文未改。
 > 本文是**当时的事实快照**：基线 `master @ e86e9bd5d`，所有 `文件:行号`、CI run id 与日志行号均对应该时点；只给事实，不做任何决策。
 > **优先级**：凡本文与现行 `doc/observability-contract.md` 冲突，以规格为准。已知两处：① 本文「文档偏差清单」第 3 条判 §12.4 第 3 条「仍成立」，而规格 §6 已裁定该条与事实冲突（§5 的峰值差判据只要求 15 行素材里任意长短素材对、不要求同格式，#67 resolution 明写四条判据全绿）；② 由「素材矩阵缺口」推出「判据不可验」的推论同样被规格 §6 覆盖，格式内交叉校验归 L3 图外 O3。其余更正以规格 §9.2 为准。
+> **来源保活（2026-11-08）**：`85f93970` 不在 `master` 历史里，原仅由 `origin/research/observability-facts` 分支保活；现已另打轻量 tag `archive/observability-facts-85f93970` 指向同一提交，即使日后清理该分支，仍可用 `git show <tag>:docs/research/observability-facts.md` 取回原文。两个 ref 均保留，不删除分支。
 > 归档不改代码、用例、CI 配置与任何既有判据数值。
 
 > 本文件由 `research` skill 流程产出：逐条回到一手来源（workflow 文本、源码、规格、真实 GitHub Actions job 日志）核对，每个断言附 `文件:行号` 或 CI run id / 日志行号。

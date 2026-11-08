@@ -2,6 +2,7 @@
 
 > **归档说明（2026-11-08）**：本文原产于 `research/public-api-contract-facts` 分支提交 `8d1e8adfa`（票 #76 的一手事实核对），此前只以孤立分支形式存在；现原样收进 `master`，仅补本说明，正文未改。
 > 本文是**当时的事实快照**：行号基于 `master @ dc8c12229`（2026-11-07），只给事实，不做任何决策。#93 落地 C1–C6 后 `sdk/MusicPlayer.cpp`、`sdk/include/soundbridge/player.h`、`sdk/test/mocks/PlayerMocks.hpp` 等均有改动，源码行号不再逐一对得上；线程、三态与回调契约的现行结论以 `doc/player-state-contract.md`、`sdk/include/soundbridge/player.h` 的回调注释及 `docs/adr/0004-player-state-three-values.md` 为准。
+> **来源保活（2026-11-08）**：`8d1e8adfa` 不在 `master` 历史里，原仅由 `origin/research/public-api-contract-facts` 分支保活；现已另打轻量 tag `archive/public-api-contract-facts-8d1e8adfa` 指向同一提交，即使日后清理该分支，仍可用 `git show <tag>:docs/research/public-api-contract-facts.md` 取回原文。两个 ref 均保留，不删除分支。
 > 归档不改代码、用例、CI 配置与任何既有判据数值。
 
 > 事实票（`research` / AFK）。只给可引用的事实与证据，**不做任何设计决策**，不改动 master 上任何既有源码或文档。
