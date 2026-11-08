@@ -14,7 +14,7 @@
 
 ## 2. 验证步骤（人工复跑，不注册 `add_test`）
 
-1. **取 CI 数值**：`sdk-coverage` 的 `Report streaming budget instruments` step（`sdk-coverage.yml:91-96`）跑 `UnitTests -ts=StreamingBudget -s | grep -E "<六个关键字>"`；step 带 `continue-on-error: true`（步骤级）与 `|| true`（命令级）双保险，两者覆盖不同失败面，缺一不可。
+1. **取 CI 数值**：`sdk-coverage` 的 `Report streaming budget instruments` step（`sdk-coverage.yml:91-96`）跑 `UnitTests -ts=StreamingBudget -s | grep -E "<六个关键字>"`；要指认的具体两行是 `test_streaming_budget.cpp:294-299` 的逐素材 `MESSAGE`（短 / 长各一条，均含 `peakHeldBytes`），另有 `:337-340` 的 `held-peak gap (same cross-format pair)` 行给出既有 L0 配对的 `|Δ|`。step 带 `continue-on-error: true`（步骤级）与 `|| true`（命令级）双保险，两者覆盖不同失败面，缺一不可。
 2. **本地复核**：按项目约定的三重 PATH（3rdparty `bin` + Qt `mingw73_64/bin` + `mingw730_64/bin`），cwd 用 `sdk/test`，跑 `UnitTests -ts=StreamingBudget -s`；对照 `test_streaming_budget.cpp:337-340` 的 `held-peak gap (same cross-format pair)` 行与各格式的 `MESSAGE` 行。
 3. **取按格式分组的数值**：`docs/research/observability-calibration.md` §3 表（13 run 的 `min..max`，全部「恒定」）。素材形状见 `docs/research/observability-facts.md` 表 3 与 `test_media_coverage.cpp:36-50`。
 4. **配对求差**：按扩展名把长短两首的 `peakHeldBytes` 相减，登记 `|Δ|` 与时长形状；**不判 `≤ P`、不写 `CHECK` / `REQUIRE`、不写「通过 / 失败」**。
@@ -28,7 +28,7 @@
 | `.m4a` 格式内 | `music-alac.m4a` 12.000 s → `30434` | `摇滚乐_Freesound.m4a` 69.892 s → `17354` | `13080` | 同扩展名但**不同编码**（ALAC vs AAC） |
 | 跨格式对照（既有 L0 用例） | ogg `3.709 s` → `4608` | wma `259.164 s` → `33325` | `28717` | `test_streaming_budget.cpp:334-340`，§6 已判通过 |
 
-数值来源：`docs/research/observability-calibration.md` §3「按格式分组的结构值」；ogg / wma 的时长与峰值同表，wma 的 measured `261642` / declared `259164` ms 差异属既有 1% 容差范围，与本文配对无关。
+数值来源：[`observability-calibration.md`](./observability-calibration.md) §3「按格式分组的结构值」；ogg / wma 的时长与峰值同表，wma 的 delivered `261642` / declared `259164` ms（沿用该表列名）差异属既有 1% 容差范围，与本文配对无关。
 
 ## 4. 口径限制（必须显式登记）
 

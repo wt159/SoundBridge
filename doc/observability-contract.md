@@ -232,7 +232,7 @@
 
 | 编号 | 内容 | 与 E 链接口 |
 |---|---|---|
-| **O1** | drift 最小取数点：`S(t)` / `P(t)` 同步快照（§4.4） | **须在 E 链涉及时钟改造之前落地** |
+| **O1** | drift 最小取数点：`S(t)` / `P(t)` 同步快照（§4.4；**2026-11-08 已裁不落地，见 §4.4 对照表**） | 原写「须在 E 链涉及时钟改造之前落地」，该前置前提已失效（见下方事实更正），终态以下方状态核对表为准 |
 | **O2** | 让 `open_file_ms` / `track_switch_ms` 在 CI 可见（可选，不新增耗时 gate） | 可与 E 链并行 |
 | **O3** | 格式内长短配对峰值交叉校验的验证步骤（含 drift 共用素材依赖） | 可与 E 链并行，不补素材 |
 | **O4** | §3.4 稳态欠流三条触发条件清单落进规格 / 测试注释 | **E 链改消费模型之前必须落地** |
@@ -245,14 +245,14 @@
 
 | 编号 | 规格层 | 实现层 | 剩余动作与约束 |
 |---|---|---|---|
-| O1 | 已定义（§4.4 同步快照） | **已裁决不落地**（[#105](https://github.com/wt159/SoundBridge/issues/105)，已关闭） | 实现过一版后由 `ctest -j4` 对照实验否掉（master 9/9 绿 vs 本轮约 30% 既有判据假红）；#104 永久不设阈值后无消费方。设计与实测证据见 §4.4，反悔须另开新票 |
+| O1 | 已定义（§4.4 同步快照） | **已裁决不落地**（[#105](https://github.com/wt159/SoundBridge/issues/105)，已关闭） | 实现过一版后由 `ctest -j4` 对照实验否掉（**完整对照表见 §4.4**）；#104 永久不设阈值后无消费方。取数点设计与反悔通道见 §4.4 |
 | O2 | 已定义 | **已裁决不实现**（[#106](https://github.com/wt159/SoundBridge/issues/106)，已关闭） | §5 两条硬约束与「CI 只跑测试二进制 / ctest」互斥；#104 永久不设阈值后可见性无消费方。反悔须另开新票重审约束并重走 §3.2 五步 |
-| O3 | 已定义（L3 待验） | **已落地**（[#107](https://github.com/wt159/SoundBridge/issues/107)，纯文档） | `docs/research/peak-gap-crosscheck.md` 给验证步骤与已归档数值；不补素材、不改 `P`、不加断言；两处口径限制已显式登记 |
+| O3 | 已定义（L3 待验） | **已落地**（[#107](https://github.com/wt159/SoundBridge/issues/107)，已关闭，纯文档） | [`docs/research/peak-gap-crosscheck.md`](../docs/research/peak-gap-crosscheck.md) 给验证步骤与已归档数值；不补素材、不改 `P`、不加断言；口径限制已显式登记 |
 | O4 | **已落地**（§3.4 三条触发条件） | 规格层完成 | 仅剩「测试注释」可选；不重开稳态欠流判据 |
 | O5 | **已完成**（`docs/research/observability-calibration.md`） | 完成 | 第 4 步已由 #104 裁决，见 §3.5 |
 | O6 | **已落地**（§7.2 回填要求） | 规格层完成 | 「每次公开契约变更须同步更新规格 §10 / GLOSSARY / 必要时 ADR 0004 并在 PR 引用」已成规格条款；独立 checklist 文件可选 |
 
-因此真正剩余的只有 **O1 / O2 / O3**：O1 需动生产代码、O2 需先重审自身约束、O3 为纯校验。三者都**需要新 effort 授权**，本图与 #104 均不发射。此前把 O 项笼统记作「O1–O4 / O6 全未做」不准确，已在项目记忆中更正。
+因此（**2026-11-08 O 链收口之前的状态**）真正剩余的只有 **O1 / O2 / O3**：O1 需动生产代码、O2 需先重审自身约束、O3 为纯校验。三者当时都**需要新 effort 授权**，本图与 #104 均不发射。此前把 O 项笼统记作「O1–O4 / O6 全未做」不准确，已在项目记忆中更正。**收口后的终态以下一段与状态核对表为准。**
 
 **2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 实现一版后由 `ctest -j4` 对照实验否掉，裁为不落地并留下取数点设计与实测证据（§4.4）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。**三票最终均未改动 `sdk/` / `.github/` 与任何既有判据数值 / 用例断言**，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点。
 
@@ -285,10 +285,10 @@
 
 本图九张票已于 2026-11-08 一次性批量收口：[CI 观测现状与数值基线的事实核对](https://github.com/wt159/SoundBridge/issues/95) → [观测对象的术语边界](https://github.com/wt159/SoundBridge/issues/96) → [门禁策略总纲](https://github.com/wt159/SoundBridge/issues/97) → drift / 开销 / 峰值差 / 契约漂移四张口径票（[#98](https://github.com/wt159/SoundBridge/issues/98)–[#101](https://github.com/wt159/SoundBridge/issues/101)）→ [观测契约的验收判据与回归基线](https://github.com/wt159/SoundBridge/issues/102) → [汇总成观测与判定契约规格及 ADR](https://github.com/wt159/SoundBridge/issues/103)。完整依据在各票 resolution comment，地图只留 gist + 链接。
 
-图外路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆 O1–O6 执行票 + 原生阻塞边 → `/implement-spec` 在 integration branch 上实现、一次 `/code-review`。**本图不发射该 effort**，与 #75 的 C 链处理保持一致。
+图外路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆 O1–O6 执行票 + 原生阻塞边 → `/implement-spec` 在 integration branch 上实现、一次 `/code-review`。**本图不发射该 effort**（2026-11-08 起图时的状态；该 effort 已由下方 O 链收口，终态见 §8.3），与 #75 的 C 链处理保持一致。
 
 曾明确交后续 effort 的只有一件事：**L1 / L2 的数值阈值**（`R`、`ρ` 分布稳定后的门槛、两个开销是否设限）。该项已于 2026-11-08 由 [#104](https://github.com/wt159/SoundBridge/issues/104) 按 §3.2 五步走完，裁决为「**不设任何数值阈值、维持只记录**」，见 §3.5。本图、O5 与 #104 均不为缺基线的指标拍任何数值，也未改代码 / 用例 / CI 配置 / 任何既有判据数值。
 
-**2026-11-08 图外 O 链**：按一次性批量授权发射 #105–#107（一票一决策 + 原生阻塞边 O2 → O3），在 integration branch 上逐票提交并做一次 `code-review`。O1 曾实现最小取数点，经 `ctest -j4` 对照实验（master 9/9 绿、本轮约 30% 既有判据假红）裁为不落地；O2 裁为不实现；O3 以纯研究笔记落地。最终净改动只有 `doc/` / `docs/` 文档，按 workflow `paths` 过滤不触发 CI。
+**2026-11-08 图外 O 链**：按一次性批量授权发射 #105–#107（一票一决策 + 原生阻塞边 O2 → O3），在 integration branch 上逐票提交并做一次 `code-review`；三票终态见 §8.3，O1 的 `ctest -j4` 对照实验完整依据见 §4.4。最终净改动只有 `doc/` / `docs/` 文档，按 workflow `paths` 过滤不触发 CI。
 
 **2026-11-08 定标进度**：§3.2 第 1–3 步（取数 / 归档 / 看分布）已由图外 O5 完成，产出 [`docs/research/observability-calibration.md`](../docs/research/observability-calibration.md)：13 个成功 master push `sdk-coverage` run、每个 24 行 `MESSAGE`，结构值跨运行完全恒定、µs 时间值波动 1.5–315×，并登记了「源码行号漂移」与「连续样本口径」两个取数坑。第 4 步的 [#104 数值阈值拍板票](https://github.com/wt159/SoundBridge/issues/104) 已于 2026-11-08 按五步裁决完毕并关闭（结论：不设任何数值阈值，见 §3.5），第 5 步「生效前禁止」转为永久生效。本图、O5 与 #104 均未改代码、用例、CI 配置与任何既有判据数值。
