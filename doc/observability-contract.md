@@ -127,9 +127,22 @@
 
 现状 `StreamMetrics` 无 drift 仪表。实现 effort 需要的最小改动是：在消费端提供 `S(t)` 与 `P(t)` 的**同一时刻同步快照**，禁止两值异步各取一次（会凭空造出抖动）。不新增同步解码入口、不改 `positionMs` 归消费端的归属、不改 10 ms push 节奏。
 
-**2026-11-08 O1 落地（[#105](https://github.com/wt159/SoundBridge/issues/105)）**：`AudioStreamDecoder` 新增只读 `clockSnapshot()`（单次调用同返 `sourceMs` / `playMs`）与解码线程写的原子 `m_sourceClockMs`；`sourceMs` 复用 EOS 汇总 `measuredMs` 的公式，`playMs` 直接取 `positionMs()`。判据套件的稳态消费循环按 10% 标称时长只记录快照序列。未碰 `MusicPlayer.cpp` / `StreamMetrics.h` / CI / 任何既有 `MESSAGE` 与断言。
+**2026-11-08 O1 最终裁决（[#105](https://github.com/wt159/SoundBridge/issues/105)）：不落地生产代码，只保留取数点设计与实测证据**。
 
-**口径限制（重要）**：`sourceMs` 是解码侧**产出**的源时间轴位置，与「已交付 PCM」差一个 ring 深度造成的恒定偏置 `D₀`（§4.1 明确不计入 `ΔD`）；且源钟按源采样率整数除法换算、播放钟按设备 PCM 字节 / `bytesPerMs` 换算，两者存在系统性比例差（长素材上 `D` 随进度缓慢变化）。因此本快照只能用于**同一实现内的纵向比较**，不得把绝对 `D` 当作产品 drift、不得跨源比较、不得据此拍 `R`；[#104](https://github.com/wt159/SoundBridge/issues/104)「不设任何数值阈值」的裁决不变。
+本轮按一次性批量授权确实实现过一版最小取数点（`AudioStreamDecoder::clockSnapshot()` + 解码线程写的原子 `m_sourceClockMs`；`sourceMs` 复用 EOS 汇总 `measuredMs` 的公式、`playMs` 取 `positionMs()`；判据套件的稳态消费循环按 10% 进度只记录序列），但本机 `ctest -j4` 对照实验否掉了它：
+
+| 形态 | `-j4` 全量 14 目标结果 |
+|---|---|
+| `master` 基线（无本轮改动） | **9 / 9 轮全绿** |
+| O1 周期采样 + 逐行打印 | 2 / 4 轮假红 |
+| O1 周期采样 + 单行汇总 | 1 / 4 轮假红 |
+| O1 收尾单次快照、主循环零额外调用 | 1 / 5 轮假红 |
+
+假红点全是**既有**时序敏感断言（`test_player_integration.cpp:1297` 的 seek 后位置单调、`test_streaming_budget.cpp:963` 的 SEEKING 12 ms 窗口 `silenceFills > 0`），单目标串行 3/3 绿；失败目标不在本次新增判据里，但假红率从 0 升到约 30%，说明落在解码线程 / 判据主循环上的额外写会放大本机 `-j4` 的调度抖动。按「不改任何既有判据、不放宽既有时序窗口」的硬约束，不能靠改判据消化。
+
+结合 [#104](https://github.com/wt159/SoundBridge/issues/104)「维持只记录、不设任何数值阈值」且 §3.2 第 5 步永久生效：稳态快照序列没有下游消费方，为它承担回归风险不成立，故裁 **O1 不落地**，`sdk/` 与 `.github/` 零改动。本节的取数点定义与「同一时刻同步快照」要求继续有效，作为将来真要定标时的设计输入。
+
+**反悔通道**：若将来要为 drift 设阈值，另开一张新票（不重开 #105 / #104）重走 §3.2 五步，并在同一张票里用「不扰动判据主循环」的方式实现取数点（例如独立于解码线程的低频发布 + 独立观测进程），且必须给出跨平台 `-j4` 稳定性证据。
 
 ### 4.5 定标流程
 
@@ -232,7 +245,7 @@
 
 | 编号 | 规格层 | 实现层 | 剩余动作与约束 |
 |---|---|---|---|
-| O1 | 已定义（§4.4 同步快照） | **已落地**（[#105](https://github.com/wt159/SoundBridge/issues/105)） | `AudioStreamDecoder::clockSnapshot()` + `StreamingBudget` 稳态只记录序列；口径限制见 §4.4。不新增同步解码入口、不改 `positionMs` 归属、不改 10 ms push |
+| O1 | 已定义（§4.4 同步快照） | **已裁决不落地**（[#105](https://github.com/wt159/SoundBridge/issues/105)，已关闭） | 实现过一版后由 `ctest -j4` 对照实验否掉（master 9/9 绿 vs 本轮约 30% 既有判据假红）；#104 永久不设阈值后无消费方。设计与实测证据见 §4.4，反悔须另开新票 |
 | O2 | 已定义 | **已裁决不实现**（[#106](https://github.com/wt159/SoundBridge/issues/106)，已关闭） | §5 两条硬约束与「CI 只跑测试二进制 / ctest」互斥；#104 永久不设阈值后可见性无消费方。反悔须另开新票重审约束并重走 §3.2 五步 |
 | O3 | 已定义（L3 待验） | **已落地**（[#107](https://github.com/wt159/SoundBridge/issues/107)，纯文档） | `docs/research/peak-gap-crosscheck.md` 给验证步骤与已归档数值；不补素材、不改 `P`、不加断言；两处口径限制已显式登记 |
 | O4 | **已落地**（§3.4 三条触发条件） | 规格层完成 | 仅剩「测试注释」可选；不重开稳态欠流判据 |
@@ -241,7 +254,7 @@
 
 因此真正剩余的只有 **O1 / O2 / O3**：O1 需动生产代码、O2 需先重审自身约束、O3 为纯校验。三者都**需要新 effort 授权**，本图与 #104 均不发射。此前把 O 项笼统记作「O1–O4 / O6 全未做」不准确，已在项目记忆中更正。
 
-**2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 落地最小取数点（只记录、不设阈值）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。三者均不改任何既有判据数值 / 用例断言 / CI 配置，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点。
+**2026-11-08 O 链收口（[#105](https://github.com/wt159/SoundBridge/issues/105) / [#106](https://github.com/wt159/SoundBridge/issues/106) / [#107](https://github.com/wt159/SoundBridge/issues/107)）**：用户给出一次性批量授权后按最保守方案发射并收口。O1 实现一版后由 `ctest -j4` 对照实验否掉，裁为不落地并留下取数点设计与实测证据（§4.4）；O2 重审后裁「不实现、维持 CI 不可见」并写明反悔通道；O3 以纯研究笔记落地 L3 验证步骤。**三票最终均未改动 `sdk/` / `.github/` 与任何既有判据数值 / 用例断言**，#104「不设数值阈值」与 §3.2 第 5 步永久生效的裁决不变。至此 **O1–O6 全部有终态**，图外清单无剩余可发射项；[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点。
 
 ### 8.4 回归影响
 
@@ -275,5 +288,7 @@
 图外路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆 O1–O6 执行票 + 原生阻塞边 → `/implement-spec` 在 integration branch 上实现、一次 `/code-review`。**本图不发射该 effort**，与 #75 的 C 链处理保持一致。
 
 曾明确交后续 effort 的只有一件事：**L1 / L2 的数值阈值**（`R`、`ρ` 分布稳定后的门槛、两个开销是否设限）。该项已于 2026-11-08 由 [#104](https://github.com/wt159/SoundBridge/issues/104) 按 §3.2 五步走完，裁决为「**不设任何数值阈值、维持只记录**」，见 §3.5。本图、O5 与 #104 均不为缺基线的指标拍任何数值，也未改代码 / 用例 / CI 配置 / 任何既有判据数值。
+
+**2026-11-08 图外 O 链**：按一次性批量授权发射 #105–#107（一票一决策 + 原生阻塞边 O2 → O3），在 integration branch 上逐票提交并做一次 `code-review`。O1 曾实现最小取数点，经 `ctest -j4` 对照实验（master 9/9 绿、本轮约 30% 既有判据假红）裁为不落地；O2 裁为不实现；O3 以纯研究笔记落地。最终净改动只有 `doc/` / `docs/` 文档，按 workflow `paths` 过滤不触发 CI。
 
 **2026-11-08 定标进度**：§3.2 第 1–3 步（取数 / 归档 / 看分布）已由图外 O5 完成，产出 [`docs/research/observability-calibration.md`](../docs/research/observability-calibration.md)：13 个成功 master push `sdk-coverage` run、每个 24 行 `MESSAGE`，结构值跨运行完全恒定、µs 时间值波动 1.5–315×，并登记了「源码行号漂移」与「连续样本口径」两个取数坑。第 4 步的 [#104 数值阈值拍板票](https://github.com/wt159/SoundBridge/issues/104) 已于 2026-11-08 按五步裁决完毕并关闭（结论：不设任何数值阈值，见 §3.5），第 5 步「生效前禁止」转为永久生效。本图、O5 与 #104 均未改代码、用例、CI 配置与任何既有判据数值。

@@ -44,7 +44,6 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_decodedRate(0)
     , m_pcmFrameBytes(0)
     , m_seekBaseMs(0)
-    , m_sourceClockMs(0)
     , m_skippedFrames(0)
     , m_pendingFrameSkip(false)
     , m_frameSkipWithDataAfter(false)
@@ -180,7 +179,6 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_pendingSeekBaseMs = 0;
     m_decodedFrames = 0;
     m_seekBaseMs    = 0;
-    m_sourceClockMs.store(0, std::memory_order_relaxed);
     m_skippedFrames = 0;
     m_pendingFrameSkip      = false;
     m_frameSkipWithDataAfter = false;
@@ -443,28 +441,6 @@ uint64_t AudioStreamDecoder::positionMs() const
         / bytesPerMs;
 }
 
-AudioStreamDecoder::ClockSnapshot AudioStreamDecoder::clockSnapshot() const
-{
-    // 一次调用内顺序读两个量，中间没有等待 / 跨线程投递 / 二次入队：
-    // 这就是 §4.4 要求的「同一时刻同步快照」，不是两次独立采样。
-    ClockSnapshot snap;
-    snap.sourceMs = m_sourceClockMs.load(std::memory_order_relaxed);
-    snap.playMs   = positionMs();
-    return snap;
-}
-
-void AudioStreamDecoder::publishSourceClockMs()
-{
-    // 与 finishAtEndOfStream() 的 measuredMs 用同一个公式，避免造第二个源钟真相源。
-    // 只由解码线程调用；m_seekBaseMs / m_decodedFrames / m_decodedRate 都归它所有。
-    if (m_decodedRate == 0) {
-        return;
-    }
-    m_sourceClockMs.store(
-        m_seekBaseMs + m_decodedFrames * 1000 / static_cast<uint64_t>(m_decodedRate),
-        std::memory_order_relaxed);
-}
-
 uint64_t AudioStreamDecoder::durationMs() const
 {
     // 提取器 init 期给出的标称时长，播放期间不变；0 表示未知（规格 #55 第 3 节）。
@@ -560,7 +536,6 @@ void AudioStreamDecoder::threadFunc()
                 m_seekDiscardBytes = 0;
                 m_decodedFrames    = 0;
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
-                publishSourceClockMs();
                 FLAC__uint64 targetSample
                     = static_cast<FLAC__uint64>(seekMs) * m_srcSpec.sampleRate / 1000;
                 // native RA 定位要读流：readFromPackets() 的读回调把 m_abortDecode 当成
@@ -637,7 +612,6 @@ void AudioStreamDecoder::threadFunc()
                 m_seekDiscardBytes = 0;
                 m_decodedFrames    = 0;
                 m_seekBaseMs       = static_cast<uint64_t>(seekMs);
-                publishSourceClockMs();
                 if (!vorbis.seekToMs(static_cast<uint64_t>(seekMs))) {
                     if (m_durationMs > 0
                         && static_cast<uint64_t>(seekMs) > m_durationMs) {
@@ -701,7 +675,6 @@ void AudioStreamDecoder::threadFunc()
                     = (m_bytesPerMs == 0) ? 0 : static_cast<size_t>(seekMs) * m_bytesPerMs;
                 m_decodedFrames = 0;
                 m_seekBaseMs    = static_cast<uint64_t>(seekMs);
-                publishSourceClockMs();
                 m_abortDecode.store(false);
                 // 顺序重放档（规格第 6 节）：包序列回到起点，目标之前的 PCM
                 // 由 writeDecodedBytes 逐字节丢掉——不新建整首 payload 缓存。
@@ -888,7 +861,6 @@ bool AudioStreamDecoder::writeDecodedBytes(const char *pcm, size_t pcmSize)
     if (m_pcmFrameBytes > 0) {
         m_decodedFrames += static_cast<uint64_t>(writeLen / m_pcmFrameBytes);
     }
-    publishSourceClockMs();
 
     const char *outData = writePtr;
     size_t outLen       = writeLen;
@@ -1001,7 +973,6 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
                 : static_cast<size_t>(seekMs) * m_bytesPerMs;
             m_decodedFrames = 0;
             m_seekBaseMs    = static_cast<uint64_t>(seekMs);
-            publishSourceClockMs();
             m_abortDecode.store(false);
             m_state.store(StreamDecoderState::DECODING);
 
