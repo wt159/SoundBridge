@@ -1367,6 +1367,113 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         CHECK(callbacks.state_change_count.load() == stateBefore);
     }
 
+    // #91 / T06：曲目切换固定三连（规格 §3），duration 每曲一次且与 getter 一致。
+    TEST_CASE("track change emits the fixed three-callback sequence")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("triple");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor(
+                [&]() {
+                    return player.trackCount() > 0
+                        && callbacks.duration_change_count.load() > 0;
+                },
+                5000)) {
+            skipCase("playlist or duration callback unavailable");
+            return;
+        }
+
+        const std::vector<std::string> events = callbacks.eventSequence();
+        const size_t track = MockPlayerCallbacks::firstEvent(events, "track");
+        const size_t duration = MockPlayerCallbacks::firstEvent(events, "duration");
+        const size_t position = MockPlayerCallbacks::firstEvent(events, "position");
+        CHECK_MESSAGE(track < events.size(), "曲目切换没有发 onTrackChanged");
+        CHECK_MESSAGE(track < duration, "onTrackChanged 必须早于 onDurationChanged");
+        CHECK_MESSAGE(duration < position, "onDurationChanged 必须早于 onPositionChanged");
+        CHECK_MESSAGE(MockPlayerCallbacks::countEvents(events, "duration") == 1,
+                      "每曲只应报一次 duration");
+        CHECK(callbacks.last_duration.load() == player.duration());
+    }
+
+    // #91 / T06：重复控制命令不重复发状态（规格 §4），状态序列无相邻重复。
+    TEST_CASE("repeated control commands do not duplicate state callbacks")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("idempotent");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor([&player]() { return player.trackCount() > 0; }, 5000)) {
+            skipCase("playlist empty");
+            return;
+        }
+
+        player.play();
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+            3000));
+        const int afterPlay = callbacks.state_change_count.load();
+        player.play();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterPlay,
+                      "Playing 下重复 play() 发了额外的状态回调");
+
+        player.pause();
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Paused; },
+            3000));
+        const int afterPause = callbacks.state_change_count.load();
+        player.pause();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterPause,
+                      "Paused 下重复 pause() 发了额外的状态回调");
+
+        player.stop();
+        REQUIRE(waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+            3000));
+        const int afterStop = callbacks.state_change_count.load();
+        player.stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        CHECK_MESSAGE(callbacks.state_change_count.load() == afterStop,
+                      "Stopped 下重复 stop() 发了额外的状态回调");
+
+        const std::vector<soundbridge::PlayerState> states = callbacks.stateSequence();
+        bool duplicate = false;
+        for (size_t i = 1; i < states.size(); ++i) {
+            if (states[i] == states[i - 1]) {
+                duplicate = true;
+            }
+        }
+        CHECK_MESSAGE(!duplicate, "状态序列里出现了相邻重复项");
+    }
+
     // #72 / P2-11
     TEST_CASE("state callback sequence has no duplicate adjacent states")
     {
