@@ -201,8 +201,10 @@
 | **O2** | 让 `open_file_ms` / `track_switch_ms` 在 CI 可见（可选，不新增耗时 gate） | 可与 E 链并行 |
 | **O3** | 格式内长短配对峰值交叉校验的验证步骤（含 drift 共用素材依赖） | 可与 E 链并行，不补素材 |
 | **O4** | §3.4 稳态欠流三条触发条件清单落进规格 / 测试注释 | **E 链改消费模型之前必须落地** |
-| **O5** | 按 §3.2 采集 ≥10 次成功 CI run 的定标样本 | 与 E 链并行，纯观测 |
+| **O5** | 按 §3.2 采集 ≥10 次成功 CI run 的定标样本（**2026-11-08 已完成**，见 `docs/research/observability-calibration.md`） | 与 E 链并行，纯观测 |
 | **O6** | 公开契约变更时的规格 / GLOSSARY 回填 checklist（§7.2） | 随任何改公开头的 effort 执行 |
+
+**2026-11-08 事实更正（E 链接口）**：本表 O1 / O4 的「须在 E 链之前落地」写于 #94 起图时，当时假设 #42 第 10 章的 E1–E15 实现 effort 尚未执行。实际该 effort **早已由 Spec [#55](https://github.com/wt159/SoundBridge/issues/55)、执行票 #56–#68 与 PR [#69](https://github.com/wt159/SoundBridge/pull/69) 全部落地**（#67 明写 StreamingBudget 四条判据全绿），其中 #58 已改播放位置单轨化、#65 已改 seek 精度。因此 O1 / O4 的「前置」前提已失效，两项现应理解为**回溯补做**：若未来再有时钟 / 消费模型改动，按 O1 / O4 的口径先补取数点与触发条件清单；本表其余行的「与 E 链并行」不受影响。[#8](https://github.com/wt159/SoundBridge/issues/8) 仍按约定只作目的地锚点，不重开 E 链。
 
 ### 8.4 回归影响
 
@@ -236,3 +238,5 @@
 图外路线沿用 #53 第 10 章：`/to-spec` 折叠 linked decisions → `/to-tickets` 拆 O1–O6 执行票 + 原生阻塞边 → `/implement-spec` 在 integration branch 上实现、一次 `/code-review`。**本图不发射该 effort**，与 #75 的 C 链处理保持一致。
 
 仍明确交后续 effort 的只有一件事：**L1 / L2 的数值阈值**（`R`、`ρ` 分布稳定后的门槛、两个开销是否设限）。按 §3.2 定标后单开票拍板，本图不为缺基线的指标拍任何数值。
+
+**2026-11-08 定标进度**：§3.2 第 1–3 步（取数 / 归档 / 看分布）已由图外 O5 完成，产出 [`docs/research/observability-calibration.md`](../docs/research/observability-calibration.md)：13 个成功 master push `sdk-coverage` run、每个 24 行 `MESSAGE`，结构值跨运行完全恒定、µs 时间值波动 1.5–315×，并登记了「源码行号漂移」与「连续样本口径」两个取数坑。第 4 步已单开 [#104 数值阈值拍板票](https://github.com/wt159/SoundBridge/issues/104)（**不填任何阈值数字**），第 5 步「生效前禁止」仍然生效。本图与 O5 均未改代码、用例、CI 配置与任何既有判据数值。
