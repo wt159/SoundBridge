@@ -1295,6 +1295,78 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         CHECK_MESSAGE(afterMonotonic, "seek 之后的新位置会话里出现回退");
     }
 
+    // #89 / T04：标称时长为 0 时 seek 是空操作（规格 §7）。INVALID_OPERATION 是内部
+    // 降级码、不对外暴露；对调用方的可见结果就是「位置不回退、无新回调、无状态、无错误」。
+    // 下面两例分别覆盖「无曲目、duration()==0」与「有曲目但目标超界」，后者与
+    // durationMs==0 && pos>0 走的是 _setPosition 里同一条降级 return。
+    TEST_CASE("seek with no current track is a silent no-op")
+    {
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+
+        CHECK(player.duration() == 0);
+        CHECK(player.position() == 0);
+        player.seek(5000);
+        // 否定断言的观察窗口：命令异步排队，给队列一次完整轮询的机会（不是时序兜底）。
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+        CHECK_MESSAGE(callbacks.eventSequence().empty(),
+                      "空播放列表的 seek 不应产生任何回调");
+        CHECK(player.position() == 0);
+        CHECK(player.state() == soundbridge::PlayerState::Stopped);
+        CHECK(callbacks.error_count.load() == 0);
+    }
+
+    TEST_CASE("seek beyond nominal duration is a silent no-op")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            skipCase("media missing: music.wav");
+            return;
+        }
+
+        TempMediaDir temp("seeknoop");
+        if (!copyMediaFile(fixture.mediaPath("music.wav"), temp.file("only.wav"))) {
+            skipCase("cannot synthesize single-track playlist");
+            return;
+        }
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        if (!waitFor(
+                [&player]() { return player.trackCount() > 0 && player.duration() > 0; },
+                5000)) {
+            skipCase("playlist or duration unavailable");
+            return;
+        }
+
+        const int posBefore        = callbacks.position_change_count.load();
+        const int errBefore        = callbacks.error_count.load();
+        const int stateBefore      = callbacks.state_change_count.load();
+        const uint64_t positionBefore = player.position();
+        const uint64_t duration    = player.duration();
+
+        player.seek(duration + 1000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+        CHECK(player.position() == positionBefore);
+        CHECK(callbacks.position_change_count.load() == posBefore);
+        CHECK(callbacks.error_count.load() == errBefore);
+        CHECK(callbacks.state_change_count.load() == stateBefore);
+        CHECK(player.state() == soundbridge::PlayerState::Stopped);
+
+        // pos == 0 例外保留；归零不得变成错误或状态变化。
+        player.seek(0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        CHECK(callbacks.error_count.load() == errBefore);
+        CHECK(callbacks.state_change_count.load() == stateBefore);
+    }
+
     // #72 / P2-11
     TEST_CASE("state callback sequence has no duplicate adjacent states")
     {
