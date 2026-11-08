@@ -720,7 +720,11 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
         m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
     }
     updatePlayState(MusicPlayerState::StoppedState);
-    if (shouldAutoSkipOnError()) {
+    // 规格 §6.3 / #90：与解码错误路径的 handleDecodeError 统一，自动跳轨以
+    // ErrorAction::SkipTrack 为准。设备错误是 StopPlayback，不该靠跳轨绕过。
+    const bool canAutoSkip = shouldAutoSkipOnError()
+        && GetErrorInfo(code).action == ErrorAction::SkipTrack;
+    if (canAutoSkip) {
         m_skipFailures.fetch_add(1);
         m_workQueue.asyncRunTask([this]() {
             if (isShuttingDown()) {
