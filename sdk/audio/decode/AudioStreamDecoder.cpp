@@ -213,7 +213,21 @@ void AudioStreamDecoder::stop()
     }
     m_stopRequest.store(false);
     m_abortDecode.store(false);
+    // #113：join 已完成，未消费的 seek 目标不得留到下一次任务。cancelRequested()
+    // 把「槽内有值」当取消，残留会让 stop() 返回后该谓词仍为真。start() 本就会在
+    // stop() 之后清槽，这里补齐 stop() 自身的退出状态，正常路径行为等价。
+    m_seekRequestMs.store(-1);
     m_state.store(StreamDecoderState::IDLE);
+}
+
+void AudioStreamDecoder::setPendingSeekForTest(int64_t targetMs)
+{
+    m_seekRequestMs.store(targetMs, std::memory_order_release);
+}
+
+int64_t AudioStreamDecoder::pendingSeekMsForTest() const
+{
+    return m_seekRequestMs.load(std::memory_order_acquire);
 }
 
 void AudioStreamDecoder::seekToMs(uint64_t targetMs)

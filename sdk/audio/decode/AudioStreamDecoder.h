@@ -70,6 +70,16 @@ public:
     // 只有解码器自己看得见的静默窗口（SEEKING / 已请求停止 / 已置取消位）里的调用才计数。
     void noteSilenceFill();
 
+    // 测试专用（决策与验收见 issue #112 / #113）：直接读写「尚未被解码线程取走的 seek 目标」槽，
+    // 用于锁定 stop() 必须清空该槽的状态契约。AudioStreamDecoder 是 SDK 内部类型，
+    // 不进 soundbridge::Player 公开 API；生产路径零调用，测试里只在控制线程调用。
+    // 但槽本身跨线程共享：解码线程用 exchange(-1) 取走目标，因此 setter 用 release 写、
+    // getter 用 acquire 读，不能因为「只在测试里开」就降为 relaxed；stop() 的清槽沿用
+    // 该槽既有的默认 seq_cst store，与 acquire 读兼容。
+    // 放行仍须走「master 与分支同轮数 ctest -j4 对照」稳定性闸门，本注释不构成任何豁免。
+    void setPendingSeekForTest(int64_t targetMs);
+    int64_t pendingSeekMsForTest() const;
+
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
     // 通用路径又一次性解完整段。结果是 `while (ret != EOS)` 在 FLAC/OGG 上永不终止。

@@ -823,3 +823,26 @@ TEST_SUITE("AudioStreamDecoder Edge Cases")
         decoder.stop();
     }
 }
+
+
+// #113：stop() 必须清空「尚未被解码线程取走」的 seek 目标槽。
+// 不启解码线程、不依赖真实素材、不命中任何时序窗口 —— 判据确定性、毫秒级、可红可绿。
+// 背景：临时探针取证显示「seek 提交后立刻 stop」窗口每轮 2/3 次命中（160/240，三组一致），
+// 但该窗口在 Windows 侧 0 崩溃；本用例锁的是状态契约本身，不宣称修复 SIGSEGV。
+TEST_SUITE("AudioStreamDecoder Stop Contract")
+{
+    TEST_CASE("stop clears an unconsumed seek request")
+    {
+        AudioRingBuffer ring(AudioRingBuffer::kDefaultCapacity);
+        AudioStreamDecoder decoder(&ring, makeDevSpec());
+
+        decoder.setPendingSeekForTest(5000);
+        // 前置 sanity：验证 setter 确实写了槽，避免 setter 失效让下面的判据假绿。
+        CHECK(decoder.pendingSeekMsForTest() == 5000);
+
+        decoder.stop();
+
+        CHECK_MESSAGE(decoder.pendingSeekMsForTest() == -1,
+                      "stop() 必须清空未消费的 seek 目标，否则 cancelRequested() 在停止后仍为真");
+    }
+}
