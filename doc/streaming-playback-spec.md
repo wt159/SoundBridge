@@ -270,3 +270,13 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 `sdk-coverage.yml` 文本里确实没有 `ctest -R sdk_` 命令；但 `coverage` target 经 `scripts/coverage/run_linux.sh:29` **间接**执行 `ctest -R sdk_` 以生成 `.gcda`。因此「CI 只跑 coverage target + MediaCoverage」是 workflow 文本层面的陈述：完整执行链里 CTest 分组在 CI 也会跑，只是不带 `-s`、`--output-on-failure` 只在失败时输出，12.1 的观测 step 仍必要。此出入如实登记，本票不改 coverage 脚本。
 
 **2026-11-08 事实更正（[#94](https://github.com/wt159/SoundBridge/issues/94) 的事实基线，见 `doc/observability-contract.md` §9.2）**：本段的「8 组 CTest」已过时，现在是 **14 个 `sdk_*` 目标**，`TIMEOUT` 挂 7 组（快集 / streaming / interaction 180，坏输入四段 120）；`StreamingBudget` 有独立目标 `sdk_streaming_tests`（`sdk/test/CMakeLists.txt:223`，TIMEOUT 180），且被 `sdk_unit_tests` 的 `-tse` 排除。「四个仪表数值仍不可见」**仅对 coverage 主链成立**：12.1 的独立观测 step 实测确实把四个仪表数值打进了 CI 日志。另更正 12.1 的一处落点笔误：`MESSAGE(...)` 实际在 `sdk/test/unit/test_streaming_budget.cpp` 与 `test_media_coverage.cpp`，不在 `sdk/test/TestSdkSuite.cpp`。
+
+### 12.6 2026-11-09 seek 竞态「强制重审」的只读取证结论（**未落地**）
+
+> 承接 `doc/player-state-contract.md` §10.4 的破例记录。本节只登记对 E 链时序的复核结论，**没有任何生产代码改动落地**：PR [#114](https://github.com/wt159/SoundBridge/pull/114) 因稳定性闸门未过已撤回关闭、`master` 不含 `AudioStreamDecoder::stop()` 的清槽改动；以下「不改」是主动裁决，不是「已修改」。
+
+- **H2（seek 分支 `AudioStreamDecoder.cpp:546` 的 `m_abortDecode.store(false)` 会清掉 `stop()` 刚发布的取消位）判定：不改。** 该 store 属 E 链 #59 / #60 / #65 已裁决的已知时序（seek 期间刻意不置 `m_abortDecode`，靠 `m_stopRequest + m_abortDecode` 中断读回调）；11-09 用「seek 后立刻 stop」临时 harness 三组各 80 轮共 240 次窗口命中，**未见 join 异常、0 崩溃、0 断言失败**，没有证据支持推翻既有裁决。
+- **反悔条件（写死）**：只有拿到 Linux 侧 core dump / ASan 报告指向该 store 与 `stop()` 的取消位竞态，或出现可稳定复现的 join 异常，才另开新票重审；**不得**以「顺手加固」「看起来更稳」为由改这一行，也不得把它挂回 E 链既有票。
+- **状态契约违反仍在**：`stop()` join 之后不清 `m_seekRequestMs`，而 `cancelRequested()` 把「槽内有值」当取消 → `stop()` 返回后该谓词仍为真。这是 11-09 取证确认的确定性问题，但**未证明**与 `42488656322` 的 SIGSEGV 有因果；本轮以稳定性闸门未过撤回，不为它单独留无门禁的改动。
+- **已排除项不变**：`m_seekBaseMs` / `m_seekDiscardBytes` 只在解码线程读写，`positionMs()` 不读它们，不构成数据竞争；`sdk/cosmos/WorkQueue.hpp` 为 SDK 内部单线程串行队列，析构期 UAF 假设无支持。
+- SIGSEGV 根因仍未定位（Linux CI / 无栈 / 无 ASan；本机 Windows 侧 H1 已证伪，不可外推）。「反复出现」三条门槛见 `AGENTS.md` NOTES，本次「强制重审」是一次性破例，不构成后续自动启动 effort 的先例。
