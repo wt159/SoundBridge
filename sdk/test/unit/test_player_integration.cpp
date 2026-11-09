@@ -1396,8 +1396,14 @@ TEST_SUITE("PublicPlayer Interactive Paths")
             },
             3000);
         const std::vector<uint64_t> after = callbacks.positionValues();
+        // seek 是异步 WorkQueue 任务；first 快照到 seek 生效之间旧会话仍会追加 position。
+        // 新会话起点必须按序列内容定位实际回退点，不能用固定快照下标猜。
+        size_t rewindAt = after.size();
+        for (size_t i = beforeCount; i < after.size(); ++i) {
+            if (after[i] < before) { rewindAt = i; break; }
+        }
         bool afterMonotonic = true;
-        for (size_t i = beforeCount + 1; i < after.size(); ++i) {
+        for (size_t i = rewindAt + 1; i < after.size(); ++i) {
             if (after[i] < after[i - 1]) {
                 afterMonotonic = false;
             }
