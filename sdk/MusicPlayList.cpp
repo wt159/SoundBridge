@@ -264,7 +264,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     }
     if (source == nullptr) {
         recordScanRejection(ErrorCode::FileOpenFailed);
-        reportError(ErrorCode::FileOpenFailed, "new FileSource failed", musicProperties);
+        reportError(ErrorCode::FileOpenFailed, "new DataSource failed", musicProperties);
         return;
     }
     if (source->initCheck() != OK) {

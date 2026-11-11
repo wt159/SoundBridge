@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -367,6 +368,39 @@ bool resolveLocation(const std::string &loc,
     return true;
 }
 
+// 清单类判定（规格 6.3 / 4.3）：响应头 Content-Type 命中清单类型，或 body
+// 起始（跳过 BOM / 空白）是 #EXTM3U / <?xml，即认定清单类，明确拒绝，
+// 不静默落到 magic sniff 兜底。
+bool looksLikePlaylist(const Response &resp)
+{
+    const std::string ct = lowerCopy(headerValue(resp.headers, "Content-Type"));
+    if (ct.find("application/vnd.apple.mpegurl") != std::string::npos
+        || ct.find("application/dash+xml") != std::string::npos
+        || ct.find("vnd.apple.mpegurl") != std::string::npos
+        || ct.find("dash+xml") != std::string::npos) {
+        return true;
+    }
+    size_t i = 0;
+    if (resp.body.size() >= 3
+        && (unsigned char)resp.body[0] == 0xEF
+        && (unsigned char)resp.body[1] == 0xBB
+        && (unsigned char)resp.body[2] == 0xBF) {
+        i = 3;   // 跳过 UTF-8 BOM
+    }
+    while (i < resp.body.size()
+           && (resp.body[i] == ' ' || resp.body[i] == '\t'
+               || resp.body[i] == '\r' || resp.body[i] == '\n')) {
+        ++i;
+    }
+    std::string start;
+    if (i < resp.body.size()) {
+        start.assign((const char *)resp.body.data() + i, resp.body.size() - i);
+    }
+    if (start.compare(0, 7, "#EXTM3U") == 0) return true;
+    if (start.compare(0, 5, "<?xml") == 0) return true;
+    return false;
+}
+
 // 伪长度二次校验：再取最后一个字节，要求 206、total 一致、body 恰好 1 字节。
 bool verifyTail(const std::string &host, const std::string &port,
                 const std::string &path, off64_t total)
@@ -377,6 +411,19 @@ bool verifyTail(const std::string &host, const std::string &port,
     off64_t t = 0;
     if (!parseTotal(resp.headers, t) || t != total) return false;
     if (resp.body.size() != 1) return false;
+    return true;
+}
+
+// 伪长度三次校验：再取首字节，要求 206 且 Content-Range total 与首次一致，
+// 用于识别 declaredTotal 随请求增长的伪长度源（规格 4.3）。
+bool verifyHeadAgain(const std::string &host, const std::string &port,
+                     const std::string &path, off64_t total)
+{
+    Response resp;
+    if (!doRequest(host, port, path, 0, 0, resp)) return false;
+    if (hasIcyHeader(resp.headers) || resp.status != 206) return false;
+    off64_t t = 0;
+    if (!parseTotal(resp.headers, t) || t != total) return false;
     return true;
 }
 
@@ -473,11 +520,12 @@ void HttpSource::close()
 
 bool HttpSource::probe()
 {
-    // 探测：Range: bytes=0-0，要求 206 + Accept-Ranges: bytes + 可解析总长；
-    // 301/302/307/308 + Location 最多 5 次重定向后重新探测，不改形态归类。
+    // 探测：Range: bytes=0-15（前 16 字节，供清单类内容判定），要求 206 +
+    // Accept-Ranges: bytes + 可解析总长；301/302/307/308 + Location 最多 5 次
+    // 重定向后重新探测，不改形态归类。构造期共 3 次探测（首次 / 尾 / 首字节复查）。
     for (int redirects = 0; redirects <= 5; ++redirects) {
         Response resp;
-        if (!doRequest(m_host, m_port, m_path, 0, 0, resp)) return false;
+        if (!doRequest(m_host, m_port, m_path, 0, 15, resp)) return false;
         if (hasIcyHeader(resp.headers)) {
             LOG_ERROR(LOG_TAG, "Icy-* header present, reject infinite stream");
             return false;
@@ -516,8 +564,18 @@ bool HttpSource::probe()
             LOG_ERROR(LOG_TAG, "invalid Content-Range total");
             return false;
         }
+        // 清单类（Content-Type / #EXTM3U / <?xml）明确拒绝，不静默落到 magic sniff。
+        // 重定向后的 206 响应同样经过该检查（每轮循环都会走到此处）。
+        if (looksLikePlaylist(resp)) {
+            LOG_ERROR(LOG_TAG, "playlist content/Content-Type rejected in P0");
+            return false;
+        }
         if (!verifyTail(m_host, m_port, m_path, total)) {
             LOG_ERROR(LOG_TAG, "pseudo-length second check failed");
+            return false;
+        }
+        if (!verifyHeadAgain(m_host, m_port, m_path, total)) {
+            LOG_ERROR(LOG_TAG, "pseudo-length third check failed (total grew)");
             return false;
         }
         m_total = total;

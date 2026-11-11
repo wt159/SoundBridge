@@ -4,6 +4,7 @@
 #include <MusicPlayList.h>
 #include <doctest/doctest.h>
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <cctype>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -157,13 +159,16 @@ public:
         bool fakeTotalOnTail;
         bool growContentLength;
         bool playlistBody;
+        bool playlistBodyAsRange;
+        bool growTotalAcrossRequests;
         int  redirects;
         std::string redirectLocation;
         Config()
             : emitIcy(false), omitAcceptRanges(false),
               acceptRangesNone(false), ignoreRange(false),
               fakeTotalOnTail(false), growContentLength(false),
-              playlistBody(false), redirects(0), redirectLocation() { }
+              playlistBody(false), playlistBodyAsRange(false),
+              growTotalAcrossRequests(false), redirects(0), redirectLocation() { }
     };
 
     MockHttpServer(const std::vector<uint8_t> &bytes, Config config = Config())
@@ -302,9 +307,28 @@ private:
         if (start > end) start = end;
         const long long length = end - start + 1;
 
+        // 清单类以 206 承载：把文件头 patch 成 #EXTM3U 起始并带清单 Content-Type，
+        // 用于验证 probe 在 206 分支内对清单内容的明确拒绝（不依赖扩展名）。
+        // body 仍取 m_bytes 的切片、total 不变，保证去掉该检查后其余校验仍可通过。
+        std::vector<uint8_t> patched;
+        const uint8_t *bodyData = m_bytes.data();
+        if (m_config.playlistBodyAsRange) {
+            patched.assign(m_bytes.begin(), m_bytes.end());
+            const char magic[] = "#EXTM3U";
+            for (size_t i = 0; i < sizeof(magic) - 1 && i < patched.size(); ++i) {
+                patched[i] = (uint8_t)magic[i];
+            }
+            bodyData = patched.data();
+        }
+
         long long declaredTotal = total;
         if (m_config.fakeTotalOnTail && length == 1 && start == total - 1) {
             declaredTotal = total + 7;   // 伪长度：二次校验 total 与首次不一致
+        }
+        // 伪长度「Content-Length 随数据增长」：第 3 次请求起 declaredTotal 增长，
+        // 用于验证构造期第三次探测（verifyHeadAgain）的有效性。
+        if (m_config.growTotalAcrossRequests && index >= 2) {
+            declaredTotal = total + 7;
         }
         // 声明长度大于实际 body：模拟连接不自然终止的伪长度源。
         const long long declaredLength =
@@ -318,12 +342,14 @@ private:
         resp += "Content-Range: bytes " + std::to_string(start) + "-"
                 + std::to_string(end) + "/" + std::to_string(declaredTotal) + "\r\n";
         resp += "Content-Length: " + std::to_string(declaredLength) + "\r\n";
+        if (m_config.playlistBodyAsRange) {
+            resp += "Content-Type: application/vnd.apple.mpegurl\r\n";
+        }
         resp += "Connection: close\r\n";
-        resp += "X-Mock-Owner: " + std::to_string(sb_test::processId()) + "\r\n";
         if (m_config.emitIcy) resp += "Icy-Name: mock-radio\r\n";
         resp += "\r\n";
         if (length > 0) {
-            resp.append((const char *)m_bytes.data() + start, (size_t)length);
+            resp.append((const char *)bodyData + start, (size_t)length);
         }
         sendAll(client, resp);
     }
@@ -518,6 +544,17 @@ TEST_SUITE("HttpSource")
         CHECK(source.initCheck() != sdk_utils::OK);
     }
 
+    TEST_CASE("Content-Range total growing on the third probe is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.growTotalAcrossRequests = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);   // 第三次探测 total 不一致即拒绝
+    }
+
     TEST_CASE("server ignoring Range (200 full body) is rejected")
     {
         const std::vector<uint8_t> &bytes = fixtureBytes();
@@ -575,6 +612,17 @@ TEST_SUITE("HttpSource")
         CHECK(source.initCheck() != sdk_utils::OK);   // 清单式响应明确拒绝，不静默回退
     }
 
+    TEST_CASE("206 response with playlist Content-Type/body is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistBodyAsRange = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);   // 清单类 206 明确拒绝，不落到 magic sniff
+    }
+
     TEST_CASE("redirect to a playlist target is explicitly rejected")
     {
         const std::vector<uint8_t> &bytes = fixtureBytes();
@@ -592,8 +640,8 @@ TEST_SUITE("HttpSource")
 
 // ---------------------------------------------------------------------------
 // P0-3 端到端：URL 经既有播放列表字符串入口进 HttpSource；只验证扫描阶段的
-// AudioSpec / 时长 / 字节，不引真实音频设备。端口 bind :0 进程私有、响应带
-// X-Mock-Owner: pid（见 MockHttpServer），ctest -j 下互不干扰。
+// AudioSpec / 时长 / 字节，不引真实音频设备。端口 bind :0 由 OS 分配、进程私有，
+// ctest -j 下互不干扰（无需额外响应头做 pid 隔离）。
 // ---------------------------------------------------------------------------
 using namespace sdk;
 
@@ -634,7 +682,10 @@ std::shared_ptr<MusicPlayList> loadPlayList(DispatchCallback &callback,
         std::promise<void> done;
         std::future<void> future = done.get_future();
         playlist->addMusicWithNotify(*it, [&done]() { done.set_value(); });
-        future.wait();
+        const std::future_status status = future.wait_for(std::chrono::seconds(2));
+        if (status != std::future_status::ready) {
+            FAIL("addMusicWithNotify did not complete within 2s");
+        }
     }
     return playlist;
 }
@@ -750,5 +801,14 @@ TEST_SUITE("PlaylistUrlDispatch")
         withFragment.parseFileName();
         REQUIRE(withFragment.fileName == "music");
         REQUIRE(withFragment.extensionName == ".wav");
+    }
+
+    TEST_CASE("parseFileName keeps '#' in local file names")
+    {
+        FileProperties local;
+        local.fullPath = "/tmp/music/song#x.wav";
+        local.parseFileName();
+        REQUIRE(local.extensionName == ".wav");
+        REQUIRE(local.fileName == "song#x");
     }
 }

@@ -39,11 +39,16 @@ struct FileProperties {
             fileDir           = fullPath.substr(0, lastSlashPos + 1);
             // Extract the file name.
             fileName          = fullPath.substr(lastSlashPos + 1);
-            // URL 可能带 query / fragment：切最后一个点之前先去掉，避免扩展名被
-            // "?token=..." / "#frag" 污染（本地文件路径不含这些字符，行为不变）。
-            const size_t queryOrFragment = fileName.find_first_of("?#");
-            if (queryOrFragment != std::string::npos) {
-                fileName = fileName.substr(0, queryOrFragment);
+            // 仅 URL 可能带 query / fragment：切最后一个点之前先去掉，避免扩展名被
+            // "?token=..." / "#frag" 污染。本地 POSIX 文件名可合法包含 '#'，
+            // 不能被误剥离，因此只在 http:// / https:// 前缀时才剥离。
+            const bool isUrl = fullPath.compare(0, 7, "http://") == 0
+                            || fullPath.compare(0, 8, "https://") == 0;
+            if (isUrl) {
+                const size_t queryOrFragment = fileName.find_first_of("?#");
+                if (queryOrFragment != std::string::npos) {
+                    fileName = fileName.substr(0, queryOrFragment);
+                }
             }
             // Find the last dot position.
             size_t lastDotPos = fileName.find_last_of(".");
