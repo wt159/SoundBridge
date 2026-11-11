@@ -1,8 +1,10 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include "../fixtures/TestProcess.hpp"
 #include <HttpSource.h>
+#include <MusicPlayList.h>
 #include <doctest/doctest.h>
 #include <atomic>
+#include <future>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -584,5 +586,169 @@ TEST_SUITE("HttpSource")
         HttpSource source(server.url("/start.wav").c_str());
         CHECK(source.initCheck() != sdk_utils::OK);
         CHECK(server.requestCount() >= 1);   // 已处理重定向，不是构造期静默拒绝
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// P0-3 端到端：URL 经既有播放列表字符串入口进 HttpSource；只验证扫描阶段的
+// AudioSpec / 时长 / 字节，不引真实音频设备。端口 bind :0 进程私有、响应带
+// X-Mock-Owner: pid（见 MockHttpServer），ctest -j 下互不干扰。
+// ---------------------------------------------------------------------------
+using namespace sdk;
+
+namespace {
+
+// 回调把扫描阶段登记的「当前曲目属性」与错误码带出来，供断言观察。
+struct DispatchCallback : public MusicPlayListCallback {
+    std::vector<MusicPropertiesPtr> currentBufs;
+    std::vector<ErrorCode> errors;
+
+    void putMusicPlayListCurBuf(MusicPropertiesPtr p) override
+    {
+        currentBufs.push_back(p);
+    }
+    void updateMusicList(std::vector<MusicPropertiesPtr> &) override { }
+    void onMusicPlayListError(ErrorCode code, const std::string &, int,
+                              const std::string &) override
+    {
+        errors.push_back(code);
+    }
+};
+
+// 复用 test_playlist.cpp 的构造 / 等待模式：addMusicWithNotify + future 串行加载。
+std::shared_ptr<MusicPlayList> loadPlayList(DispatchCallback &callback,
+                                            const std::vector<std::string> &paths)
+{
+    static WorkQueue workQueue;
+    AudioSpec devSpec;
+    devSpec.sampleRate     = 16000;
+    devSpec.numChannel     = 1;
+    devSpec.bytesPerSample = 2;
+    devSpec.bitsPerSample  = 16;
+    devSpec.format         = AudioFormatS16;
+
+    std::shared_ptr<MusicPlayList> playlist
+        = std::make_shared<MusicPlayList>(&callback, &workQueue, devSpec);
+    for (std::vector<std::string>::const_iterator it = paths.begin(); it != paths.end(); ++it) {
+        std::promise<void> done;
+        std::future<void> future = done.get_future();
+        playlist->addMusicWithNotify(*it, [&done]() { done.set_value(); });
+        future.wait();
+    }
+    return playlist;
+}
+
+} // namespace
+
+TEST_SUITE("PlaylistUrlDispatch")
+{
+    TEST_CASE("playlist accepts local mock URL and matches local file scan")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        REQUIRE(server.port() > 0);
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("music.wav"));
+
+        DispatchCallback urlCb;
+        std::shared_ptr<MusicPlayList> urlList
+            = loadPlayList(urlCb, { server.url("/music.wav") });
+        REQUIRE(urlList->getMusicCount() == 1);
+        REQUIRE(urlCb.currentBufs.size() == 1);
+        MusicPropertiesPtr urlProps = urlCb.currentBufs.front();
+
+        DispatchCallback fileCb;
+        std::shared_ptr<MusicPlayList> fileList
+            = loadPlayList(fileCb, { fixture.mediaPath("music.wav") });
+        REQUIRE(fileList->getMusicCount() == 1);
+        REQUIRE(fileCb.currentBufs.size() == 1);
+        MusicPropertiesPtr fileProps = fileCb.currentBufs.front();
+
+        REQUIRE(urlProps->signalProperties.spec.sampleRate > 0);
+        REQUIRE(urlProps->signalProperties.durationMs > 0);
+        REQUIRE(urlProps->signalProperties.spec.sampleRate
+                == fileProps->signalProperties.spec.sampleRate);
+        REQUIRE(urlProps->signalProperties.durationMs
+                == fileProps->signalProperties.durationMs);
+
+        uint8_t urlHead[16];
+        uint8_t fileHead[16];
+        REQUIRE(urlProps->processProperties.source->readAt(0, urlHead, sizeof(urlHead)) == 16);
+        REQUIRE(fileProps->processProperties.source->readAt(0, fileHead, sizeof(fileHead)) == 16);
+        CHECK(std::memcmp(urlHead, fileHead, sizeof(urlHead)) == 0);
+        CHECK(std::memcmp(urlHead, bytes.data(), sizeof(urlHead)) == 0);
+    }
+
+    TEST_CASE("playlist accepts a mixed local-file and mock-URL list")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        REQUIRE(server.port() > 0);
+        RealMediaFixture fixture;
+        REQUIRE(fixture.exists("music.wav"));
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(
+            cb, { fixture.mediaPath("music.wav"), server.url("/music.wav") });
+
+        REQUIRE(playlist->getMusicCount() == 2);
+        // 沿用既有切歌语义，不为 URL 新造规则
+        REQUIRE(playlist->nextSync() == true);
+        REQUIRE(playlist->previousSync() == true);
+    }
+
+    TEST_CASE("playlist rejects a playlist-class URL with FileOpenFailed")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist
+            = loadPlayList(cb, { server.url("/list.m3u8") });
+
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.requestCount() == 0);   // 构造期明确拒绝，未联网、非静默失败
+    }
+
+    TEST_CASE("playlist accepts a URL with query and strips it before extension")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist
+            = loadPlayList(cb, { server.url("/music.wav?token=abc") });
+
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->fileProperties.extensionName == ".wav");
+        REQUIRE(props->fileProperties.fileName == "music");
+        REQUIRE(props->signalProperties.spec.sampleRate > 0);
+        REQUIRE(props->signalProperties.durationMs > 0);
+    }
+
+    TEST_CASE("parseFileName strips query and fragment before the last dot")
+    {
+        FileProperties withQuery;
+        withQuery.fullPath = "http://127.0.0.1:1234/music.wav?token=abc";
+        withQuery.parseFileName();
+        REQUIRE(withQuery.fileName == "music");
+        REQUIRE(withQuery.extensionName == ".wav");
+
+        FileProperties withFragment;
+        withFragment.fullPath = "http://127.0.0.1:1234/music.wav#seg";
+        withFragment.parseFileName();
+        REQUIRE(withFragment.fileName == "music");
+        REQUIRE(withFragment.extensionName == ".wav");
     }
 }

@@ -1,5 +1,6 @@
 #include "MusicPlayList.h"
 #include "ExtractorFactory.h"
+#include "HttpSource.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "Metrics.h"
@@ -255,7 +256,12 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     fileProperties.parseFileName();
     LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
-    std::shared_ptr<FileSource> source(new FileSource(musicPath.c_str()));
+    std::shared_ptr<DataSource> source;
+    if (musicPath.rfind("http://", 0) == 0 || musicPath.rfind("https://", 0) == 0) {
+        source.reset(new HttpSource(musicPath.c_str()));
+    } else {
+        source.reset(new FileSource(musicPath.c_str()));
+    }
     if (source == nullptr) {
         recordScanRejection(ErrorCode::FileOpenFailed);
         reportError(ErrorCode::FileOpenFailed, "new FileSource failed", musicProperties);
