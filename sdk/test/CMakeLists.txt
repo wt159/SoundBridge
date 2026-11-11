@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.5)
 
 project(sdk_tests)
 
+find_package(Threads REQUIRED)
+
 # ============================================================
 # Doctest Integration (Header-only, local copy)
 # ============================================================
@@ -155,6 +157,7 @@ set(UNIT_TEST_SOURCES
     unit/test_packet_supply.cpp
     unit/test_bad_input.cpp
     unit/test_streaming_budget.cpp
+    unit/test_http_source.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})
@@ -163,7 +166,12 @@ target_link_libraries(UnitTests
     PRIVATE
     ${SDK_TEST_COMMON_LIBS}
     AudioDevice
+    Threads::Threads
 )
+
+if(WIN32)
+    target_link_libraries(UnitTests PRIVATE ws2_32)
+endif()
 
 target_include_directories(UnitTests
     PRIVATE

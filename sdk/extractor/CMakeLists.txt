@@ -16,3 +16,7 @@ add_library(Extractor ${SOURCES})
 target_link_libraries(Extractor utils Boost::filesystem LogWrapper AudioDecode)
 
 target_include_directories(Extractor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../audio/common)
+
+if(WIN32)
+    target_link_libraries(Extractor ws2_32)
+endif()
