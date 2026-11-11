@@ -133,7 +133,7 @@
 - **保持 `void` 签名，不新增错误码、不改 `onError` 签名**。`INVALID_OPERATION` 实为 `sdk_utils::status_t = -ENOSYS`（#76 实测），是**内部降级码，不对外暴露**；`streaming-playback-spec.md` §6 的措辞按此回填。
 - `durationMs == 0 && pos > 0` 时 `seek()` 为**空操作**：不回退 `position()`、不发 `onPositionChanged`、不改状态、不发 `onError`；`pos == 0` 例外保留（归零）。`pos > durationMs` 的静默丢弃与之一致，统一按空操作处理。
 - 标称时长为 0 时，`position()` / `onPositionChanged` 仍按已消费 PCM 时间照常推进（ADR 0003）；`duration()` 返回 0 表示**标称时长未知**，SDK 不区分「未知时长」与「零长度素材」。
-- UI 从 `duration() == 0` 这一个信号得知不可 seek；**不引入能力位 / `isSeekable()`**。app 作为验收场景，只验证该信号可用，不写 UI 规范。
+- UI 从 `duration() == 0` 这一个信号得知不可 seek；**不引入能力位 / `isSeekable()`**。app 作为验收场景，只验证该信号可用，不写 UI 规范。**2026-11-11 补充**：[网络音频源接入规格](network-audio-source-spec.md) 沿用本条，能力模型只放数据源层内部、公开面不变，见该规格 §5.4 / §8.2。
 - **fog 收敛**：「能力查询是否独立成 API」裁定为不需要，从 Not yet specified 删除；「显式拒绝」的判定落在可红可绿的空操作判据上（§8），不是对调用方的返回码。
 
 ## 8. 验收判据与回归基线（对应「契约的验收判据与回归基线」）

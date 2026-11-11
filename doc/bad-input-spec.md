@@ -685,7 +685,7 @@ else:                             next = offset + declared
 
 - **空文件 / 非音频伪装扩展名**：已被 `ExtractorUnsupported` 挡住，有素材也有测试。
 - **读盘中途 IO 失败、权限、路径编码**：属数据源层（`FileOpenFailed`），与「文件内容坏」不是同一个问题。
-- **网络流 / URL / 边下边播**：属数据源层，不在本地文件规格内。另更正：`support stream programme`（#8）的正文是 *Streaming decoding and playback scheme for local music players*，讲的是**本地文件边解边播**，已由地图 #42 收口为 [边解边播规格](streaming-playback-spec.md)；本文件旧版把它写成「网络流」属措辞偏差。
+- **网络流 / URL / 边下边播**：属数据源层，不在本地文件规格内。**2026-11-11 补充**：见 [`doc/network-audio-source-spec.md`](network-audio-source-spec.md) §7，网络失败仍归数据源层、内容层拒绝唯一出口 `createExtractor()==nullptr` 不变；另更正：`support stream programme`（#8）的正文是 *Streaming decoding and playback scheme for local music players*，讲的是**本地文件边解边播**，已由地图 #42 收口为 [边解边播规格](streaming-playback-spec.md)；本文件旧版把它写成「网络流」属措辞偏差。
 - **播放列表自动跳过的交互重设计**：只判定它该不该覆盖「播到一半才坏」，不改 `m_autoSkipOnError` 的列表逻辑。
 - **用例与断言的实现**：见第 10 节 P2。
 

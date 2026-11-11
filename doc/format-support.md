@@ -110,3 +110,4 @@ mp3/ogg 的提取器 `bytesPerSample` 是 0（会除零），而 aac/asf/mp3/wma
 1. 新增格式 = 新提取器 + 注册 + 本表加行 + 更新一致性用例里的期望列表 + 覆盖度矩阵加一行素材，五件事一起做。
 2. 摘除格式 = 删注册 + 删映射/枚举 + 本表移到「不支持」+ 同步用例。
 3. `FileSearch` 以 `defaultExtractorMap` 作为扫描白名单，所以本表的增删会直接改变播放列表能看到什么。
+4. **2026-11-11 补充**：URL 入口不改变「受支持格式」定义；清单类 URL（`.m3u8` / `.mpd`）不是受支持格式，也不注册提取器，见 [`doc/network-audio-source-spec.md`](network-audio-source-spec.md) §4。

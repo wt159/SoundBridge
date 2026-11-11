@@ -11,7 +11,7 @@
 
 让本地音频文件的播放满足**边解边播**这一数据供给契约：解码与消费并行推进，播放期间为当前曲目持有的音频数据量不随素材时长增长。
 
-- **只含本地文件**。网络流 / URL / HTTP 数据源 / 边下边播 / 断线重连不在范围内。
+- **只含本地文件**。网络流 / URL / HTTP 数据源 / 边下边播 / 断线重连不在范围内。**2026-11-11 补充**：网络音频源（URL）接入已由 [地图：网络音频源（URL）接入规格与全谱系架构决策](https://github.com/wt159/SoundBridge/issues/118) 单独收口，规格见 [`doc/network-audio-source-spec.md`](network-audio-source-spec.md)；本文件范围、判据与表格一字不动。
 - 播放器状态机与 app UI（`PlayerState` 三态、`durationMs == 0` 的显示与 seek 禁用、事件回调语义）不在本图范围内；**该独立地图 [#75](https://github.com/wt159/SoundBridge/issues/75) 已于 2026-11-07 收口**，结论见 [`doc/player-state-contract.md`](player-state-contract.md) 与 [ADR 0004](../docs/adr/0004-player-state-three-values.md)。
 - 设备抽象 `IAudioSink`、听感与重采样质量、格式扩展与提取器插件化不在范围内。
 - 用例与断言的实现不在本图内；本文件只给判据与决策。

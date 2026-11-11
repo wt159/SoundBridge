@@ -13,7 +13,7 @@
 
 合并成一张图的理由是它们问的是同一个问题：**哪些量能红能绿、哪些只能看、只看的那些怎么标注**。走到这里，接手 [#8 support stream programme](https://github.com/wt159/SoundBridge/issues/8) 的 E1–E15 实现 effort 不必再为观测口径做决定。（**2026-11-08 时点说明**：本句写于 #94 起图时，当时把 E1–E15 当作尚未执行的未来 effort；实际该 effort 已由 #55–#69 于 2026-11-06 全部完成，见 §8.3 事实更正。保留原句作为当时动机的留痕。）
 
-**界外**（详见地图 Out of scope）：#8 的 E1–E15 实现（**写于起图时；该 effort 已完成，见 §8.3**）、网络流 / URL 数据源、播放器状态机与公开 API 签名演进、新增可注入错误接缝（**2026-11-08 例外**：[#109](https://github.com/wt159/SoundBridge/issues/109) 单开 effort 重审后批准**一个**默认关闭的设备错误注入点，[#110](https://github.com/wt159/SoundBridge/issues/110) 落地 C1/C5 判据；该例外不推广到其它接缝、不新增判据数值，见 `doc/player-state-contract.md` §10.4）、补素材矩阵 / 合成长音频、改既有判据数值。
+**界外**（详见地图 Out of scope）：#8 的 E1–E15 实现（**写于起图时；该 effort 已完成，见 §8.3**）、网络流 / URL 数据源（**2026-11-11 补充**：已由 [地图：网络音频源（URL）接入规格与全谱系架构决策](https://github.com/wt159/SoundBridge/issues/118) 单独收口，见 [`doc/network-audio-source-spec.md`](network-audio-source-spec.md)；本规格「不新增记录面 / 不设数值阈值」的裁决继续适用于网络量）、播放器状态机与公开 API 签名演进、新增可注入错误接缝（**2026-11-08 例外**：[#109](https://github.com/wt159/SoundBridge/issues/109) 单开 effort 重审后批准**一个**默认关闭的设备错误注入点，[#110](https://github.com/wt159/SoundBridge/issues/110) 落地 C1/C5 判据；该例外不推广到其它接缝、不新增判据数值，见 `doc/player-state-contract.md` §10.4）、补素材矩阵 / 合成长音频、改既有判据数值。
 
 **一次性批量授权（2026-11-08）**：用户以「继续」推进到本图，此前已明确「需要我拍板的问题都选择你的推荐」；九张票按各自推荐答案连续收口，完整依据留在各票 resolution comment，地图只留 gist + 链接。与 2026-11-05 / 2026-11-07 的两次批量授权同构。
 
