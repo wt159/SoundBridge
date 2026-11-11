@@ -495,6 +495,12 @@ bool HttpSource::probe()
             m_host = host;
             m_port = port;
             m_path = path;
+            // 重定向更新 m_path 后复查清单类，明确拒绝，避免 P0-1 的漏检。
+            if (isPlaylistExtension(m_path)) {
+                LOG_ERROR(LOG_TAG, "redirect target is a playlist, reject: %s",
+                          m_path.c_str());
+                return false;
+            }
             continue;
         }
         if (resp.status != 206) {

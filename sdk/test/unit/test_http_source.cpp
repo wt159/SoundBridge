@@ -150,11 +150,18 @@ public:
     struct Config {
         bool emitIcy;
         bool omitAcceptRanges;
+        bool acceptRangesNone;
+        bool ignoreRange;
         bool fakeTotalOnTail;
+        bool growContentLength;
+        bool playlistBody;
         int  redirects;
+        std::string redirectLocation;
         Config()
             : emitIcy(false), omitAcceptRanges(false),
-              fakeTotalOnTail(false), redirects(0) { }
+              acceptRangesNone(false), ignoreRange(false),
+              fakeTotalOnTail(false), growContentLength(false),
+              playlistBody(false), redirects(0), redirectLocation() { }
     };
 
     MockHttpServer(const std::vector<uint8_t> &bytes, Config config = Config())
@@ -250,17 +257,37 @@ private:
         const int index = m_requests.fetch_add(1);
         if (index < m_config.redirects) {
             const std::string body = "redirecting";
+            const std::string location = m_config.redirectLocation.empty()
+                ? std::string("/final.wav") : m_config.redirectLocation;
             const std::string resp = "HTTP/1.1 302 Found\r\n"
-                                     "Location: /final.wav\r\n"
+                                     "Location: " + location + "\r\n"
                                      "Content-Length: " + std::to_string(body.size()) + "\r\n"
                                      "Connection: close\r\n\r\n" + body;
+            sendAll(client, resp);
+            return;
+        }
+        // 清单式响应：忽略 Range，返回整份 #EXTM3U 文本（200），用于验证
+        // 无扩展名 URL 命中清单内容时被静态点播门禁明确拒绝。
+        if (m_config.playlistBody) {
+            const std::string playlist =
+                "#EXTM3U\r\n"
+                "#EXT-X-VERSION:3\r\n"
+                "#EXT-X-TARGETDURATION:10\r\n"
+                "#EXTINF:10.0,\r\n"
+                "segment0.ts\r\n"
+                "#EXT-X-ENDLIST\r\n";
+            std::string resp = "HTTP/1.1 200 OK\r\n"
+                               "Content-Type: application/vnd.apple.mpegurl\r\n"
+                               "Content-Length: " + std::to_string(playlist.size()) + "\r\n"
+                               "Connection: close\r\n\r\n";
+            resp += playlist;
             sendAll(client, resp);
             return;
         }
         long long start = 0, end = 0;
         const bool hasRange = parseRange(req, start, end);
         const long long total = (long long)m_bytes.size();
-        if (!hasRange) {
+        if (m_config.ignoreRange || !hasRange) {
             std::string resp = "HTTP/1.1 200 OK\r\n"
                                "Content-Length: " + std::to_string(total) + "\r\n"
                                "Connection: close\r\n\r\n";
@@ -277,11 +304,18 @@ private:
         if (m_config.fakeTotalOnTail && length == 1 && start == total - 1) {
             declaredTotal = total + 7;   // 伪长度：二次校验 total 与首次不一致
         }
+        // 声明长度大于实际 body：模拟连接不自然终止的伪长度源。
+        const long long declaredLength =
+            m_config.growContentLength ? (length + 64) : length;
         std::string resp = "HTTP/1.1 206 Partial Content\r\n";
-        if (!m_config.omitAcceptRanges) resp += "Accept-Ranges: bytes\r\n";
+        if (m_config.acceptRangesNone) {
+            resp += "Accept-Ranges: none\r\n";
+        } else if (!m_config.omitAcceptRanges) {
+            resp += "Accept-Ranges: bytes\r\n";
+        }
         resp += "Content-Range: bytes " + std::to_string(start) + "-"
                 + std::to_string(end) + "/" + std::to_string(declaredTotal) + "\r\n";
-        resp += "Content-Length: " + std::to_string(length) + "\r\n";
+        resp += "Content-Length: " + std::to_string(declaredLength) + "\r\n";
         resp += "Connection: close\r\n";
         resp += "X-Mock-Owner: " + std::to_string(sb_test::processId()) + "\r\n";
         if (m_config.emitIcy) resp += "Icy-Name: mock-radio\r\n";
@@ -480,5 +514,75 @@ TEST_SUITE("HttpSource")
         MockHttpServer server(bytes, cfg);
         HttpSource source(server.url("/music.wav").c_str());
         CHECK(source.initCheck() != sdk_utils::OK);
+    }
+
+    TEST_CASE("server ignoring Range (200 full body) is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.ignoreRange = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);   // 探测要求 206，不降级为边下边播
+    }
+
+    TEST_CASE("explicit Accept-Ranges: none is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.acceptRangesNone = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);
+    }
+
+    TEST_CASE("declared Content-Length larger than body is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.growContentLength = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);
+    }
+
+    TEST_CASE("extension-less URL with native-format content is accepted")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        HttpSource source(server.url("/music").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+        uint8_t buf[16];
+        const ssize_t n = source.readAt(0, buf, sizeof(buf));
+        REQUIRE(n == 16);
+        REQUIRE(std::memcmp(buf, bytes.data(), 16) == 0);
+    }
+
+    TEST_CASE("extension-less URL serving playlist text is rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistBody = true;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);   // 清单式响应明确拒绝，不静默回退
+    }
+
+    TEST_CASE("redirect to a playlist target is explicitly rejected")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.redirects = 1;
+        cfg.redirectLocation = "/list.m3u8";
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/start.wav").c_str());
+        CHECK(source.initCheck() != sdk_utils::OK);
+        CHECK(server.requestCount() >= 1);   // 已处理重定向，不是构造期静默拒绝
     }
 }
