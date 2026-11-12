@@ -168,3 +168,24 @@
 6. **工厂不是简单的「扩展名 + magic sniff」**（§1 / §2.5.5 表 #8）：实际是四级路径（扩展名 → 扩展名失败后 magic 回退 → 未注册时 magic sniff → 遍历全部 sniffer 兜底），见 §3。更关键的是**生产链第一层**：URL 字符串在 `MusicPlayList.cpp:258-268` 被 `FileSource` 当本地路径打开失败，以 `FileOpenFailed` 拒绝，**到不了 `ExtractorFactory`**；快照只讨论了 factory 层的 sniff 失败，未覆盖这一层。
 7. **`DataSource::readAt` 的 EOF 语义**（§1）：接口注释明确 `readAt` 返回 0 是「offset 到达/越过末尾」而非错误（`DataSource.hpp:21-24`）；`avioRead` 把 `n <= 0` 一律译作 `AVERROR_EOF`（`M4APacketReader.cpp:66-67`）。`AVIOContext.seekable` 也并非「未处理」：自有源码未显式赋值，但 `avio_alloc_context` 因拿到非空 seek 回调而在库内置为 `AVIO_SEEKABLE_NORMAL`（`aviobuf.c:115`），即**总声明可 seek**。
 8. **时长/seek 契约的细节**（§1「`durationMs == 0` 已允许」「seek 只保留 `seekToMs`」）：属实，但 `durationMs==0` 的 seek 空操作不是显式 `if (duration == 0)`，而是 `_setPosition` 的通用边界 `if (pos > durationMs) return;`（`MusicPlayer.cpp:407`）导致所有 `pos > 0` 被丢弃，`pos == 0` 仍会走 `seekToMs(0)`；UI 侧由 `mDurationSlider->setRange(0, durationMs/1000)`（`mainwindow.cpp:699-700`）间接禁用拖动。且 `ExtractorHelper::seekToMs` 基类默认返回 `INVALID_OPERATION`、无提取器 override，生产链定位走的是 `AudioStreamDecoder::seekToMs` 单槽 + `PacketReader::seekTo` 字节 seek。
+
+---
+
+## 9. 后续实证（2026-11-11，Linux `sdk-coverage` configure 摘要）
+
+本节为**追加补证**，§1–§8 原文保持不动（时点快照 / 历史留痕）。证据来自 master push run [`43059521478`](https://github.com/wt159/SoundBridge/actions/runs/43059521478) attempt 2（`completed/success`）的 `Build 3rdparty deps` 步骤：2026-11-11 17:17 UTC，FFmpeg 4.4 `configure` 结束时的组件摘要。这是 Linux 侧 configure 结果的一手输出，可闭合 §7 第 1 / 5 项。
+
+**摘要逐字要点**
+
+- `External libraries:` 仅 `iconv / libxcb / zlib` —— 无 `libxml2`，无 openssl / gnutls。
+- `Enabled demuxers:` 含 `hls`，**不含 `dash`**；`dash` 只出现在其后的 `Enabled muxers:` 段（对应 `dashenc`），不可混读为 demuxer 启用。
+- `Enabled protocols:` 含 `http / httpproxy / hls / rtmp / rtmpt / icecast / ftp / tcp / udp / unix` 等，**不含 `https` / `tls`**。
+
+**据此闭合 / 更正**
+
+1. **§6 的「推断」升级为实证**：Linux 侧 `CONFIG_DASH_DEMUXER = 0`，与 Windows `config.h:2217` 一致。因果亦经 `configure:3318 dash_demuxer_deps="libxml2"` 逐字核实，两侧 `libxml2` 均未启用。§7 第 1 项在**结论层面**已闭合；仓库内仍无 Linux 侧 `config.h` / `config.mak` 落盘产物，但 CI 摘要足以判定该宏，后续若需逐项核对其它宏应另取产物。
+2. **§7 第 5 项部分闭合**：Linux 侧无 TLS 后端、`https` / `tls` 协议未启用 ⇒ `CONFIG_HTTPS_PROTOCOL = 0` / `CONFIG_TLS_PROTOCOL = 0`；Windows 侧 `config.h:2672 / 2691` 为 1（Schannel）。**这是双平台真实差异**，此前「协议宏组合同理」的推断对 HTTPS/TLS 不成立。差异只作用于 FFmpeg 原生 URL 层（P2–P4），不影响 P0 自写 BSD socket 客户端；P0 明确拒绝 `https://`，与两侧库能力无关。
+3. `CONFIG_HLS_DEMUXER = 1` 两侧一致；`protocol_whitelist` 结论（§6）不变 —— 本项目 `avformat_open_input` 的 options 仍为 `nullptr`，库内 AVOption 默认 NULL。
+4. **仍属留白**：各 `URLProtocol.default_whitelist` 具体字符串（§7 第 2 项）、9 个 sniffer 对文本清单的行为（第 3 项）、快照「全量扫描」原指位置（第 4 项）、FFmpeg 内部调用细节（第 6 项）。这些不改变规格裁决，按 `doc/network-audio-source-spec.md` 的「准入检查 + 复核责任」处理。
+
+**不影响裁决**：规格 §4 的 DASH VOD / LIVE「本版不做」理由与重开触发条件不变；§11 的 P0–P4 顺序不变；P0 实现零改动。

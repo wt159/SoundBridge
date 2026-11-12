@@ -84,7 +84,7 @@ ctest --test-dir build -R sdk_unit_tests --output-on-failure
 ctest --test-dir build -R sdk_player_tests --output-on-failure
 ctest --test-dir build -R sdk_ --output-on-failure
 
-# 覆盖率报告（Linux only，35% 门禁）
+# 覆盖率报告（Linux only，33% 门禁；真源 = sdk/test/CMakeLists.txt 的 SB_COVERAGE_MIN_PERCENT 与 scripts/coverage/run_linux.sh 的 MIN_PERCENT 默认值，2026-11-11 修正，旧写 35% 已作废）
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/toolchain.linux_x86_64_gcc.cmake -DENABLE_COVERAGE=ON -G "Unix Makefiles"
 cmake --build build --target coverage
 # HTML 报告：build/coverage/html/index.html
