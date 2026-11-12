@@ -7,10 +7,14 @@
 ```text
 sdk/extractor/
 ├── ExtractorFactory.*        # 注册表、扩展名规范化、magic sniff
-├── DataSource.hpp            # 数据源抽象
+├── DataSource.hpp            # 数据源抽象（含取消信号接缝 setAbortFlag/abortRequested）
 ├── FileSource.*              # 本地文件数据源
+├── HttpSource.*              # 网络静态点播数据源（自写 BSD socket HTTP/1.1 Range）
+├── UrlSource.*               # URL 直通数据源（FFmpeg 原生 URL 层，HLS VOD 用）
+├── AbortInterrupt.hpp        # 取消信号 → AVERROR_EXIT 的 interrupt_callback
 ├── FileSearch.*              # 文件搜集
 ├── asf/                      # ASF/WMA/AMR 共享实现；看 asf/AGENTS.md
+├── hls/                      # HLS VOD 清单直通（原生 URL 层，不传自定义 pb）
 └── {aac,aiff,ape,flac,m4a,mkv,mp3,ogg,wav}/
                            # 每种格式一组 extractor 实现
 ```
@@ -22,7 +26,8 @@ sdk/extractor/
 | 任务 | 位置 | 备注 |
 |------|------|------|
 | 新增格式支持 | `ExtractorFactory.cpp` + 新格式子目录 | 先注册，再补 sniff/creator |
-| 统一数据源语义 | `DataSource.hpp`, `FileSource.*` | `readAt/getSize/getUri` 约束都在这里 |
+| 统一数据源语义 | `DataSource.hpp`, `FileSource.*` | `readAt/getSize/getUri` 约束与取消接缝都在这里 |
+| 网络源 / URL 接入 | `HttpSource.*`, `UrlSource.*`, `hls/` | 分派在 `sdk/MusicPlayList.cpp::_addMusic()`；契约见 `doc/network-audio-source-spec.md` |
 | 扩展名或 magic 识别 | `ExtractorFactory.cpp` | `normalizeExtension()` / `sniffExtensionByMagic()` |
 | FFmpeg demux 初始化 | `asf/`, `ape/`, `m4a/`, `mkv/` 等 | 多数复杂格式在这里 |
 | extractor 回归 | `../test/unit/test_extractor.cpp`, `../test/TestSdkSuite.cpp` | 单测 + 媒体冒烟 |
@@ -31,6 +36,7 @@ sdk/extractor/
 - 新 extractor 必须保持工厂入口一致：构造函数接 `DataSourceBase *`，并暴露 `initCheck()`；能 sniff 的格式优先补 sniff。
 - `ExtractorFactory` 先看扩展名，再按 magic，再遍历 sniffer；改顺序会影响兼容性与日志判断。
 - 复杂容器优先在本目录消化格式差异，不要把 FFmpeg 细节泄漏到上层 player/app。
+- 非 AVIO 主路径（`hls/` 与 aac/aiff/mp3/wav 的原生 demux）必须 override `getDataSource()`；否则取消信号注不进去，`nextPacket()==false` 会被误当 EOS。
 - 本目录内部继续用 `sdk_utils::status_t`，并按既有 `LOGI/LOGW/LOGE` 路径记录失败原因。
 
 ## ANTI-PATTERNS
