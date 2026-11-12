@@ -41,9 +41,6 @@ public:
     // 口径与 M4AExtractor 一致不计入。
     virtual size_t heldPayloadBytes() const { return 0; }
 
-    // VOD 有界窗口的时间轴 seek（契约 §5）：hls demuxer 提供 duration → 正常 seek 路径。
-    virtual sdk_utils::status_t seekToMs(uint64_t targetMs, uint64_t *actualMs = nullptr);
-
 private:
     sdk_utils::status_t open();
     void closeFmt();

@@ -267,7 +267,7 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     std::string extractorExtension = fileProperties.extensionName;
     const bool isHttp = musicPath.rfind("http://", 0) == 0;
     const bool isHttps = musicPath.rfind("https://", 0) == 0;
-    if (isHttp && !isHttps && !UrlSource::isMpdExtensionUrl(musicPath)) {
+    if (isHttp && !UrlSource::isMpdExtensionUrl(musicPath)) {
         UrlSource *urlSource = new UrlSource(musicPath.c_str());
         if (urlSource->initCheck() == OK && urlSource->headLooksLikePlaylist()) {
             if (urlSource->headHasVodFeatures()) {

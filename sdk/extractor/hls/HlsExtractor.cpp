@@ -177,7 +177,12 @@ AudioBuffer::AudioBufferPtr HlsExtractor::packetAt(size_t index)
         return nullptr;
     }
 
+    // 非音频包（元数据等）只跳不缓存；上限防坏流在非音频包上原地打转。
+    // 上限耗尽按 nullptr 停止：PacketCursor 在 kUnknownPacketCount 下的 nullptr
+    // 语义是「序列结束」而非「跳过」，解码侧随后走既有 EOS 汇总兜底
+    // （ADR 0002：可解性不在提取器判定），不再重跑跳包循环。
     int ret = 0;
+    bool gotAudio = false;
     for (int skipped = 0; skipped < kNonAudioPacketSkipLimit; ++skipped) {
         ret = av_read_frame(m_fmt, m_pkt);
         if (ret < 0) {
@@ -186,11 +191,12 @@ AudioBuffer::AudioBufferPtr HlsExtractor::packetAt(size_t index)
             return nullptr;
         }
         if (m_pkt->stream_index == m_audioIndex && m_pkt->size > 0) {
+            gotAudio = true;
             break;
         }
         av_packet_unref(m_pkt);
     }
-    if (ret < 0) {
+    if (!gotAudio) {
         return nullptr;
     }
 
@@ -200,22 +206,4 @@ AudioBuffer::AudioBufferPtr HlsExtractor::packetAt(size_t index)
     av_packet_unref(m_pkt);
     ++m_consumed;
     return out;
-}
-
-status_t HlsExtractor::seekToMs(uint64_t targetMs, uint64_t *actualMs)
-{
-    if (m_fmt == nullptr || m_audioIndex < 0) {
-        return NO_INIT;
-    }
-    // VOD 有界窗口（#143 契约 §5）：hls demuxer 提供 duration → 时间轴 seek；
-    // 目标超出可解内容的处置归调用方（m_durationMs 兜底），这里只尽力定位。
-    const int64_t targetUs = static_cast<int64_t>(targetMs) * 1000;
-    if (av_seek_frame(m_fmt, m_audioIndex, targetUs, AVSEEK_FLAG_BACKWARD) < 0) {
-        LOGW("hls seek to %llums failed", (unsigned long long)targetMs);
-        return INVALID_OPERATION;
-    }
-    if (actualMs != nullptr) {
-        *actualMs = targetMs;
-    }
-    return OK;
 }
