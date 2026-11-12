@@ -671,6 +671,30 @@ TEST_SUITE("HttpSource")
         REQUIRE(fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
         CHECK(fut.get() == -1);
     }
+
+    // 对照组：与上面的取消用例共用同一挂起形态，差别只在唯一取消信号。
+    // 不置取消时 readAt 不提前退出，等满数据源层 3s 读超时后正常失败；
+    // 判据只用布尔结果，wait_for(2s) 仅为测试内部超时保护（非门禁数值阈值）。
+    TEST_CASE("uncancelled hanging read falls back to read timeout")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.hangAfterHeaders = true;
+        cfg.hangFromRequest = 4;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+
+        std::atomic<bool> flag(false);   // 注入但不置取消，与取消用例形成对照
+        source.setAbortFlag(&flag);
+        auto fut = std::async(std::launch::async, [&] {
+            char buf[16];
+            return source.readAt(0, buf, sizeof(buf));
+        });
+        CHECK(fut.wait_for(std::chrono::seconds(2)) != std::future_status::ready);
+        CHECK(fut.get() == -1);   // 等满 3s 读超时后正常失败
+    }
 }
 
 
@@ -892,6 +916,23 @@ TEST_SUITE("AbortSignalWiring")
         REQUIRE(source.abortRequested() == true);
         source.setAbortFlag(nullptr);
         CHECK(source.abortRequested() == false);
+    }
+
+    // 对称性：同一对象在「注入 → 解绑 → 再注入新 flag」后状态机不卡死，
+    // 补 #135 未覆盖的「解绑后重新注入」连续序列；纯本地判定、不联网。
+    TEST_CASE("re-injecting a flag after unbinding is still observed")
+    {
+        AbortSeamSource source;
+        std::atomic<bool> first(true);
+        source.setAbortFlag(&first);
+        REQUIRE(source.abortRequested() == true);    // 置位后取消可见
+        source.setAbortFlag(nullptr);
+        CHECK(source.abortRequested() == false);     // 解绑后恢复
+        std::atomic<bool> second(false);
+        source.setAbortFlag(&second);
+        CHECK(source.abortRequested() == false);     // 新 flag 初值为假
+        second.store(true);
+        CHECK(source.abortRequested() == true);      // 新 flag 仍可判定
     }
 }
 
