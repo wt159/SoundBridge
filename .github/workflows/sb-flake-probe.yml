@@ -3,20 +3,20 @@ name: sb-flake-probe
 # ============================================================
 # 取证专用探针（issue #141）——不是门禁，不是产品构建
 #
-# 已排除的两条路（2026-11-12）：
-#   轮二 43187863287：ASan 全量 ctest 15/15 全红但零 ASan 报告，
-#     红的是 test_player_integration.cpp 的时序断言（:1090 / :1693 / :1701），
-#     插桩把「采样撞短窗口」的判定拖坏 → 信噪比为负。
-#   轮三 43192332706：非插桩 Debug + gdb batch（handle SIGSEGV stop print
-#     nopass 抢在 doctest 信号处理器之前停住），单独跑
-#     `UnitTests -ts="MusicPlayer Interactive Paths,PublicPlayer Interactive Paths"`
-#     4 并发 worker × 25 轮 = 100 次，**0 崩溃**。
-#     → 该崩溃不是交互套件内部的竞态，需要整个 `ctest -R sdk_ -j4`
-#       （14 个进程并发）的负载/内存压力才现。
+# 已排除的路线（2026-11-12）：
+#   43187863287  ASan 全量 ctest 15/15 全红但零 ASan 报告 → 插桩拖坏时序断言，信噪比为负
+#   43192332706  非插桩 + gdb 单独跑交互套件，4 并发 × 25 轮 = 100 次，0 崩溃
+#                → 需要整轮 ctest -j4（14 进程）的负载才现
+#   43194544953  整轮 -j4 + core dump，第 4 轮命中 core，栈已拿到：
+#                WorkQueue::threadLoopFunc (sdk/cosmos/WorkQueue.hpp:168)
+#                → m_taskQueue.pop() 在销毁一个控制块已被释放的 shared_ptr
+#                  （_M_release 的 this=0x55，use count 为负的垃圾值）
+#                → 崩溃在控制队列的「取不可用任务」分支，与网络源 / P1 取消通道无关
 #
-# 本轮做法：整轮 `ctest -R sdk_ -j4` 照常跑（不插桩、不套 gdb，时序判定
-# 与 CI 完全一致），靠 core dump 事后取栈。doctest 的信号处理器会重新抛
-# 默认动作（CI 日志里 ctest 打印 "Segmentation fault" 即证据），因此能落 core。
+# 本轮：同样落 core，但把 gdb 检查做细——从 core 里直接读 WorkQueue 的
+#       m_running / m_taskMap.size() / m_taskQueue 实际元素数，
+#       验证「用 m_taskMap.size() 当 m_taskQueue 非空判据」这条不变量是否已经破了
+#       （破了的话 top()/pop() 就是在空队列上操作，正是观察到的垃圾指针）。
 #
 # 红线：只由 push 到 probe/** 触发，不挂 master / pull_request；
 #       不改任何 sdk_* 目标、TIMEOUT、套件分组、既有判据；
@@ -34,9 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
-      # P1 之后的 master tip
       REF: 51d4ac51cbc036d6c14e372da378e9174c3dd028
-      ROUNDS: 20
+      ROUNDS: 8
       COREDIR: /tmp/sbcore
     steps:
       - uses: actions/checkout@v7
@@ -78,10 +77,8 @@ jobs:
 
       - name: Enable core dumps
         run: |
-          set -x
           sudo mkdir -p "$COREDIR"
           sudo chmod 777 "$COREDIR"
-          echo "before: $(cat /proc/sys/kernel/core_pattern)"
           sudo sysctl -w kernel.core_pattern="$COREDIR/core.%e.%p.%t" || \
             sudo sh -c "echo '$COREDIR/core.%e.%p.%t' > /proc/sys/kernel/core_pattern"
           cat /proc/sys/kernel/core_pattern
@@ -110,33 +107,40 @@ jobs:
               break
             fi
           done
-          echo "=== cores: ===" | tee -a core-rounds.log
           ls -la "$COREDIR" | tee -a core-rounds.log || true
 
-      - name: Backtrace from cores
+      - name: Inspect WorkQueue state from core
         run: |
           shopt -s nullglob
-          : > backtrace.txt
-          found=0
+          : > inspect.txt
           for c in "$COREDIR"/core.*; do
-            found=1
+            case "$c" in
+              *UnitTests*) ;;
+              *) continue ;;
+            esac
             {
               echo "########## $c ##########"
-              # 只处理 UnitTests 的 core（目标是 sdk_interaction_tests）
-              case "$c" in
-                *UnitTests*) gdb -batch -nx -q \
-                    -ex "set pagination off" \
-                    -ex "echo \n===== BACKTRACE (all threads) =====\n" \
-                    -ex "info threads" \
-                    -ex "thread apply all bt full" \
-                    "${{ github.workspace }}/build-dbg/sdk/test/UnitTests" "$c" ;;
-                *) echo "skip $c" ;;
-              esac
-            } 2>&1 | tee -a backtrace.txt
+              gdb -batch -nx -q \
+                -ex "set pagination off" \
+                -ex "set print frame-arguments none" \
+                -ex "echo \n===== CRASH FRAME =====\n" \
+                -ex "bt 20" \
+                -ex "echo \n===== WORKQUEUE STATE =====\n" \
+                -ex "thread 1" \
+                -ex "frame 8" \
+                -ex "info args" \
+                -ex "print this->m_running" \
+                -ex "print this->m_taskMap.size()" \
+                -ex "print this->m_taskQueue.c.size()" \
+                -ex "print this->m_taskQueue.c.capacity()" \
+                -ex "echo \n===== ALL THREADS (short) =====\n" \
+                -ex "thread apply all bt 6" \
+                "${{ github.workspace }}/build-dbg/sdk/test/UnitTests" "$c"
+            } 2>&1 | tee -a inspect.txt
           done
-          if [ "$found" = "0" ]; then echo "NO CORE PRODUCED" | tee -a backtrace.txt; fi
+          grep -q "WORKQUEUE STATE" inspect.txt || echo "NO CORE PRODUCED" | tee -a inspect.txt
 
-      - name: Upload core evidence
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -144,4 +148,4 @@ jobs:
           path: |
             core-rounds.log
             core-run-*.log
-            backtrace.txt
+            inspect.txt
