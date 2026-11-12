@@ -59,6 +59,52 @@ bool containsAscii(const std::vector<uint8_t> &bytes, const char *text)
     return false;
 }
 
+// master playlist（#EXT-X-STREAM-INF）里首个 variant URI：紧随该 tag 的第一个
+// 非注释、非空行（RFC 8216 §4.3.4.2）。
+bool firstVariantUri(const std::vector<uint8_t> &head, std::string &uri)
+{
+    std::string text(head.begin(), head.end());
+    size_t pos = 0;
+    bool pending = false;
+    while (pos < text.size()) {
+        const size_t eol = text.find('\n', pos);
+        std::string line = text.substr(pos, (eol == std::string::npos)
+                                                ? std::string::npos : eol - pos);
+        pos = (eol == std::string::npos) ? text.size() : eol + 1;
+        while (!line.empty() && (line[line.size() - 1] == '\r'
+                                 || line[line.size() - 1] == ' ')) {
+            line.erase(line.size() - 1);
+        }
+        if (line.empty()) continue;
+        if (line[0] == '#') {
+            pending = (line.compare(0, 18, "#EXT-X-STREAM-INF:") == 0);
+            continue;
+        }
+        if (pending) {
+            uri = line;
+            return true;
+        }
+    }
+    return false;
+}
+
+// 相对 variant URI 解析：同 origin + 清单路径目录拼接；绝对 http(s) URL 原样
+// 返回（https 变体会被白名单拒绝，语义保守）。
+std::string resolveUrl(const std::string &base, const std::string &uri)
+{
+    if (uri.compare(0, 7, "http://") == 0 || uri.compare(0, 8, "https://") == 0) {
+        return uri;
+    }
+    const size_t schemeEnd = base.find("://");
+    if (schemeEnd == std::string::npos) return std::string();
+    const size_t slash = base.find('/', schemeEnd + 3);
+    if (slash == std::string::npos) return base + "/" + uri;
+    const size_t lastSlash = base.rfind('/');
+    const std::string dir = (lastSlash > slash)
+        ? base.substr(slash, lastSlash - slash + 1) : std::string("/");
+    return base.substr(0, slash) + dir + uri;
+}
+
 } // namespace
 
 bool UrlSource::isPlaylistExtensionUrl(const std::string &url)
@@ -114,6 +160,30 @@ ssize_t UrlSource::readAt(off64_t offset, void *data, size_t size)
 
 bool UrlSource::sniffHead()
 {
+    if (!fetchHead(m_url, m_head)) {
+        return false;
+    }
+    classifyHead();
+
+    // P2-2（issue #145 / #143 契约 §2）：master playlist 本身无 ENDLIST，
+    // VOD/LIVE 语义由 variant 承载。跟随首个 variant URI 复查一次；
+    // 取回失败或 variant 无 VOD 特征都维持「无 VOD 特征」→ 拒绝（语义保守）。
+    if (m_headPlaylist && !m_headVod && containsAscii(m_head, "#EXT-X-STREAM-INF")) {
+        std::string variantUri;
+        if (firstVariantUri(m_head, variantUri)) {
+            const std::string variantUrl = resolveUrl(m_url, variantUri);
+            std::vector<uint8_t> variantHead;
+            if (!variantUrl.empty() && fetchHead(variantUrl, variantHead)) {
+                m_head.swap(variantHead);
+                classifyHead();
+            }
+        }
+    }
+    return true;
+}
+
+bool UrlSource::fetchHead(const std::string &url, std::vector<uint8_t> &head)
+{
     avformat_network_init();   // 幂等：原生 URL 层的网络协议初始化
 
     AVIOContext *avio = nullptr;
@@ -125,7 +195,7 @@ bool UrlSource::sniffHead()
     AVIOInterruptCB cb;
     cb.callback = &sbAbortInterruptCallback;
     cb.opaque   = this;
-    const int ret = avio_open2(&avio, m_url.c_str(), AVIO_FLAG_READ, &cb, &opts);
+    const int ret = avio_open2(&avio, url.c_str(), AVIO_FLAG_READ, &cb, &opts);
     av_dict_free(&opts);
     if (ret < 0) {
         LOG_ERROR(LOG_TAG, "avio_open2 failed: %d", ret);
@@ -134,21 +204,26 @@ bool UrlSource::sniffHead()
 
     bool aborted = false;
     uint8_t buf[4096];
-    while (m_head.size() < kHeadSniffMaxBytes) {
+    head.clear();
+    while (head.size() < kHeadSniffMaxBytes) {
         if (sbAbortRequested(this)) {
             aborted = true;
             break;
         }
         const int n = avio_read(avio, buf, (int)sizeof(buf));
         if (n <= 0) break;   // EOF（清单通常远小于上限）或读错误
-        m_head.insert(m_head.end(), buf, buf + (size_t)n);
+        head.insert(head.end(), buf, buf + (size_t)n);
     }
     avio_closep(&avio);
     if (aborted) {
         LOG_ERROR(LOG_TAG, "head sniff cancelled by abort flag");
         return false;
     }
+    return true;
+}
 
+void UrlSource::classifyHead()
+{
     // 内容嗅探层（与 HttpSource 的 looksLikePlaylist 内容分支同一语义）：
     // 跳过 UTF-8 BOM 与空白后，以 #EXTM3U / <?xml 起始即清单类。
     // Content-Type 分支不经此路（avio 不暴露响应头）：仅 CT 命中的清单
@@ -172,6 +247,7 @@ bool UrlSource::sniffHead()
         // PLAYLIST-TYPE:EVENT 有界但增长，不满足「有界窗口」定义 → 无 VOD 特征 → 拒绝。
         m_headVod = containsAscii(m_head, "#EXT-X-ENDLIST")
                     || containsAscii(m_head, "#EXT-X-PLAYLIST-TYPE:VOD");
+    } else {
+        m_headVod = false;
     }
-    return true;
 }

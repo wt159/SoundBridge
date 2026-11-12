@@ -1,14 +1,21 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include "../fixtures/TestProcess.hpp"
+#include <AudioRingBuffer.h>
+#include <AudioStreamDecoder.h>
 #include <ExtractorFactory.h>
 #include <HttpSource.h>
 #include <MusicPlayList.h>
 #include <UrlSource.h>
 #include <doctest/doctest.h>
 #include "AbortInterrupt.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
+#include <cstddef>
+#include <cstdlib>
 #include <future>
+#include <map>
 #include <memory>
 #include <cctype>
 #include <cstdio>
@@ -171,8 +178,16 @@ public:
         std::string redirectLocation;
         // P2-1（issue #144）：请求路径（剥 query）命中 playlistPath 时返回 playlistText
         // （200 + application/vnd.apple.mpegurl），其余路径仍返回素材字节（供裸 wav segment）。
+        // P2-2（issue #145）：playlistMap 支持一个 mock 内多级清单端点
+        // （master → variant 各自路径独立应答），优先于单路径 playlistPath。
         std::string playlistPath;
         std::string playlistText;
+        std::map<std::string, std::string> playlistMap;
+        // 连续流素材模式：hls demuxer 对同一 playlist 只建一个 segment demuxer，
+        // 全部 segment 经内部 read_data 流式续入；裸 wav demuxer 读到自己声明的
+        // data 块末尾即 EOF，多 segment 必须拼成一条连续 PCM 流再按字节切给
+        // 各 segment（seg0 = 头[data 声明两倍长] + 前半；seg1 = 后半）。
+        bool hlsContinuousStream;
         Config()
             : emitIcy(false), omitAcceptRanges(false),
               acceptRangesNone(false), ignoreRange(false),
@@ -180,7 +195,7 @@ public:
               playlistBody(false), playlistBodyAsRange(false),
               growTotalAcrossRequests(false), hangAfterHeaders(false),
               hangFromRequest(-1), redirects(0), redirectLocation(),
-              playlistPath(), playlistText() { }
+              playlistPath(), playlistText(), hlsContinuousStream(false) { }
     };
 
     MockHttpServer(const std::vector<uint8_t> &bytes, Config config = Config())
@@ -286,10 +301,11 @@ private:
             sendAll(client, resp);
             return;
         }
-        // P2-1 清单端点：命中 playlistPath（剥 query）返回 200 + mpegurl + 文本，
-        // 未命中路径由默认分支按素材字节应答（hls demuxer 以相对 URI 拉 segment）。
-        if (!m_config.playlistPath.empty()) {
-            std::string reqPath;
+        // P2-1/P2-2 清单端点：命中 playlistMap / playlistPath（剥 query）返回
+        // 200 + mpegurl + 文本，未命中路径由默认分支按素材字节应答
+        // （hls demuxer 以相对 URI 拉 segment）。
+        std::string reqPath;
+        {
             const size_t sp1 = req.find(' ');
             const size_t sp2 = (sp1 == std::string::npos)
                 ? std::string::npos : req.find(' ', sp1 + 1);
@@ -298,16 +314,25 @@ private:
             }
             const size_t q = reqPath.find('?');
             if (q != std::string::npos) reqPath = reqPath.substr(0, q);
-            if (reqPath == m_config.playlistPath) {
-                std::string resp = "HTTP/1.1 200 OK\r\n"
-                                   "Content-Type: application/vnd.apple.mpegurl\r\n"
-                                   "Content-Length: "
-                                   + std::to_string(m_config.playlistText.size()) + "\r\n"
-                                   "Connection: close\r\n\r\n";
-                resp += m_config.playlistText;
-                sendAll(client, resp);
-                return;
+        }
+        std::string hlsText;
+        if (!reqPath.empty()) {
+            std::map<std::string, std::string>::const_iterator it
+                = m_config.playlistMap.find(reqPath);
+            if (it != m_config.playlistMap.end()) {
+                hlsText = it->second;
+            } else if (reqPath == m_config.playlistPath) {
+                hlsText = m_config.playlistText;
             }
+        }
+        if (!hlsText.empty()) {
+            std::string resp = "HTTP/1.1 200 OK\r\n"
+                               "Content-Type: application/vnd.apple.mpegurl\r\n"
+                               "Content-Length: " + std::to_string(hlsText.size()) + "\r\n"
+                               "Connection: close\r\n\r\n";
+            resp += hlsText;
+            sendAll(client, resp);
+            return;
         }
         // 清单式响应：忽略 Range，返回整份 #EXTM3U 文本（200），用于验证
         // 无扩展名 URL 命中清单内容时被静态点播门禁明确拒绝。
@@ -324,6 +349,41 @@ private:
                                "Content-Length: " + std::to_string(playlist.size()) + "\r\n"
                                "Connection: close\r\n\r\n";
             resp += playlist;
+            sendAll(client, resp);
+            return;
+        }
+        // 连续流素材：seg0 = wav 头（data 声明两份 PCM 总长）+ 前半数据；
+        // seg1 = 其余部分（重复一份 PCM 补满声明长度）。wav demuxer 跨段连续供数。
+        if (m_config.hlsContinuousStream
+            && (reqPath.find("seg0") != std::string::npos
+                || reqPath.find("seg1") != std::string::npos)) {
+            const bool first = reqPath.find("seg0") != std::string::npos;
+            const uint32_t dataSize = (m_bytes.size() >= 44)
+                ? (uint32_t)m_bytes[40] | ((uint32_t)m_bytes[41] << 8)
+                  | ((uint32_t)m_bytes[42] << 16) | ((uint32_t)m_bytes[43] << 24)
+                : 0;
+            const uint32_t pcmTotal = (dataSize > 0 && 44 + (size_t)dataSize <= m_bytes.size())
+                ? dataSize : 0;
+            if (pcmTotal == 0) return;
+            const uint32_t half = pcmTotal / 2;
+            std::vector<uint8_t> body;
+            if (first) {
+                std::vector<uint8_t> header(m_bytes.begin(), m_bytes.begin() + 44);
+                const uint32_t riffSize = 36 + pcmTotal * 2;
+                const uint32_t declared = pcmTotal * 2;
+                std::memcpy(header.data() + 4, &riffSize, 4);
+                std::memcpy(header.data() + 40, &declared, 4);
+                body.swap(header);
+                body.insert(body.end(), m_bytes.begin() + 44, m_bytes.begin() + 44 + half);
+            } else {
+                body.assign(m_bytes.begin() + 44 + half, m_bytes.begin() + 44 + pcmTotal);
+                body.insert(body.end(), m_bytes.begin() + 44, m_bytes.begin() + 44 + half);
+            }
+            std::string resp = "HTTP/1.1 200 OK\r\n"
+                               "Content-Type: video/mp2t\r\n"
+                               "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                               "Connection: close\r\n\r\n";
+            resp.append((const char *)body.data(), body.size());
             sendAll(client, resp);
             return;
         }
@@ -1063,6 +1123,123 @@ std::string makeHlsPlaylist(bool vod)
     return text;
 }
 
+// P2-2（issue #145）：PLAYLIST-TYPE:EVENT（有界但增长，无 ENDLIST）。
+// 依 #143 契约 §2 归 LIVE 侧拒绝。
+std::string makeEventPlaylist()
+{
+    return "#EXTM3U\r\n"
+           "#EXT-X-VERSION:3\r\n"
+           "#EXT-X-TARGETDURATION:10\r\n"
+           "#EXT-X-PLAYLIST-TYPE:EVENT\r\n"
+           "#EXTINF:10.0,\r\nseg0.ts\r\n"
+           "#EXTINF:10.0,\r\nseg1.ts\r\n";
+}
+
+// P2-2：master playlist（#EXT-X-STREAM-INF + 相对 variant URI），无 ENDLIST——
+// VOD/LIVE 语义由 variant 承载（分派嗅探跟随首个 variant 复查，见 UrlSource）。
+std::string makeMasterPlaylist()
+{
+    return "#EXTM3U\r\n"
+           "#EXT-X-VERSION:3\r\n"
+           "#EXT-X-STREAM-INF:BANDWIDTH=128000\r\n"
+           "v1.m3u8\r\n";
+}
+
+// P2-2：playlist 内 segment URI 写 file:/// 绝对本地路径（指向确知存在的素材，
+// 反向证实「白名单拒绝」而非「路径打不开」）。形态仍是 VOD 清单。
+std::string makeFileEscapePlaylist(const std::string &fileUrl)
+{
+    return "#EXTM3U\r\n"
+           "#EXT-X-VERSION:3\r\n"
+           "#EXT-X-TARGETDURATION:10\r\n"
+           "#EXT-X-PLAYLIST-TYPE:VOD\r\n"
+           "#EXTINF:10.0,\r\n" + fileUrl + "\r\n"
+           "#EXTINF:10.0,\r\n" + fileUrl + "\r\n"
+           "#EXT-X-ENDLIST\r\n";
+}
+
+// 本地路径 → file: URL（确知存在的素材路径；若白名单失效，hls demuxer 能
+// 真把它打开，从而该判据的变异注入「白名单含 file」必红，排除假绿）。
+// Windows 上本 FFmpeg 构建只认 "file:D:/..." 形态（file:/// 与 file:// 均
+// 返回 ENOENT，已实测），故不带斜杠前缀。
+std::string fileUrlFromPath(const std::string &path)
+{
+#ifdef _WIN32
+    char buf[MAX_PATH];
+    if (_fullpath(buf, path.c_str(), MAX_PATH) == nullptr) return std::string();
+    std::string out(buf);
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (out[i] == '\\') out[i] = '/';
+    }
+    return "file:" + out;
+#else
+    char buf[PATH_MAX];
+    if (realpath(path.c_str(), buf) == nullptr) return std::string();
+    return std::string("file://") + buf;
+#endif
+}
+
+// —— P2-2 解码侧观察 helper（形态同 test_stream_decoder.cpp 的同名工具）——
+
+// 本 TU 经 winsock 头链拉入了 windows.h，其 ERROR 宏与 StreamDecoderState 的
+// ERROR 成员撞名：作用域内取消宏定义，取别名后立即恢复，不影响其余代码。
+#pragma push_macro("ERROR")
+#undef ERROR
+namespace {
+const StreamDecoderState kDecoderErrorState = StreamDecoderState::ERROR;
+}
+#pragma pop_macro("ERROR")
+
+// 边排空 ring 边等目标状态（EOS 需要消费端持续排空，否则背压停在线程里）。
+// 守卫取值必须远大于被测链路预算（#130）：直通 open（嗅探 + playlist +
+// segment）秒级，解码 50s PCM 亚秒级，给 30s。
+bool waitForDecoderStateWithDrain(AudioStreamDecoder &decoder, AudioRingBuffer &ring,
+                                  StreamDecoderState expectedState, int timeoutMs)
+{
+    const int pollMs = 5;
+    int elapsed      = 0;
+    std::vector<char> drain(4096);
+    while (elapsed <= timeoutMs) {
+        while (ring.availableRead() > 0) {
+            const size_t once = std::min(drain.size(), ring.availableRead());
+            if (ring.read(drain.data(), once) == 0) {
+                break;
+            }
+        }
+        const StreamDecoderState state = decoder.state();
+        if (state == expectedState) {
+            return true;
+        }
+        if (state == kDecoderErrorState) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(pollMs));
+        elapsed += pollMs;
+    }
+    return false;
+}
+
+// 按字节数排空 ring（等待生产者补齐，守卫 10s ≫ 链路预算）。
+bool drainRingBytes(AudioRingBuffer &ring, size_t bytes)
+{
+    size_t got = 0;
+    std::vector<char> buf(4096);
+    int waitedMs = 0;
+    while (got < bytes && waitedMs <= 10000) {
+        const size_t avail = ring.availableRead();
+        if (avail > 0) {
+            const size_t once = std::min(std::min(avail, bytes - got), buf.size());
+            const size_t n    = ring.read(buf.data(), once);
+            if (n == 0) return false;
+            got += n;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            waitedMs += 2;
+        }
+    }
+    return got == bytes;
+}
+
 } // namespace
 
 TEST_SUITE("HlsUrlDirect")
@@ -1073,6 +1250,7 @@ TEST_SUITE("HlsUrlDirect")
         REQUIRE(bytes.size() > 64);
         MockHttpServer::Config cfg;
         cfg.playlistPath = "/vod";
+        cfg.hlsContinuousStream = true;   // P2-2 连续流素材：多 segment 跨段供数
         cfg.playlistText = makeHlsPlaylist(true);
         MockHttpServer server(bytes, cfg);
         REQUIRE(server.port() > 0);
@@ -1190,6 +1368,161 @@ TEST_SUITE("HlsUrlDirect")
         CHECK(source.abortRequested() == false);
         flag.store(true);
         CHECK(source.abortRequested() == true);
+    }
+
+    // —— P2-2 门禁判据矩阵（issue #145，#143 契约 §7）——
+
+    TEST_CASE("EVENT playlist is rejected like LIVE")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/event";
+        cfg.playlistText = makeEventPlaylist();
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/event") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.requestCount() >= 1);   // 联网嗅探后明确拒绝：EVENT 不满足「有界窗口」
+    }
+
+    TEST_CASE("file:// segment escape is rejected by the protocol whitelist")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        // segment URL 指向确知存在的本地素材：若白名单失效（变异注入 file），
+        // hls demuxer 能真打开它 → 判据必红，排除「路径打不开」造成的假绿。
+        const std::string fileUrl = fileUrlFromPath(
+            RealMediaFixture().mediaPath("music.wav"));
+        REQUIRE(!fileUrl.empty());
+
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/escape";
+        cfg.playlistText = makeFileEscapePlaylist(fileUrl);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/escape") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        // 直通 open 失败（数据源层）走 createExtractor 出口：扩展名已注册 →
+        // ExtractorInitFailed（#143 契约 §6 错误分层），分派嗅探已确认 VOD 形态。
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::ExtractorInitFailed);
+        CHECK(server.requestCount() >= 1);   // 清单本身取回过，拒绝发生在白名单外的 segment
+    }
+
+    TEST_CASE("VOD media playlist scans and decodes through to EOS")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/vod";
+        cfg.playlistText = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/vod") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs > 0);
+
+        // 解码到 EOS：PCM 逐包供给分支（codec NONE + 包工厂），消费端持续排空。
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = props->signalProperties.spec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(props->processProperties.extractor.get()) == sdk_utils::OK);
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 30000));
+        decoder.stop();
+    }
+
+    TEST_CASE("master playlist resolves a variant and decodes through to EOS")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistMap["/master.m3u8"] = makeMasterPlaylist();
+        cfg.hlsContinuousStream = true;   // P2-2 连续流素材：多 segment 跨段供数
+        cfg.playlistMap["/v1.m3u8"]     = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist
+            = loadPlayList(cb, { server.url("/master.m3u8") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs > 0);
+        CHECK(props->signalProperties.spec.sampleRate > 0);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = props->signalProperties.spec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(props->processProperties.extractor.get()) == sdk_utils::OK);
+        REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 30000));
+        decoder.stop();
+    }
+
+    TEST_CASE("seek on a VOD stream lands on the requested position")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/vod";
+        cfg.hlsContinuousStream = true;   // P2-2 连续流素材：多 segment 跨段供数
+        cfg.playlistText = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/vod") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs > 0);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = props->signalProperties.spec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(props->processProperties.extractor.get()) == sdk_utils::OK);
+
+        // 消费 500ms：位置按消费字节单调推进（16000Hz 单声道 16bit = 32 B/ms）。
+        REQUIRE(drainRingBytes(ring, 500 * 32));
+        REQUIRE(decoder.positionMs() == 500);
+
+        // 顺序重放档 seek：段基准先落地（位置从 500 跳到目标，不掉回 0），
+        // 目标之前的 PCM 由写入口逐字节丢弃；落在目标点后位置精确等于 2000。
+        decoder.seekToMs(2000);
+        bool landed = false;
+        for (int waited = 0; waited <= 10000 && !landed; waited += 2) {
+            if (waited % 500 == 0) {
+                std::printf("[probe] t=%dms pos=%llu state=%d ringAvail=%zu\n",
+                            waited, (unsigned long long)decoder.positionMs(),
+                            (int)decoder.state(), ring.availableRead());
+            }
+            if (decoder.positionMs() == 2000) {
+                landed = true;
+            } else if (decoder.state() == kDecoderErrorState) {
+                break;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        std::printf("[probe] final pos=%llu state=%d\n",
+                    (unsigned long long)decoder.positionMs(), (int)decoder.state());
+        CHECK(decoder.state() != kDecoderErrorState);
+        CHECK(landed);
+        // 从目标点继续消费，位置从 2000 往前推（8000 字节 = 250ms）。
+        REQUIRE(drainRingBytes(ring, 8000));
+        CHECK(decoder.positionMs() == 2250);
+
+        decoder.stop();
     }
 }
 

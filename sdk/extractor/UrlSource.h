@@ -28,6 +28,9 @@ public:
     // 构造期头部嗅探结果（内容层判定，#143 契约 §2）：
     // headLooksLikePlaylist —— 跳过 BOM/空白后以 #EXTM3U / <?xml 起始；
     // headHasVodFeatures    —— 含 #EXT-X-ENDLIST 或 #EXT-X-PLAYLIST-TYPE:VOD。
+    // master playlist（#EXT-X-STREAM-INF，本身无 ENDLIST）跟随首个 variant URI
+    // 复查一次，VOD/LIVE 语义落在 media playlist 层；variant 取回失败按无
+    // VOD 特征处理（语义保守）。
     bool headLooksLikePlaylist() const { return m_headPlaylist; }
     bool headHasVodFeatures() const { return m_headVod; }
 
@@ -42,6 +45,8 @@ public:
 
 private:
     bool sniffHead();
+    bool fetchHead(const std::string &url, std::vector<uint8_t> &head);
+    void classifyHead();
 
     std::string m_name;
     std::string m_url;
