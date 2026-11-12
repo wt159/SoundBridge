@@ -1,0 +1,199 @@
+name: sb-flake-probe
+
+# ============================================================
+# 取证专用探针（issue #141）——不是门禁，不是产品构建
+#
+# 目的：给 `sdk_interaction_tests` 的 SIGSEGV 拿归因证据。
+#   job `asan`  : 在 P1 之后的 master tip 上做 ASan 构建 + 多轮 ctest，
+#                 试图把「无栈」变成「有栈」（对应 AGENTS.md 门槛 ③）。
+#   job `ab`    : 同一 job 内顺序构建 P1 前 / P1 后两个 ref，各跑 N 轮
+#                 完整 `ctest -R sdk_ -j4`，比较崩溃率（对应门槛 ① 的归因 A/B）。
+#
+# 红线（与本仓库既有约定一致）：
+#   - 只由 `push` 到 `probe/**` 分支触发，不挂 master、不挂 pull_request；
+#   - 不修改任何 sdk_* 目标、TIMEOUT、套件分组、既有判据；
+#   - 失败不视为门禁失败，只作为取证数据；结论回写 issue #141。
+# 取证结束后整条分支删除，文件不留在 master。
+# ============================================================
+
+on:
+  push:
+    branches:
+      - 'probe/**'
+  workflow_dispatch:
+
+jobs:
+  asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      # 3rdparty 未插桩，漏检会淹没有效报告；崩溃即停，不做 coredump
+      ASAN_OPTIONS: detect_leaks=0:abort_on_error=0:symbolize=1:disable_coredump=0:print_stacktrace=1
+      REF: 51d4ac51c
+      ROUNDS: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev qtbase5-dev
+
+      - name: Build 3rdparty deps
+        run: |
+          cmake -S sdk/3rdparty -B sdk/3rdparty/build \
+            -Wno-unused-cli \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+            -G "Unix Makefiles" \
+            -DBUILD_OPTION_BOOST=ON \
+            -DBUILD_OPTION_FFMPEG=ON \
+            -DBUILD_OPTION_FLAC=ON \
+            -DBUILD_OPTION_OGG=ON \
+            -DBUILD_OPTION_VORBIS=ON \
+            -DBUILD_OPTION_SDL2=ON \
+            -DBUILD_OPTION_ZLIB=ON
+          cmake --build sdk/3rdparty/build
+          cmake --install sdk/3rdparty/build
+
+      - name: Checkout target ref
+        run: |
+          git fetch --depth 1 origin "$REF"
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
+
+      - name: Configure ASan build
+        run: |
+          # 工具链文件里 set(CMAKE_CXX_FLAGS "-Wall") 是普通变量，会遮蔽命令行
+          # 传入的 CMAKE_CXX_FLAGS，因此插桩标志必须走 *_FLAGS_DEBUG（工具链未设置）。
+          cmake -S . -B build-asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+            -G "Unix Makefiles" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1 -fsanitize=address -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1 -fsanitize=address -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fsanitize=address"
+
+      - name: Build test binaries
+        env:
+          SDL_AUDIODRIVER: dummy
+        run: cmake --build build-asan --target UnitTests TestSdkSuite -j4
+
+      - name: Verify ASan is actually linked
+        run: |
+          set -e
+          for bin in build-asan/sdk/test/UnitTests build-asan/sdk/test/TestSdkSuite; do
+            if [ ! -x "$bin" ]; then echo "missing $bin"; exit 1; fi
+            echo "== $bin"
+            ldd "$bin" | grep -q libasan || { echo "ASan NOT linked into $bin"; exit 1; }
+          done
+          echo "ASan linked OK"
+
+      - name: Loop ctest with ASan
+        run: |
+          set -o pipefail
+          : > asan-rounds.log
+          crashes=0
+          for i in $(seq 1 "$ROUNDS"); do
+            echo "===== ROUND $i =====" | tee -a asan-rounds.log
+            if ctest --test-dir build-asan -R sdk_ -j4 --output-on-failure >> asan-rounds.log 2>&1; then
+              echo "round=$i GREEN" | tee -a asan-rounds.log
+            else
+              crashes=$((crashes + 1))
+              echo "round=$i RED" | tee -a asan-rounds.log
+              # 保留完整 ASan 报告：单独切出来，避免被后续轮次淹掉
+              awk '/===== ROUND '"$i"' =====/,0' asan-rounds.log \
+                | grep -E "ERROR: AddressSanitizer|SUMMARY:|#[0-9]+ 0x|AddressSanitizer: [a-z-]+" \
+                >> asan-stacks.log || true
+            fi
+            # 每轮都把 3rdparty 与测试日志清掉，避免跨轮互相干扰
+            rm -rf sdk/test/log/* 2>/dev/null || true
+          done
+          echo "=== ASAN JOB SUMMARY: red=$crashes / $ROUNDS ===" | tee -a asan-rounds.log
+
+      - name: Upload ASan evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: asan-evidence
+          path: |
+            asan-rounds.log
+            asan-stacks.log
+
+  ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      REF_A: 19a0307c3
+      REF_B: 51d4ac51c
+      ROUNDS: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev qtbase5-dev
+
+      - name: Build 3rdparty deps
+        run: |
+          cmake -S sdk/3rdparty -B sdk/3rdparty/build \
+            -Wno-unused-cli \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+            -G "Unix Makefiles" \
+            -DBUILD_OPTION_BOOST=ON \
+            -DBUILD_OPTION_FFMPEG=ON \
+            -DBUILD_OPTION_FLAC=ON \
+            -DBUILD_OPTION_OGG=ON \
+            -DBUILD_OPTION_VORBIS=ON \
+            -DBUILD_OPTION_SDL2=ON \
+            -DBUILD_OPTION_ZLIB=ON
+          cmake --build sdk/3rdparty/build
+          cmake --install sdk/3rdparty/build
+
+      - name: Run A/B rounds
+        env:
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -o pipefail
+          : > ab-rounds.log
+          for tag in A B; do
+            ref_var="REF_$tag"
+            ref="${!ref_var}"
+            echo "########## $tag = $ref ##########" | tee -a ab-rounds.log
+            git fetch --depth 1 origin "$ref"
+            git checkout -q FETCH_HEAD
+            git log --oneline -1 | tee -a ab-rounds.log
+            cmake -S . -B "build-$tag" \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
+              -G "Unix Makefiles" >> ab-rounds.log 2>&1
+            cmake --build "build-$tag" --target UnitTests TestSdkSuite -j4 >> ab-rounds.log 2>&1
+            red=0
+            for i in $(seq 1 "$ROUNDS"); do
+              if ctest --test-dir "build-$tag" -R sdk_ -j4 --output-on-failure > "run-$tag-$i.log" 2>&1; then
+                echo "$tag round=$i GREEN" | tee -a ab-rounds.log
+              else
+                red=$((red + 1))
+                echo "$tag round=$i RED" | tee -a ab-rounds.log
+                grep -E "The following tests FAILED|Exception|SEGFAULT|Subprocess aborted" -A2 "run-$tag-$i.log" \
+                  | head -20 | tee -a ab-rounds.log
+              fi
+              rm -rf sdk/test/log/* 2>/dev/null || true
+            done
+            echo "=== AB SUMMARY $tag ($ref): red=$red / $ROUNDS ===" | tee -a ab-rounds.log
+          done
+
+      - name: Upload A/B evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ab-evidence
+          path: |
+            ab-rounds.log
+            run-*.log
