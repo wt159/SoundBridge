@@ -1,5 +1,6 @@
 #include "APEPacketReader.h"
 #include "LogWrapper.h"
+#include "AbortInterrupt.hpp"
 #include <chrono>
 #include <climits>
 #include <cstring>
@@ -57,6 +58,11 @@ int APEPacketReader::avioRead(void *opaque, uint8_t *buf, int buf_size)
     AvioData *ctx = reinterpret_cast<AvioData *>(opaque);
     if (!ctx->source) {
         return AVERROR_EOF;
+    }
+    // P1：自定义 AVIO 的 read_packet 阻塞点。只认 m_abortDecode，
+    // 绝不复用 cancelRequested()（含 seek 槽会误中断合法 seek）。
+    if (sbAbortRequested(ctx->source)) {
+        return AVERROR_EXIT;
     }
     ssize_t n = ctx->source->readAt(ctx->pos, buf, static_cast<size_t>(buf_size));
     if (n <= 0) {
@@ -138,6 +144,11 @@ bool APEPacketReader::open()
     }
     m_fmt->pb     = m_avio;
     m_fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+
+    // P1：让 FFmpeg 在 avformat_open_input / av_read_frame 的阻塞点也能看到同一取消信号。
+    // opaque 直接挂 DataSourceBase*，不改 AvioData、不新增状态。
+    m_fmt->interrupt_callback.callback = &sbAbortInterruptCallback;
+    m_fmt->interrupt_callback.opaque   = m_ioData.source;
 
     int ret = avformat_open_input(&m_fmt, nullptr, nullptr, nullptr);
     if (ret < 0) {

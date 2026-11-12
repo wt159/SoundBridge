@@ -3,6 +3,7 @@
 #include <HttpSource.h>
 #include <MusicPlayList.h>
 #include <doctest/doctest.h>
+#include "AbortInterrupt.hpp"
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -856,5 +857,46 @@ TEST_SUITE("AbortSignalWiring")
         REQUIRE(source.abortRequested() == true);
         source.setAbortFlag(nullptr);
         CHECK(source.abortRequested() == false);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P1-2：avioRead 取消检查与 interrupt_callback 共用的两个只读检查点（issue #136）。
+// 直接 include 共享头，验证同一取消信号在两条落点的取值，不联网、不起 server。
+// ---------------------------------------------------------------------------
+TEST_SUITE("AbortInterruptContract")
+{
+    TEST_CASE("no injection yields false / 0 for both checkpoints")
+    {
+        AbortSeamSource source;
+        CHECK(sbAbortRequested(&source) == false);
+        CHECK(sbAbortInterruptCallback(&source) == 0);
+        CHECK(sbAbortInterruptCallback(nullptr) == 0);
+    }
+
+    TEST_CASE("injected flag is observed by both checkpoints and follows its value")
+    {
+        AbortSeamSource source;
+        std::atomic<bool> flag(false);
+        source.setAbortFlag(&flag);
+        CHECK(sbAbortRequested(&source) == false);
+        CHECK(sbAbortInterruptCallback(&source) == 0);
+        flag.store(true);
+        CHECK(sbAbortRequested(&source) == true);
+        CHECK(sbAbortInterruptCallback(&source) == 1);
+        flag.store(false);
+        CHECK(sbAbortRequested(&source) == false);
+        CHECK(sbAbortInterruptCallback(&source) == 0);
+    }
+
+    TEST_CASE("unbinding the flag returns both checkpoints to false / 0")
+    {
+        AbortSeamSource source;
+        std::atomic<bool> flag(true);
+        source.setAbortFlag(&flag);
+        REQUIRE(sbAbortRequested(&source) == true);
+        source.setAbortFlag(nullptr);
+        CHECK(sbAbortRequested(&source) == false);
+        CHECK(sbAbortInterruptCallback(&source) == 0);
     }
 }
