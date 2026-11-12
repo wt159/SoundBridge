@@ -203,7 +203,7 @@ URL 通过**既有播放列表字符串入口**进入，不新增 / 不修改 `s
 |---|---|---|---|
 | **P0** | 静态 HTTP 点播：`HttpSource` + 自定义 AVIO 扩展 + 本地 mock 门禁 | **做** | 与既有随机读契约兼容，无额外前置 |
 | **P1** | 能力模型落地：`m_abortDecode` → `avioRead` + `interrupt_callback` + 连接 / 读超时 | 不做 | 独立实现 effort；是 P2/P3 的前置能力，不改公开签名 |
-| **P2** | HLS VOD（原生 URL 层） | 不做 | P1 落地 + 清单类本地 mock 判据就绪 + `protocol_whitelist` / `interrupt_callback` 契约定稿 |
+| **P2** | HLS VOD（原生 URL 层） | **已做**（2026-11-12，`impl/p2-1-url-direct` ff 进 master，票 [#143](https://github.com/wt159/SoundBridge/issues/143)–[#146](https://github.com/wt159/SoundBridge/issues/146)；契约 = `protocol_whitelist="http,tcp"`，理由见 #143 resolution） | 四项重开条件于 2026-11-12 全部命中后启动 |
 | **P3** | HLS LIVE / ICY 直播 | 不做 | 独立连接 / 重连状态机 effort + 授权明确 + 无限流 EOS / UI 语义定稿 |
 | **P4** | DASH VOD / LIVE | 不做 | 显式启用 dash demuxer 并评估 libxml2 依赖与 DASH-IF 授权 |
 
