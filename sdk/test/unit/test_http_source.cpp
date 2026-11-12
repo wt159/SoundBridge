@@ -804,9 +804,15 @@ std::shared_ptr<MusicPlayList> loadPlayList(DispatchCallback &callback,
         std::promise<void> done;
         std::future<void> future = done.get_future();
         playlist->addMusicWithNotify(*it, [&done]() { done.set_value(); });
-        const std::future_status status = future.wait_for(std::chrono::seconds(2));
+        // 守卫只防死锁，不是性能判据（不改 ctest TIMEOUT，也不是任何行为断言）。
+        // 取值必须**严格大于**被测链路的自身超时预算，否则会把「实现自己正常回退的
+        // 超时」记成用例失败：MockHttpServer 单线程 accept，连接上手后 `recv` 超时
+        // 2s（setRecvTimeout）；HttpSource 构造期三次探测，每次 socket 读超时 3s。
+        // 单连接被阻塞时后续连接排队 → 单次停顿会级联到同一 WorkQueue 上的后续条目。
+        // 故 2s（旧值，恰好等于服务端 recv 超时）在 Linux 覆盖构建 + `-j4` 下必然假红。
+        const std::future_status status = future.wait_for(std::chrono::seconds(15));
         if (status != std::future_status::ready) {
-            FAIL("addMusicWithNotify did not complete within 2s");
+            FAIL("addMusicWithNotify did not complete within 15s: " << *it);
         }
     }
     return playlist;
