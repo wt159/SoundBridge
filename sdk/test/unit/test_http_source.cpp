@@ -1,5 +1,6 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include "../fixtures/TestProcess.hpp"
+#include <ExtractorFactory.h>
 #include <HttpSource.h>
 #include <MusicPlayList.h>
 #include <doctest/doctest.h>
@@ -7,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -233,6 +235,7 @@ public:
 
     int port() const { return m_port; }
     int requestCount() const { return m_requests.load(); }
+    bool hangReady() const { return m_hangReady.load(std::memory_order_acquire); }
 
     std::string url(const std::string &path) const
     {
@@ -357,6 +360,12 @@ private:
         // 前 3 次探测请求（seq 1..3）正常返回，第 4 次 readAt 才挂起。
         const int seq = index + 1;
         if (m_config.hangAfterHeaders && seq >= m_config.hangFromRequest) {
+            // 只读就绪信号：请求已收到、响应头尚未发出，client 此刻正阻塞在
+            // 读响应头的 recv 上。仅 mock server 线程写、测试控制线程读，
+            // release/acquire 配对；留一小段窗口让控制线程先发布取消，再发头，
+            // 使取消确定性地落在三处 recv 取消检查点（而非连接分片检查点）。
+            m_hangReady.store(true, std::memory_order_release);
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
             sendAll(client, resp);
             while (!m_stop.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -386,8 +395,21 @@ private:
     int m_port;
     std::atomic<bool> m_stop;
     std::atomic<int> m_requests;
+    std::atomic<bool> m_hangReady{false};
     std::thread m_thread;
 };
+
+// 轮询 mock server 的只读就绪信号：确认 client 已阻塞在读响应头的 recv 上。
+// 最多等 2s（每次 sleep 5ms）；只在测试控制线程读，与 server
+// 线程的 release store 配对，绝不落解码线程 / 判据主循环。
+bool waitForHangReady(const MockHttpServer &server)
+{
+    for (int i = 0; i < 400; ++i) {
+        if (server.hangReady()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
 
 } // namespace
 
@@ -694,6 +716,46 @@ TEST_SUITE("HttpSource")
         });
         CHECK(fut.wait_for(std::chrono::seconds(2)) != std::future_status::ready);
         CHECK(fut.get() == -1);   // 等满 3s 读超时后正常失败
+    }
+
+    // 必修 1：WAV 主路径的注入口。工厂按 ".wav" 命中 WAVExtractor，
+    // getDataSource() 必须回传构造时的 HttpSource，取消注入才不落空。
+    TEST_CASE("WAV extractor exposes its injected data source")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        HttpSource source(server.url("/music.wav").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(&source, "wav", true));
+        REQUIRE(extractor != nullptr);
+        CHECK(extractor->getDataSource() == &source);
+    }
+
+    // 必修 5：取消在 client 已进入 recv 之后才发布，必落在三处 recv 取消
+    // 检查点之一（而非 connect 分片检查点），闭合 #138 登记的端到端缺口。
+    TEST_CASE("cancelled read exits while blocked in recv")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.hangAfterHeaders = true;
+        cfg.hangFromRequest = 4;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+
+        std::atomic<bool> flag(false);
+        source.setAbortFlag(&flag);
+        auto fut = std::async(std::launch::async, [&] {
+            char buf[16];
+            return source.readAt(0, buf, sizeof(buf));
+        });
+        REQUIRE(waitForHangReady(server));   // 确认 client 已进 recv 挂起
+        flag.store(true);                    // 取消此刻才发布 → 必落在 recv 循环
+        REQUIRE(fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+        CHECK(fut.get() == -1);
     }
 }
 

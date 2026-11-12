@@ -135,10 +135,14 @@ public:
 
     // 内部取消注入口：注入的是 AudioStreamDecoder::m_abortDecode 这唯一信号的地址，
     // 不新建信号、不是能力查询、不进公开面。flag 为空表示尚未注入（init 期扫描）。
-    virtual void setAbortFlag(const std::atomic<bool> *flag) { m_abortFlag = flag; }
+    virtual void setAbortFlag(const std::atomic<bool> *flag)
+    {
+        m_abortFlag.store(flag, std::memory_order_release);
+    }
     virtual bool abortRequested() const
     {
-        return m_abortFlag != nullptr && m_abortFlag->load(std::memory_order_acquire);
+        const std::atomic<bool> *flag = m_abortFlag.load(std::memory_order_acquire);
+        return flag != nullptr && flag->load(std::memory_order_acquire);
     }
 
     virtual void close() {};
@@ -149,7 +153,7 @@ public:
     }
 
 protected:
-    const std::atomic<bool> *m_abortFlag = nullptr;
+    std::atomic<const std::atomic<bool> *> m_abortFlag{nullptr};
 
     virtual ~DataSourceBase() { }
 

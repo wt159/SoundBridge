@@ -40,6 +40,7 @@ public:
     virtual AudioSpec getAudioSpec() { return m_audioSpec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual bool isDataTruncated() const { return m_dataTruncated; }
+    DataSourceBase *getDataSource() override { return m_dataSource; }
 
     // —— 包工厂的单包面（#61 / ADR 0003）——
     // init 期只留 O(1) 定长摘要（spec / 时长 / SSND 的偏移与长度 / 截断标志），

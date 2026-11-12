@@ -47,6 +47,7 @@ public:
     virtual AudioSpec getAudioSpec() { return m_spec; }
     virtual AudioCodecID getAudioCodecID() { return m_audioCodecID; }
     virtual AudioBuffer::AudioBufferPtr getMetaData();
+    DataSourceBase *getDataSource() override { return m_dataSource; }
     // getDataSize()/getAudioDataOffset() 覆写 ExtractorHelper 的既有 off64_t 虚函数
     // （master 即有，不能改签名）；成员改用 int64_t 后，在既有边界处显式转回 off64_t。
     virtual off64_t getDataSize() { return static_cast<off64_t>(m_dataSize); }

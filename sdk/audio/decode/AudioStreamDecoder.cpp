@@ -702,6 +702,9 @@ void AudioStreamDecoder::threadFunc()
             }
 
             if (!cursor.nextPacket(packet)) {
+                if (m_stopRequest.load() || m_abortDecode.load()) {
+                    break;   // P1：取消导致的读中断不是 EOS，不触发曲目结束序列
+                }
                 finishAtEndOfStream();
                 break;
             }
