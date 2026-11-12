@@ -12,8 +12,9 @@ sdk/test/unit/
 ├── test_extractor.cpp        # ExtractorFactory 与真实媒体 extractor 行为
 ├── test_media_coverage.cpp   # 全格式解码覆盖度与时长基线（判据见 doc/format-support.md）
 ├── test_playlist.cpp         # MusicPlayList / FileProperties
+├── test_http_source.cpp      # HttpSource / URL 分派 / HLS VOD 直通（本地 mock server，零公网依赖）
 ├── test_utils.cpp            # AudioRingBuffer / ByteUtils / AudioBuffer
-└── test_cosmos.cpp           # Optional / Lazy / ScopeGuard / Range / Timer
+└── test_cosmos.cpp           # Optional / Lazy / ScopeGuard / Range / Timer / WorkQueue
 ```
 
 ## WHERE TO LOOK
@@ -25,6 +26,7 @@ sdk/test/unit/
 | 提取器单测 | `test_extractor.cpp` | factory、sniff、真实媒体样本 |
 | 解码覆盖度基线 | `test_media_coverage.cpp` | 双向容差判据、必备素材清单；理由见 `doc/format-support.md` |
 | 播放列表行为 | `test_playlist.cpp` | `WorkQueue` + `promise/future` 协调异步添加 |
+| 网络源 / URL 分派 / HLS | `test_http_source.cpp` | 本地 mock HTTP/HLS server，零公网依赖；契约见 `doc/network-audio-source-spec.md` |
 | 基础工具/容器 | `test_utils.cpp`, `test_cosmos.cpp` | 纯单元级，无媒体依赖 |
 
 ## CONVENTIONS
@@ -52,3 +54,4 @@ ctest --test-dir build -R sdk_extractor_spec_tests --output-on-failure
 - `test_decode.cpp` 和 `test_extractor.cpp` 会拉真实媒体样本，是这个子目录里最接近“集成边界”的两组 doctest；改解码/提取器时优先回看它们。
 - `test_playlist.cpp` 用静态 `WorkQueue` 和回调同步封装测试夹具；改播放列表异步逻辑时先核这些 helper 是否还成立。
 - `test_cosmos.cpp` / `test_utils.cpp` 更像纯内存单测，失败时通常不需要跑整套媒体回归。
+- `test_cosmos.cpp` 的 `Cosmos::WorkQueue` 套件（#142）盯三条结构不变量：任务 id 单调非零 / 队列自身是非空真源 / `stop()` 后队列必清空；改 `WorkQueue.hpp` 必跑它。
