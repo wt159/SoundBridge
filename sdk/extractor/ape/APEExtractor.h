@@ -26,6 +26,7 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    virtual DataSourceBase *getDataSource() { return m_dataSource; }
 
     // 包工厂的单包面（#64 / ADR 0003）：总数事先未知，边界按 offset 现场重算。
     virtual size_t packetCount() { return ExtractorHelper::kUnknownPacketCount; }

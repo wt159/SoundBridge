@@ -26,6 +26,7 @@
 class FLACDecode;
 class VorbisDecode;
 class AudioDecode;
+class DataSourceBase;
 
 enum class StreamDecoderState { IDLE, DECODING, SEEKING, EOS, ERROR };
 
@@ -157,6 +158,8 @@ private:
     uint64_t m_pendingSeekBaseMs;
     uint64_t m_bytesPerMs;
     std::atomic<bool> m_abortDecode;
+    // 仅在控制线程（start / stop）写：记录本次注入的数据源，stop 时解绑避免悬垂。
+    DataSourceBase *m_abortSource;
 
     // EOS 汇总的计量：解码产出的**源格式**帧数与采样率。
     // 刻意不复用 positionMs() 背后的段基准 / ring 读计数——那两处只回答「消费端走到哪」，

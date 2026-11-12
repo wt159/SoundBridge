@@ -40,6 +40,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_pendingSeekBaseMs(0)
     , m_bytesPerMs(0)
     , m_abortDecode(false)
+    , m_abortSource(nullptr)
     , m_decodedFrames(0)
     , m_decodedRate(0)
     , m_pcmFrameBytes(0)
@@ -126,6 +127,12 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder start with null ring or extractor");
         return sdk_utils::INVALID_OPERATION;
     }
+    // P1：把唯一取消信号注入数据源层。start() 首行已 stop()，旧的绑定已解。
+    DataSourceBase *ds = m_extractor->getDataSource();
+    if (ds != nullptr) {
+        ds->setAbortFlag(&m_abortDecode);
+        m_abortSource = ds;
+    }
     // 观测点：提取器 init（只读扫描）耗时由工厂量好，这里抄进本任务的仪表。
     m_initScanUs.store(m_extractor->initScanMicros());
     // 分配记账的第一个采样点：init 完成后提取器已经持有多少字节（增量路径下是 O(1) 摘要 + 解复用缓冲）。
@@ -210,6 +217,11 @@ void AudioStreamDecoder::stop()
     m_abortDecode.store(true);
     if (m_thread.joinable()) {
         m_thread.join();
+    }
+    // P1：解码线程已退出，解绑裸指针，避免 decoder 析构后数据源持有悬垂 flag。
+    if (m_abortSource != nullptr) {
+        m_abortSource->setAbortFlag(nullptr);
+        m_abortSource = nullptr;
     }
     m_stopRequest.store(false);
     m_abortDecode.store(false);

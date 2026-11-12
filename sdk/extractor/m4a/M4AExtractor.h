@@ -25,6 +25,7 @@ public:
     virtual AudioBuffer::AudioBufferPtr getCodecExtraData() { return m_codecExtraData; }
     virtual int getBitRate() { return m_bitRate; }
     virtual int getBlockAlign() { return m_blockAlign; }
+    virtual DataSourceBase *getDataSource() { return m_dataSource; }
 
     // 包工厂的单包面（#64 / ADR 0003）：总数事先未知，边界按 offset 现场重算，
     // 任何「先把整份文件数一遍再建表」的做法都会把常驻内存按包数放大。

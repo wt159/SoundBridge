@@ -70,6 +70,20 @@ bool waitForDecoderStateWithDrain(AudioStreamDecoder &decoder, AudioRingBuffer &
     }
     return false;
 }
+
+// P1-1：可观测注入指针的合成数据源。override setAbortFlag 仍委托基类保存，
+// 于是 abortRequested() 走基类默认实现，injectedFlag() 暴露绑定状态供断言。
+class AbortProbeSource : public DataSourceBase {
+public:
+    sdk_utils::status_t initCheck() const override { return sdk_utils::OK; }
+    ssize_t readAt(off64_t, void *, size_t) override { return 0; }
+    void setAbortFlag(const std::atomic<bool> *flag) override
+    {
+        DataSourceBase::setAbortFlag(flag);
+    }
+    const std::atomic<bool> *injectedFlag() const { return m_abortFlag; }
+};
+
 } // namespace
 
 // Mock extractor for testing error paths
@@ -821,5 +835,96 @@ TEST_SUITE("AudioStreamDecoder Edge Cases")
         REQUIRE(waitForDecoderStateWithDrain(decoder, ring, StreamDecoderState::EOS, 5000));
 
         decoder.stop();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P1-1：AudioStreamDecoder 的注入 / 解绑时序（issue #135）。
+// 复用上面的 AbortProbeSource 与 MockExtractor，只观察绑定状态，不启解码线程。
+// ---------------------------------------------------------------------------
+TEST_SUITE("AbortSignalWiring Decoder")
+{
+    TEST_CASE("start injects the abort flag and stop unbinds it")
+    {
+        MockExtractor extractor;
+        AudioSpec devSpec = extractor.getAudioSpec();
+        AudioRingBuffer ring(8192);
+        AbortProbeSource source;
+        extractor.setDataSource(&source);
+
+        CHECK(source.injectedFlag() == nullptr);
+
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(&extractor, false) == sdk_utils::OK);
+        CHECK(source.injectedFlag() != nullptr);
+        CHECK(source.abortRequested() == false);
+
+        decoder.stop();
+        CHECK(source.injectedFlag() == nullptr);
+        CHECK(source.abortRequested() == false);
+    }
+
+    TEST_CASE("each decoder injects its own flag; restart re-injects and destructor unbinds")
+    {
+        MockExtractor extractor;
+        AudioSpec devSpec = extractor.getAudioSpec();
+        AudioRingBuffer ring(8192);
+        AbortProbeSource source;
+        extractor.setDataSource(&source);
+
+        // 两个 decoder 同时存活，栈地址不会复用，注入的信号地址必然不同。
+        AudioStreamDecoder first(&ring, devSpec);
+        AudioStreamDecoder second(&ring, devSpec);
+
+        REQUIRE(first.start(&extractor, false) == sdk_utils::OK);
+        const std::atomic<bool> *firstFlag = source.injectedFlag();
+        REQUIRE(firstFlag != nullptr);
+        // 同一 decoder 重注：start() 首行 stop() 解绑旧 flag 再注入同一个信号。
+        REQUIRE(first.start(&extractor, false) == sdk_utils::OK);
+        CHECK(source.injectedFlag() == firstFlag);
+
+        first.stop();
+        CHECK(source.injectedFlag() == nullptr);   // 显式 stop 解绑
+
+        // 换一个 decoder：注入它自己的信号，不是 first 的悬垂 flag。
+        REQUIRE(second.start(&extractor, false) == sdk_utils::OK);
+        const std::atomic<bool> *secondFlag = source.injectedFlag();
+        REQUIRE(secondFlag != nullptr);
+        CHECK(secondFlag != firstFlag);
+        second.stop();
+        CHECK(source.injectedFlag() == nullptr);
+
+        // 不显式 stop：析构路径（~AudioStreamDecoder 调 stop）也必须解绑。
+        {
+            AudioStreamDecoder third(&ring, devSpec);
+            REQUIRE(third.start(&extractor, false) == sdk_utils::OK);
+            REQUIRE(source.injectedFlag() != nullptr);
+        }
+        CHECK(source.injectedFlag() == nullptr);
+    }
+
+    TEST_CASE("a legal seek does not raise the injected abort signal")
+    {
+        MockExtractor extractor;
+        AudioSpec devSpec = extractor.getAudioSpec();
+        AudioRingBuffer ring(8192);
+        AbortProbeSource source;
+        extractor.setDataSource(&source);
+        AudioStreamDecoder decoder(&ring, devSpec);
+
+        REQUIRE(decoder.start(&extractor, false) == sdk_utils::OK);
+        const std::atomic<bool> *flag = source.injectedFlag();
+        REQUIRE(flag != nullptr);
+        REQUIRE(flag->load() == false);
+
+        decoder.seekToMs(500);
+        decoder.seekToMs(1200);
+
+        CHECK(flag->load() == false);             // 唯一取消信号未被 seek 置起
+        CHECK(source.abortRequested() == false); // 数据源层不误判中断
+        CHECK(source.injectedFlag() == flag);    // 注入仍在
+
+        decoder.stop();
+        CHECK(source.injectedFlag() == nullptr);
     }
 }

@@ -812,3 +812,49 @@ TEST_SUITE("PlaylistUrlDispatch")
         REQUIRE(local.fileName == "song#x");
     }
 }
+
+// ---------------------------------------------------------------------------
+// P1-1：DataSourceBase 取消信号的内部虚接缝（issue #135）。
+// 用最小合成数据源直接判定注入口，不依赖网络 / 素材 / HTTP server。
+// ---------------------------------------------------------------------------
+namespace {
+
+// 只实现两个纯虚，取消接缝完全沿用基类默认实现。
+class AbortSeamSource : public DataSourceBase {
+public:
+    sdk_utils::status_t initCheck() const override { return sdk_utils::OK; }
+    ssize_t readAt(off64_t, void *, size_t) override { return 0; }
+};
+
+} // namespace
+
+TEST_SUITE("AbortSignalWiring")
+{
+    TEST_CASE("abortRequested is false before any injection")
+    {
+        AbortSeamSource source;
+        CHECK(source.abortRequested() == false);
+    }
+
+    TEST_CASE("injected flag is observed and follows its value")
+    {
+        AbortSeamSource source;
+        std::atomic<bool> flag(false);
+        source.setAbortFlag(&flag);
+        CHECK(source.abortRequested() == false);
+        flag.store(true);
+        CHECK(source.abortRequested() == true);
+        flag.store(false);
+        CHECK(source.abortRequested() == false);
+    }
+
+    TEST_CASE("unbinding the flag returns abortRequested to false")
+    {
+        AbortSeamSource source;
+        std::atomic<bool> flag(true);
+        source.setAbortFlag(&flag);
+        REQUIRE(source.abortRequested() == true);
+        source.setAbortFlag(nullptr);
+        CHECK(source.abortRequested() == false);
+    }
+}
