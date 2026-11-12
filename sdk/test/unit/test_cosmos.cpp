@@ -3,11 +3,17 @@
 #include <Range.hpp>
 #include <ScopeGuard.hpp>
 #include <Timer.hpp>
+#include <WorkQueue.hpp>
 #include <doctest/doctest.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_name.hpp>
+#include <vector>
 
 TEST_SUITE("Cosmos::Optional")
 {
@@ -311,5 +317,163 @@ TEST_SUITE("Cosmos::type_name")
     {
         std::string name = type_name<volatile int>();
         CHECK(name.empty() == false);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WorkQueue（issue #142：任务队列堆损坏 / map 与 queue 分叉）
+//
+// 判据设计说明：
+// 1. 「shutdown fulfills pending sync task」是确定性判据——修复缺失（无清算）
+//    时调用线程必然永久阻塞在 future.wait()，宽限期一到必红。
+// 2. 守卫取值遵守 #140 教训：内部守卫显著宽于被测链路自身预算（这里的链路
+//    预算是 300ms 占位任务 + 清算，守卫 2s）。
+// 3. 计数类判据（唯一性、全部执行完毕）是精确等值判断，宽限期只作守卫。
+// ---------------------------------------------------------------------------
+TEST_SUITE("Cosmos::WorkQueue")
+{
+    TEST_CASE("syncRunTask executes before returning")
+    {
+        WorkQueue queue;
+        std::atomic<bool> ran{false};
+        queue.syncRunTask([&ran]() { ran.store(true); });
+        CHECK(ran.load());
+    }
+
+    TEST_CASE("no new tasks after shutdown")
+    {
+        WorkQueue queue;
+        queue.shutdown();
+        CHECK(queue.startTimerTask(false, 1, []() {}) == WorkQueue::TaskID_Error);
+
+        std::atomic<bool> ran{false};
+        queue.asyncRunTask([&ran]() { ran.store(true); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK_FALSE(ran.load());
+    }
+
+    TEST_CASE("task ids are unique and never zero")
+    {
+        WorkQueue queue;
+        std::vector<WorkQueue::TaskID> ids;
+        // 一次性任务寿命 1ms，创建间隔 3ms：前一个任务必已执行并销毁，
+        // 分配器会把它的内存块复用给下一个任务——旧实现（id=对象地址）
+        // 在此交错下必然撞 id；计数器实现下 id 与地址复用无关。
+        for (int i = 0; i < 30; ++i) {
+            WorkQueue::TaskID id = queue.startTimerTask(false, 1, []() {});
+            REQUIRE(id != WorkQueue::TaskID_Error);
+            ids.push_back(id);
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        std::sort(ids.begin(), ids.end());
+        CHECK(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
+    }
+
+    TEST_CASE("repeat timer fires until stopped")
+    {
+        WorkQueue queue;
+        std::atomic<int> fired{0};
+        WorkQueue::TaskID id = queue.startTimerTask(true, 5, [&fired]() { fired.fetch_add(1); });
+        REQUIRE(id != WorkQueue::TaskID_Error);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        queue.stopTimerTask(id);
+        const int afterStop = fired.load();
+        // available 只在循环顶检查：已到点的最后一次执行可能仍会发生
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(fired.load() <= afterStop + 1);
+        // 5ms 间隔 × 100ms 窗口 ≈ 20 次，下限只做 15 倍余量的粗校验
+        CHECK(afterStop >= 3);
+    }
+
+    TEST_CASE("shutdown fulfills pending sync task")
+    {
+        WorkQueue queue;
+        std::atomic<bool> syncReturned{false};
+
+        // 占住工作线程 ~300ms，让下面的同步任务有充分时间「已入队、未执行」
+        queue.asyncRunTask([]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        });
+
+        std::thread caller([&queue, &syncReturned]() {
+            queue.syncRunTask([]() {});
+            syncReturned.store(true);
+        });
+
+        // 确保同步任务已入队（其调用线程随即阻塞在 future.wait() 上）
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // 此刻置停：工作线程做完手头的占位任务后会因 m_running=false 直接退出，
+        // 不会执行排队的同步任务。修复后 stop() 在 join 之后清算队列，把该任务
+        // 的 promise 兑现为 false；修复前调用线程永久挂死（#142 挂死形态近亲）。
+        queue.shutdown();
+
+        bool returned = false;
+        for (int i = 0; i < 400; ++i) { // 2s 守卫 >> 300ms 占位 + 清算预算
+            if (syncReturned.load()) {
+                returned = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        if (!returned) {
+            caller.detach(); // 判红前分离，避免用例收尾时 join 挂死整个进程
+        }
+        REQUIRE(returned);
+        caller.join();
+    }
+
+    TEST_CASE("concurrent async submissions all execute")
+    {
+        WorkQueue queue;
+        std::atomic<int> executed{0};
+        std::atomic<int> submitted{0};
+
+        std::vector<std::thread> producers;
+        for (int p = 0; p < 4; ++p) {
+            producers.emplace_back([&queue, &executed, &submitted]() {
+                for (int i = 0; i < 50; ++i) {
+                    queue.asyncRunTask([&executed]() { executed.fetch_add(1); });
+                    submitted.fetch_add(1);
+                }
+            });
+        }
+        for (std::thread &producer : producers) {
+            producer.join();
+        }
+
+        // 判据本体是精确等值（幽灵任务 = 有提交无执行，永远等不齐）；
+        // 轮询只是守卫，5s 远宽于 200 个瞬时任务的执行预算。
+        bool drained = false;
+        for (int i = 0; i < 1000; ++i) {
+            if (executed.load() == submitted.load()) {
+                drained = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(drained);
+        queue.shutdown();
+    }
+
+    TEST_CASE("timer start/stop churn ends cleanly")
+    {
+        // 反复起停定时器（MusicPlayer 消费线程的真实使用形态），
+        // 判据 = 全程不崩、shutdown 不挂死（由 ctest TIMEOUT 兜底）。
+        WorkQueue queue;
+        std::atomic<int> fired{0};
+        std::vector<WorkQueue::TaskID> ids;
+        for (int i = 0; i < 30; ++i) {
+            ids.push_back(
+                queue.startTimerTask(true, 3 + (i % 7), [&fired]() { fired.fetch_add(1); }));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        for (size_t k = 0; k < ids.size(); k += 2) {
+            queue.stopTimerTask(ids[k]);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        queue.shutdown();
+        CHECK(fired.load() >= 0); // 烟雾校验：主要判据是本用例完整跑完
     }
 }
