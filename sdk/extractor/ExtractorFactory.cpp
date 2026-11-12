@@ -6,6 +6,7 @@
 #include "ape/APEExtractor.h"
 #include "asf/ASFExtractor.h"
 #include "flac/FLACExtractor.h"
+#include "hls/HlsExtractor.h"
 #include "m4a/M4AExtractor.h"
 #include "mkv/MKVExtractor.h"
 #include "mp3/MP3Extractor.h"
@@ -341,3 +342,7 @@ REGISTER_EXTRACTOR_WITH_SNIFF(".asf", ASFExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".ape", APEExtractor);
 REGISTER_EXTRACTOR_WITH_SNIFF(".mkv", MKVExtractor);
 REGISTER_EXTRACTOR(".wma", ASFExtractor);
+// P2-1（issue #144 / #143 契约 §2）：HLS VOD 直通。只注册进工厂注册表、
+// 不进 defaultExtractorMap（FileSearch 本地扫描白名单不动，受支持格式清单不扩）。
+// 无 sniff：URL 直通分派在 MusicPlayList::_addMusic 按清单内容判定，扩展名仅作出口。
+REGISTER_EXTRACTOR(".m3u8", HlsExtractor);

@@ -3,6 +3,7 @@
 #include <ExtractorFactory.h>
 #include <HttpSource.h>
 #include <MusicPlayList.h>
+#include <UrlSource.h>
 #include <doctest/doctest.h>
 #include "AbortInterrupt.hpp"
 #include <atomic>
@@ -168,13 +169,18 @@ public:
         int  hangFromRequest;
         int  redirects;
         std::string redirectLocation;
+        // P2-1（issue #144）：请求路径（剥 query）命中 playlistPath 时返回 playlistText
+        // （200 + application/vnd.apple.mpegurl），其余路径仍返回素材字节（供裸 wav segment）。
+        std::string playlistPath;
+        std::string playlistText;
         Config()
             : emitIcy(false), omitAcceptRanges(false),
               acceptRangesNone(false), ignoreRange(false),
               fakeTotalOnTail(false), growContentLength(false),
               playlistBody(false), playlistBodyAsRange(false),
               growTotalAcrossRequests(false), hangAfterHeaders(false),
-              hangFromRequest(-1), redirects(0), redirectLocation() { }
+              hangFromRequest(-1), redirects(0), redirectLocation(),
+              playlistPath(), playlistText() { }
     };
 
     MockHttpServer(const std::vector<uint8_t> &bytes, Config config = Config())
@@ -279,6 +285,29 @@ private:
                                      "Connection: close\r\n\r\n" + body;
             sendAll(client, resp);
             return;
+        }
+        // P2-1 清单端点：命中 playlistPath（剥 query）返回 200 + mpegurl + 文本，
+        // 未命中路径由默认分支按素材字节应答（hls demuxer 以相对 URI 拉 segment）。
+        if (!m_config.playlistPath.empty()) {
+            std::string reqPath;
+            const size_t sp1 = req.find(' ');
+            const size_t sp2 = (sp1 == std::string::npos)
+                ? std::string::npos : req.find(' ', sp1 + 1);
+            if (sp1 != std::string::npos && sp2 != std::string::npos) {
+                reqPath = req.substr(sp1 + 1, sp2 - sp1 - 1);
+            }
+            const size_t q = reqPath.find('?');
+            if (q != std::string::npos) reqPath = reqPath.substr(0, q);
+            if (reqPath == m_config.playlistPath) {
+                std::string resp = "HTTP/1.1 200 OK\r\n"
+                                   "Content-Type: application/vnd.apple.mpegurl\r\n"
+                                   "Content-Length: "
+                                   + std::to_string(m_config.playlistText.size()) + "\r\n"
+                                   "Connection: close\r\n\r\n";
+                resp += m_config.playlistText;
+                sendAll(client, resp);
+                return;
+            }
         }
         // 清单式响应：忽略 Range，返回整份 #EXTM3U 文本（200），用于验证
         // 无扩展名 URL 命中清单内容时被静态点播门禁明确拒绝。
@@ -1001,6 +1030,124 @@ TEST_SUITE("AbortSignalWiring")
         CHECK(source.abortRequested() == false);     // 新 flag 初值为假
         second.store(true);
         CHECK(source.abortRequested() == true);      // 新 flag 仍可判定
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P2-1：HLS VOD URL 直通接入（issue #144，契约 #143 resolution）。
+// mock 端点最小化：playlist 文本端点 + 其余路径按裸 wav segment 应答（契约 §7 允许
+// 「直接裸 wav segment」，hls demuxer 对每个 segment 独立探测封装）。本票只做
+// 分派与 open 判据，完整 MockHlsServer 矩阵属 #145。
+// ---------------------------------------------------------------------------
+namespace {
+
+// 契约 §7 的 media playlist 形态：#EXTM3U + VERSION + TARGETDURATION + N 个
+// EXTINF +（VOD 侧）PLAYLIST-TYPE:VOD 与 #EXT-X-ENDLIST。segment 为相对 URI。
+std::string makeHlsPlaylist(bool vod)
+{
+    std::string text =
+        "#EXTM3U\r\n"
+        "#EXT-X-VERSION:3\r\n"
+        "#EXT-X-TARGETDURATION:10\r\n";
+    if (vod) {
+        text += "#EXT-X-PLAYLIST-TYPE:VOD\r\n";
+    }
+    text += "#EXTINF:10.0,\r\nseg0.ts\r\n"
+            "#EXTINF:10.0,\r\nseg1.ts\r\n";
+    if (vod) {
+        text += "#EXT-X-ENDLIST\r\n";
+    }
+    return text;
+}
+
+} // namespace
+
+TEST_SUITE("HlsUrlDirect")
+{
+    TEST_CASE("VOD playlist URL scans via the direct path with positive duration")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/vod";
+        cfg.playlistText = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/vod") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs > 0);
+        CHECK(props->signalProperties.spec.sampleRate > 0);
+    }
+
+    TEST_CASE("createExtractor opens a UrlSource against a VOD playlist URL")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/vod";
+        cfg.playlistText = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        UrlSource source(server.url("/vod").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+        CHECK(source.headLooksLikePlaylist() == true);
+        CHECK(source.headHasVodFeatures() == true);
+        std::unique_ptr<ExtractorHelper> extractor(
+            ExtractorFactory::createExtractor(&source, "m3u8", true));
+        REQUIRE(extractor != nullptr);
+        CHECK(extractor->getAudioSpec().durationMs > 0);
+        CHECK(extractor->getDataSource() == &source);
+    }
+
+    TEST_CASE("LIVE playlist URL is rejected without silent fallback")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/live";
+        cfg.playlistText = makeHlsPlaylist(false);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/live") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.requestCount() >= 1);   // 已做头部嗅探：拒绝是明确的分派失败，非静默
+    }
+
+    TEST_CASE(".mpd URL keeps the P0 networkless rejection")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer server(bytes);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist
+            = loadPlayList(cb, { server.url("/manifest.mpd") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.requestCount() == 0);   // 扩展名层维持 P0：明确拒绝且不联网
+    }
+
+    TEST_CASE("UrlSource abort seam observes the injected flag")
+    {
+        // 端口 9（discard）连接即拒：构造期嗅探必失败，但取消接缝与 initCheck 解耦，
+        // 与 HttpSource 的接缝语义完全同构（#143 契约 §4）。
+        UrlSource source("http://127.0.0.1:9/p2-1-nope");
+        std::atomic<bool> flag(false);
+        source.setAbortFlag(&flag);
+        CHECK(source.abortRequested() == false);
+        flag.store(true);
+        CHECK(source.abortRequested() == true);
     }
 }
 

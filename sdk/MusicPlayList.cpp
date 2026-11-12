@@ -4,6 +4,7 @@
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "Metrics.h"
+#include "UrlSource.h"
 #include "type_name.hpp"
 #include <algorithm>
 #include <chrono>
@@ -257,7 +258,36 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
     std::shared_ptr<DataSource> source;
-    if (musicPath.rfind("http://", 0) == 0 || musicPath.rfind("https://", 0) == 0) {
+    // P2-1（issue #144 / #143 契约 §2/§4）：http(s) 分派加一级清单内容判定。
+    // 扩展名层（.m3u8/.mpd）维持 P0 网络外拒绝（判据 requestCount==0 不红）；
+    // 其余 http URL 由 UrlSource 构造期一次性头部嗅探做内容层判定：
+    //   命中 m3u8 + VOD 特征（ENDLIST / PLAYLIST-TYPE:VOD）→ UrlSource 直通路径；
+    //   命中清单但无 VOD 特征（LIVE / 伪清单）→ 分派失败明确拒绝，不回退；
+    //   嗅探失败 / 非清单内容 → 维持 P0 二选一（HttpSource / FileSource）。
+    // https:// 维持 P0 明确拒绝语义（契约 §1）。
+    std::string extractorExtension = fileProperties.extensionName;
+    const bool isHttp = musicPath.rfind("http://", 0) == 0;
+    const bool isHttps = musicPath.rfind("https://", 0) == 0;
+    if (isHttp && !isHttps && !UrlSource::isPlaylistExtensionUrl(musicPath)) {
+        UrlSource *urlSource = new UrlSource(musicPath.c_str());
+        if (urlSource->initCheck() == OK && urlSource->headLooksLikePlaylist()) {
+            if (urlSource->headHasVodFeatures()) {
+                source.reset(urlSource);
+                // 清单内容已确认为 m3u8：按内容走注册表，不用 URL 上的扩展名。
+                extractorExtension = "m3u8";
+            } else {
+                delete urlSource;
+                recordScanRejection(ErrorCode::FileOpenFailed);
+                reportError(ErrorCode::FileOpenFailed,
+                            "playlist content has no VOD features (LIVE rejected)",
+                            musicProperties);
+                return;
+            }
+        } else {
+            delete urlSource;
+            source.reset(new HttpSource(musicPath.c_str()));
+        }
+    } else if (isHttp || isHttps) {
         source.reset(new HttpSource(musicPath.c_str()));
     } else {
         source.reset(new FileSource(musicPath.c_str()));
@@ -275,10 +305,11 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     processProperties.source = source;
     // 规格 5.4 H3：拒绝的唯一出口是 createExtractor 返回空，错误码按「扩展名是否注册」分，
     // 不按「解析失败」分——注册过却被拒说明头坏了，没注册且魔数认不出才是格式不支持。
+    // P2-1 直通路径按清单内容判定的扩展名（extractorExtension）参与同一出口。
     const bool extensionRegistered
-        = ExtractorFactory::isSupportedExtension(fileProperties.extensionName);
+        = ExtractorFactory::isSupportedExtension(extractorExtension);
     std::shared_ptr<ExtractorHelper> extractor(
-        ExtractorFactory::createExtractor(source.get(), fileProperties.extensionName, true));
+        ExtractorFactory::createExtractor(source.get(), extractorExtension, true));
     if (extractor == nullptr) {
         const ErrorCode code = extensionRegistered ? ErrorCode::ExtractorInitFailed
                                                    : ErrorCode::ExtractorUnsupported;
