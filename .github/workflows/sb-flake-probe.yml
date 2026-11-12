@@ -3,23 +3,20 @@ name: sb-flake-probe
 # ============================================================
 # 取证专用探针（issue #141）——不是门禁，不是产品构建
 #
-# 第二轮结论（2026-11-12，run 43187863287）：
-#   1. ASan 全量 ctest 走进死胡同：15/15 全红，但一条 ASan 报告都没有。
-#      红的是 test_player_integration.cpp 的时序断言（:1090 / :1693 / :1701
-#      的 playing / resumed / states.front()），即插桩把时间窗拖坏，
-#      原本要靠「采样撞短窗口」的断言必然失败。ASan 报告为零 →
-#      目标崩溃在 15 轮里没有复现，且这条路会引入假红噪声。
-#   2. 不插桩的 A/B（12 轮 × 2）里，B 侧（P1 之后）复现了目标崩溃
-#      2/12，崩溃点 :726 与 :561，与 CI 上 4 次历史事件同形态。
-#      但 A 侧（P1 之前）12 轮里 4 次红全是 sdk_unit_tests，
-#      即已修的 #140（守卫 2s = mock server recv 超时），
-#      说明该 A/B 被 #140 污染，两侧差异不能直接归因 P1。
+# 已排除的两条路（2026-11-12）：
+#   轮二 43187863287：ASan 全量 ctest 15/15 全红但零 ASan 报告，
+#     红的是 test_player_integration.cpp 的时序断言（:1090 / :1693 / :1701），
+#     插桩把「采样撞短窗口」的判定拖坏 → 信噪比为负。
+#   轮三 43192332706：非插桩 Debug + gdb batch（handle SIGSEGV stop print
+#     nopass 抢在 doctest 信号处理器之前停住），单独跑
+#     `UnitTests -ts="MusicPlayer Interactive Paths,PublicPlayer Interactive Paths"`
+#     4 并发 worker × 25 轮 = 100 次，**0 崩溃**。
+#     → 该崩溃不是交互套件内部的竞态，需要整个 `ctest -R sdk_ -j4`
+#       （14 个进程并发）的负载/内存压力才现。
 #
-# 本轮做法：放弃插桩，改用 gdb 在崩溃现场抓栈。
-#   - 非插桩 Debug 构建，时序断言的机器码与 CI 一致；
-#   - `handle SIGSEGV stop print nopass` 抢在 doctest 自带的信号处理器之前
-#     停住，因此能拿到真实崩溃栈，而不是只看到 "test case CRASHED"；
-#   - 4 个并发 worker 制造 CPU 争用（崩溃需要 -j4 并发才现）。
+# 本轮做法：整轮 `ctest -R sdk_ -j4` 照常跑（不插桩、不套 gdb，时序判定
+# 与 CI 完全一致），靠 core dump 事后取栈。doctest 的信号处理器会重新抛
+# 默认动作（CI 日志里 ctest 打印 "Segmentation fault" 即证据），因此能落 core。
 #
 # 红线：只由 push 到 probe/** 触发，不挂 master / pull_request；
 #       不改任何 sdk_* 目标、TIMEOUT、套件分组、既有判据；
@@ -33,15 +30,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  stack:
+  core:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       # P1 之后的 master tip
       REF: 51d4ac51cbc036d6c14e372da378e9174c3dd028
-      WORKERS: 4
-      ITERS: 25
-      SUITES: 'MusicPlayer Interactive Paths,PublicPlayer Interactive Paths'
+      ROUNDS: 20
+      COREDIR: /tmp/sbcore
     steps:
       - uses: actions/checkout@v7
         with:
@@ -78,57 +74,74 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/toolchain/toolchain.linux_x86_64_gcc.cmake \
             -G "Unix Makefiles"
-          cmake --build build-dbg --target UnitTests -j4
+          cmake --build build-dbg --target UnitTests TestSdkSuite -j4
 
-      - name: Loop interaction suite under gdb
+      - name: Enable core dumps
+        run: |
+          set -x
+          sudo mkdir -p "$COREDIR"
+          sudo chmod 777 "$COREDIR"
+          echo "before: $(cat /proc/sys/kernel/core_pattern)"
+          sudo sysctl -w kernel.core_pattern="$COREDIR/core.%e.%p.%t" || \
+            sudo sh -c "echo '$COREDIR/core.%e.%p.%t' > /proc/sys/kernel/core_pattern"
+          cat /proc/sys/kernel/core_pattern
+          ulimit -c unlimited
+          ulimit -c
+
+      - name: Loop full ctest -j4 until a core appears
+        env:
+          SDL_AUDIODRIVER: dummy
         run: |
           set -o pipefail
-          : > stack-rounds.log
-          export LD_LIBRARY_PATH="${{ github.workspace }}/sdk/3rdparty/dist/linux_x86_64_gcc_debug/lib"
-          BIN="${{ github.workspace }}/build-dbg/sdk/test/UnitTests"
-          WORKDIR="${{ github.workspace }}/sdk/test"
-
-          worker() {
-            w="$1"
-            for i in $(seq 1 "$ITERS"); do
-              out="gdb-w${w}-${i}.log"
-              ( cd "$WORKDIR" && gdb -batch -nx -q \
-                  -ex "set pagination off" \
-                  -ex "set confirm off" \
-                  -ex "handle SIGSEGV stop print nopass" \
-                  -ex "handle SIGABRT stop print nopass" \
-                  -ex run \
-                  -ex "echo \n===== BACKTRACE =====\n" \
-                  -ex "thread apply all bt" \
-                  -ex "echo \n===== THREADS =====\n" \
-                  -ex "info threads" \
-                  --args "$BIN" "-ts=$SUITES" ) > "$out" 2>&1
-              if grep -q "Program received signal SIGSEGV" "$out"; then
-                echo "worker=$w iter=$i CRASH" >> crash-hits.log
-                cp "$out" "crash-w${w}-${i}.log"
-                return 0
-              fi
-              echo "worker=$w iter=$i clean" >> stack-rounds.log
-              rm -f "$out"
-            done
-            return 0
-          }
-
-          : > crash-hits.log
-          for w in $(seq 1 "$WORKERS"); do
-            worker "$w" &
+          ulimit -c unlimited
+          : > core-rounds.log
+          for i in $(seq 1 "$ROUNDS"); do
+            echo "===== ROUND $i =====" | tee -a core-rounds.log
+            if ctest --test-dir build-dbg -R sdk_ -j4 --output-on-failure > "core-run-$i.log" 2>&1; then
+              echo "round=$i GREEN" | tee -a core-rounds.log
+            else
+              echo "round=$i RED" | tee -a core-rounds.log
+              grep -E "The following tests FAILED" -A3 "core-run-$i.log" | tee -a core-rounds.log
+              grep -E "CRASHED: SIGSEGV|Segmentation fault" "core-run-$i.log" | tee -a core-rounds.log || true
+            fi
+            rm -rf sdk/test/log/* 2>/dev/null || true
+            if ls "$COREDIR"/core.* >/dev/null 2>&1; then
+              echo "CORE FOUND after round=$i" | tee -a core-rounds.log
+              break
+            fi
           done
-          wait
+          echo "=== cores: ===" | tee -a core-rounds.log
+          ls -la "$COREDIR" | tee -a core-rounds.log || true
 
-          echo "=== runs: $(wc -l < stack-rounds.log) clean, $(wc -l < crash-hits.log) crash ===" | tee -a stack-rounds.log
-          cat crash-hits.log || true
+      - name: Backtrace from cores
+        run: |
+          shopt -s nullglob
+          : > backtrace.txt
+          found=0
+          for c in "$COREDIR"/core.*; do
+            found=1
+            {
+              echo "########## $c ##########"
+              # 只处理 UnitTests 的 core（目标是 sdk_interaction_tests）
+              case "$c" in
+                *UnitTests*) gdb -batch -nx -q \
+                    -ex "set pagination off" \
+                    -ex "echo \n===== BACKTRACE (all threads) =====\n" \
+                    -ex "info threads" \
+                    -ex "thread apply all bt full" \
+                    "${{ github.workspace }}/build-dbg/sdk/test/UnitTests" "$c" ;;
+                *) echo "skip $c" ;;
+              esac
+            } 2>&1 | tee -a backtrace.txt
+          done
+          if [ "$found" = "0" ]; then echo "NO CORE PRODUCED" | tee -a backtrace.txt; fi
 
-      - name: Upload gdb evidence
+      - name: Upload core evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gdb-evidence
+          name: core-evidence
           path: |
-            stack-rounds.log
-            crash-hits.log
-            crash-*.log
+            core-rounds.log
+            core-run-*.log
+            backtrace.txt
