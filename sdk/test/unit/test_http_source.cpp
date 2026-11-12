@@ -922,7 +922,10 @@ TEST_SUITE("PlaylistUrlDispatch")
         REQUIRE(playlist->getMusicCount() == 0);
         REQUIRE(cb.errors.size() == 1);
         REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
-        CHECK(server.requestCount() == 0);   // 构造期明确拒绝，未联网、非静默失败
+        // P2 判据演进（#144 review，规格 §9.3 S2 重开）：.m3u8 URL 先经 UrlSource
+        // 头部嗅探联网确认——本端点内容非清单（素材字节）→ 回落 P0 扩展名层拒绝，
+        // 拒绝仍是明确的 FileOpenFailed，非静默。恰 1 次嗅探请求。
+        CHECK(server.requestCount() == 1);
     }
 
     TEST_CASE("playlist accepts a URL with query and strips it before extension")
@@ -1136,6 +1139,45 @@ TEST_SUITE("HlsUrlDirect")
         REQUIRE(cb.errors.size() == 1);
         REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
         CHECK(server.requestCount() == 0);   // 扩展名层维持 P0：明确拒绝且不联网
+    }
+
+    // P2 判据演进（#144 review，规格 §9.3 S2 重开）：.m3u8 是 HLS VOD 最主要入口，
+    // 分派对 .m3u8 URL 同样做头部嗅探 + VOD 特征区分，不再一律走 P0 扩展名层拒绝。
+    TEST_CASE(".m3u8 VOD URL is dispatched to the direct path")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/vod.m3u8";
+        cfg.playlistText = makeHlsPlaylist(true);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/vod.m3u8") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs > 0);
+        CHECK(props->signalProperties.spec.sampleRate > 0);
+    }
+
+    TEST_CASE(".m3u8 LIVE URL is rejected after the head sniff")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.playlistPath = "/live.m3u8";
+        cfg.playlistText = makeHlsPlaylist(false);
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/live.m3u8") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        REQUIRE(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.requestCount() >= 1);   // 联网嗅探后明确拒绝（LIVE 不回退不静默）
     }
 
     TEST_CASE("UrlSource abort seam observes the injected flag")

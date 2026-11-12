@@ -67,6 +67,11 @@ bool UrlSource::isPlaylistExtensionUrl(const std::string &url)
     return ext == ".m3u8" || ext == ".mpd";
 }
 
+bool UrlSource::isMpdExtensionUrl(const std::string &url)
+{
+    return pathExtensionLower(urlPath(url)) == ".mpd";
+}
+
 UrlSource::UrlSource(const char *url)
     : m_headPlaylist(false)
     , m_headVod(false)

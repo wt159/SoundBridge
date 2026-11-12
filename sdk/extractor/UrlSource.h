@@ -32,8 +32,13 @@ public:
     bool headHasVodFeatures() const { return m_headVod; }
 
     // 扩展名层清单判定：URL 路径（剥 query/fragment）以 .m3u8 / .mpd 结尾。
-    // 与 HttpSource 内部的 isPlaylistExtension 同一语义（P0 判定层级不动）。
+    // 与 HttpSource 内部的 isPlaylistExtension 同一语义。
     static bool isPlaylistExtensionUrl(const std::string &url);
+
+    // .mpd 专属判定（P4 未重开）：分派据此维持 P0 网络外拒绝。
+    // .m3u8 不在此列：S2 已随 P2 重开（规格 §9.3），.m3u8 URL 由分派做
+    // 头部嗅探 + VOD 特征区分（#143 契约 §2 / #144 review）。
+    static bool isMpdExtensionUrl(const std::string &url);
 
 private:
     bool sniffHead();

@@ -259,16 +259,15 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
     std::shared_ptr<DataSource> source;
     // P2-1（issue #144 / #143 契约 §2/§4）：http(s) 分派加一级清单内容判定。
-    // 扩展名层（.m3u8/.mpd）维持 P0 网络外拒绝（判据 requestCount==0 不红）；
-    // 其余 http URL 由 UrlSource 构造期一次性头部嗅探做内容层判定：
+    // .m3u8 与其余 http URL 由 UrlSource 构造期一次性头部嗅探做内容层判定：
     //   命中 m3u8 + VOD 特征（ENDLIST / PLAYLIST-TYPE:VOD）→ UrlSource 直通路径；
     //   命中清单但无 VOD 特征（LIVE / 伪清单）→ 分派失败明确拒绝，不回退；
-    //   嗅探失败 / 非清单内容 → 维持 P0 二选一（HttpSource / FileSource）。
-    // https:// 维持 P0 明确拒绝语义（契约 §1）。
+    //   嗅探失败 / 非清单内容 → 维持 P0 二选一（HttpSource 扩展名/探测层拒绝）。
+    // .mpd（P4 未重开）与 https:// 维持 P0 网络外拒绝（requestCount()==0 判据不动）。
     std::string extractorExtension = fileProperties.extensionName;
     const bool isHttp = musicPath.rfind("http://", 0) == 0;
     const bool isHttps = musicPath.rfind("https://", 0) == 0;
-    if (isHttp && !isHttps && !UrlSource::isPlaylistExtensionUrl(musicPath)) {
+    if (isHttp && !isHttps && !UrlSource::isMpdExtensionUrl(musicPath)) {
         UrlSource *urlSource = new UrlSource(musicPath.c_str());
         if (urlSource->initCheck() == OK && urlSource->headLooksLikePlaylist()) {
             if (urlSource->headHasVodFeatures()) {
