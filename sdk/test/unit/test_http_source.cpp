@@ -162,6 +162,8 @@ public:
         bool playlistBody;
         bool playlistBodyAsRange;
         bool growTotalAcrossRequests;
+        bool hangAfterHeaders;
+        int  hangFromRequest;
         int  redirects;
         std::string redirectLocation;
         Config()
@@ -169,7 +171,8 @@ public:
               acceptRangesNone(false), ignoreRange(false),
               fakeTotalOnTail(false), growContentLength(false),
               playlistBody(false), playlistBodyAsRange(false),
-              growTotalAcrossRequests(false), redirects(0), redirectLocation() { }
+              growTotalAcrossRequests(false), hangAfterHeaders(false),
+              hangFromRequest(-1), redirects(0), redirectLocation() { }
     };
 
     MockHttpServer(const std::vector<uint8_t> &bytes, Config config = Config())
@@ -349,6 +352,17 @@ private:
         resp += "Connection: close\r\n";
         if (m_config.emitIcy) resp += "Icy-Name: mock-radio\r\n";
         resp += "\r\n";
+        // 挂起开关（构造期设定、运行期只读）：第 hangFromRequest 次请求起
+        // 只发响应头、不发 body 并保持连接打开，直到析构置 m_stop 才退出。
+        // 前 3 次探测请求（seq 1..3）正常返回，第 4 次 readAt 才挂起。
+        const int seq = index + 1;
+        if (m_config.hangAfterHeaders && seq >= m_config.hangFromRequest) {
+            sendAll(client, resp);
+            while (!m_stop.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            return;
+        }
         if (length > 0) {
             resp.append((const char *)bodyData + start, (size_t)length);
         }
@@ -367,7 +381,7 @@ private:
     }
 
     const std::vector<uint8_t> &m_bytes;
-    Config m_config;
+    const Config m_config;
     Socket m_listen;
     int m_port;
     std::atomic<bool> m_stop;
@@ -635,6 +649,27 @@ TEST_SUITE("HttpSource")
         HttpSource source(server.url("/start.wav").c_str());
         CHECK(source.initCheck() != sdk_utils::OK);
         CHECK(server.requestCount() >= 1);   // 已处理重定向，不是构造期静默拒绝
+    }
+
+    TEST_CASE("cancelled read exits a hanging response promptly")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.hangAfterHeaders = true;
+        cfg.hangFromRequest = 4;
+        MockHttpServer server(bytes, cfg);
+        HttpSource source(server.url("/music.wav").c_str());
+        REQUIRE(source.initCheck() == sdk_utils::OK);
+
+        std::atomic<bool> flag(true);   // 取消信号先置位
+        source.setAbortFlag(&flag);      // 复用 #135 的内部虚接缝
+        auto fut = std::async(std::launch::async, [&] {
+            char buf[16];
+            return source.readAt(0, buf, sizeof(buf));
+        });
+        REQUIRE(fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+        CHECK(fut.get() == -1);
     }
 }
 

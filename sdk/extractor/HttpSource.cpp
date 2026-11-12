@@ -1,5 +1,7 @@
 #include "HttpSource.h"
 #include "LogWrapper.h"
+#include "AbortInterrupt.hpp"
+#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +14,7 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -100,6 +103,140 @@ bool sendAll(Socket s, const char *data, size_t len)
         sent += (size_t)n;
     }
     return true;
+}
+
+// 非阻塞 connect 的阻塞模式 RAII：无论 connect / select 成败，析构都恢复
+// 阻塞语义（Windows FIONBIO mode=0 / POSIX 清 O_NONBLOCK），避免后续
+// sendAll / ::recv 因非阻塞立即 EAGAIN 而破坏既有 HttpSource 用例。
+class BlockingModeRestore {
+public:
+    explicit BlockingModeRestore(Socket s) : m_sock(s), m_active(false)
+    {
+#ifdef _WIN32
+        u_long mode = 1;
+        m_active = (ioctlsocket(m_sock, FIONBIO, &mode) == 0);
+#else
+        m_flags = fcntl(m_sock, F_GETFL, 0);
+        if (m_flags >= 0) {
+            m_active = (fcntl(m_sock, F_SETFL, m_flags | O_NONBLOCK) == 0);
+        }
+#endif
+    }
+
+    bool active() const { return m_active; }
+
+    ~BlockingModeRestore()
+    {
+        if (!m_active) return;
+#ifdef _WIN32
+        u_long mode = 0;
+        ioctlsocket(m_sock, FIONBIO, &mode);
+#else
+        fcntl(m_sock, F_SETFL, m_flags & ~O_NONBLOCK);
+#endif
+    }
+
+private:
+    Socket m_sock;
+    bool m_active;
+#ifndef _WIN32
+    int m_flags = 0;
+#endif
+};
+
+// 仅内部日志区分读失败：取消 / 超时 / 断流，不新增错误码、不改返回值。
+void logReadFailure(const DataSourceBase *owner)
+{
+#ifdef _WIN32
+    const int code = WSAGetLastError();
+    const bool timedOut = (code == WSAETIMEDOUT);
+#else
+    const int code = errno;
+    const bool timedOut = (code == EAGAIN || code == EWOULDBLOCK);
+#endif
+    if (sbAbortRequested(owner)) {
+        LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
+    } else if (timedOut) {
+        LOG_ERROR(LOG_TAG, "http read timeout");
+    } else {
+        LOG_ERROR(LOG_TAG, "http connection closed or io error");
+    }
+}
+
+// 数据源层连接超时：非阻塞 connect + select 短分片等待可写，超时上限沿用
+// setSocketTimeout 的 3s 数值（不新增配置项 / 观测字段）。每片前检查同一
+// 取消信号，命中即失败，避免取消响应被整段 select 吞掉。
+bool connectWithTimeout(Socket sock, const struct sockaddr *addr, int addrlen,
+                        const DataSourceBase *owner)
+{
+    BlockingModeRestore guard(sock);
+    if (!guard.active()) {
+        LOG_ERROR(LOG_TAG, "http connect failed: cannot set non-blocking mode");
+        return false;
+    }
+
+    if (::connect(sock, addr, addrlen) == 0) return true;
+
+    bool inProgress = false;
+    int code = 0;
+#ifdef _WIN32
+    code = WSAGetLastError();
+    inProgress = (code == WSAEWOULDBLOCK || code == WSAEINPROGRESS);
+#else
+    code = errno;
+    inProgress = (code == EINPROGRESS);
+#endif
+    if (!inProgress) {
+        LOG_ERROR(LOG_TAG, "http connect failed: %d", code);
+        return false;
+    }
+
+    const int totalMs = 3000;
+    const int sliceMs = 100;
+    int waitedMs = 0;
+    while (waitedMs < totalMs) {
+        if (sbAbortRequested(owner)) {
+            LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
+            return false;
+        }
+        fd_set writeSet;
+        FD_ZERO(&writeSet);
+        FD_SET(sock, &writeSet);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = sliceMs * 1000;
+#ifdef _WIN32
+        const int nfds = 0;
+#else
+        const int nfds = (int)sock + 1;
+#endif
+        const int ready = ::select(nfds, nullptr, &writeSet, nullptr, &tv);
+        if (ready > 0) {
+            int soError = 0;
+#ifdef _WIN32
+            int len = sizeof(soError);
+            const int got = getsockopt(sock, SOL_SOCKET, SO_ERROR,
+                                       (char *)&soError, &len);
+#else
+            socklen_t len = sizeof(soError);
+            const int got = getsockopt(sock, SOL_SOCKET, SO_ERROR,
+                                       &soError, &len);
+#endif
+            if (got != 0 || soError != 0) {
+                LOG_ERROR(LOG_TAG, "http connect failed: %d",
+                          got == 0 ? soError : got);
+                return false;
+            }
+            return true;
+        }
+        if (ready < 0) {
+            LOG_ERROR(LOG_TAG, "http connect failed: select error");
+            return false;
+        }
+        waitedMs += sliceMs;
+    }
+    LOG_ERROR(LOG_TAG, "http connect timeout");
+    return false;
 }
 
 struct Url {
@@ -255,7 +392,7 @@ void parseHead(const std::string &head, Response &out)
 
 bool doRequest(const std::string &host, const std::string &port,
                const std::string &path, off64_t start, off64_t end,
-               Response &out)
+               Response &out, const DataSourceBase *owner)
 {
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
@@ -269,7 +406,7 @@ bool doRequest(const std::string &host, const std::string &port,
         sock = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock == kInvalidSocket) continue;
         setSocketTimeout(sock);
-        if (::connect(sock, ai->ai_addr, (int)ai->ai_addrlen) == 0) break;
+        if (connectWithTimeout(sock, ai->ai_addr, (int)ai->ai_addrlen, owner)) break;
         closeSocket(sock);
         sock = kInvalidSocket;
     }
@@ -293,8 +430,14 @@ bool doRequest(const std::string &host, const std::string &port,
     char buf[4096];
     size_t headerEnd = std::string::npos;
     while ((headerEnd = raw.find("\r\n\r\n")) == std::string::npos) {
+        if (sbAbortRequested(owner)) {
+            closeSocket(sock);
+            LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
+            return false;
+        }
         const int n = ::recv(sock, buf, sizeof(buf), 0);
         if (n <= 0) {
+            logReadFailure(owner);
             closeSocket(sock);
             return false;
         }
@@ -315,14 +458,24 @@ bool doRequest(const std::string &host, const std::string &port,
     out.body.assign(rest.begin(), rest.end());
     if (contentLength >= 0) {
         while ((off64_t)out.body.size() < contentLength) {
+            if (sbAbortRequested(owner)) {
+                closeSocket(sock);
+                LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
+                return false;
+            }
             const int n = ::recv(sock, buf, sizeof(buf), 0);
-            if (n <= 0) break;
+            if (n <= 0) { logReadFailure(owner); break; }
             out.body.insert(out.body.end(), buf, buf + n);
         }
     } else {
         while (true) {
+            if (sbAbortRequested(owner)) {
+                closeSocket(sock);
+                LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
+                return false;
+            }
             const int n = ::recv(sock, buf, sizeof(buf), 0);
-            if (n <= 0) break;
+            if (n <= 0) { logReadFailure(owner); break; }
             out.body.insert(out.body.end(), buf, buf + n);
         }
     }
@@ -403,10 +556,11 @@ bool looksLikePlaylist(const Response &resp)
 
 // 伪长度二次校验：再取最后一个字节，要求 206、total 一致、body 恰好 1 字节。
 bool verifyTail(const std::string &host, const std::string &port,
-                const std::string &path, off64_t total)
+                const std::string &path, off64_t total,
+                const DataSourceBase *owner)
 {
     Response resp;
-    if (!doRequest(host, port, path, total - 1, total - 1, resp)) return false;
+    if (!doRequest(host, port, path, total - 1, total - 1, resp, owner)) return false;
     if (hasIcyHeader(resp.headers) || resp.status != 206) return false;
     off64_t t = 0;
     if (!parseTotal(resp.headers, t) || t != total) return false;
@@ -417,10 +571,11 @@ bool verifyTail(const std::string &host, const std::string &port,
 // 伪长度三次校验：再取首字节，要求 206 且 Content-Range total 与首次一致，
 // 用于识别 declaredTotal 随请求增长的伪长度源（规格 4.3）。
 bool verifyHeadAgain(const std::string &host, const std::string &port,
-                     const std::string &path, off64_t total)
+                     const std::string &path, off64_t total,
+                     const DataSourceBase *owner)
 {
     Response resp;
-    if (!doRequest(host, port, path, 0, 0, resp)) return false;
+    if (!doRequest(host, port, path, 0, 0, resp, owner)) return false;
     if (hasIcyHeader(resp.headers) || resp.status != 206) return false;
     off64_t t = 0;
     if (!parseTotal(resp.headers, t) || t != total) return false;
@@ -492,7 +647,7 @@ ssize_t HttpSource::readAt(off64_t offset, void *data, size_t size)
     if (size == 0 || data == nullptr) return 0;
 
     Response resp;
-    if (!doRequest(m_host, m_port, m_path, offset, offset + (off64_t)size - 1, resp)) {
+    if (!doRequest(m_host, m_port, m_path, offset, offset + (off64_t)size - 1, resp, this)) {
         LOG_ERROR(LOG_TAG, "readAt request failed at %lld", (long long)offset);
         return -1;
     }
@@ -525,7 +680,7 @@ bool HttpSource::probe()
     // 重定向后重新探测，不改形态归类。构造期共 3 次探测（首次 / 尾 / 首字节复查）。
     for (int redirects = 0; redirects <= 5; ++redirects) {
         Response resp;
-        if (!doRequest(m_host, m_port, m_path, 0, 15, resp)) return false;
+        if (!doRequest(m_host, m_port, m_path, 0, 15, resp, this)) return false;
         if (hasIcyHeader(resp.headers)) {
             LOG_ERROR(LOG_TAG, "Icy-* header present, reject infinite stream");
             return false;
@@ -570,11 +725,11 @@ bool HttpSource::probe()
             LOG_ERROR(LOG_TAG, "playlist content/Content-Type rejected in P0");
             return false;
         }
-        if (!verifyTail(m_host, m_port, m_path, total)) {
+        if (!verifyTail(m_host, m_port, m_path, total, this)) {
             LOG_ERROR(LOG_TAG, "pseudo-length second check failed");
             return false;
         }
-        if (!verifyHeadAgain(m_host, m_port, m_path, total)) {
+        if (!verifyHeadAgain(m_host, m_port, m_path, total, this)) {
             LOG_ERROR(LOG_TAG, "pseudo-length third check failed (total grew)");
             return false;
         }
