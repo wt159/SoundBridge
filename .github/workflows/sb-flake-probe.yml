@@ -13,7 +13,11 @@ name: sb-flake-probe
 #                  （_M_release 的 this=0x55，use count 为负的垃圾值）
 #                → 崩溃在控制队列的「取不可用任务」分支，与网络源 / P1 取消通道无关
 #
-# 本轮：同样落 core，但把 gdb 检查做细——从 core 里直接读 WorkQueue 的
+# 本轮（2026-11-12 #142 修复验证）：REF 指向 impl/workqueue-fix 的修复提交
+#       bc0fb24f4（WorkQueue 结构性修复），16 轮整轮 -j4，预期零 core、
+#       零 SIGSEGV——修复前同配方在第 2 / 4 轮即落 core。
+#
+# 上一轮：同样落 core，但把 gdb 检查做细——从 core 里直接读 WorkQueue 的
 #       m_running / m_taskMap.size() / m_taskQueue 实际元素数，
 #       验证「用 m_taskMap.size() 当 m_taskQueue 非空判据」这条不变量是否已经破了
 #       （破了的话 top()/pop() 就是在空队列上操作，正是观察到的垃圾指针）。
@@ -34,8 +38,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
-      REF: 51d4ac51cbc036d6c14e372da378e9174c3dd028
-      ROUNDS: 8
+      REF: bc0fb24f47b35fd9f613e4957cf9b662e046aacf
+      ROUNDS: 16
       COREDIR: /tmp/sbcore
     steps:
       - uses: actions/checkout@v7
@@ -67,6 +71,7 @@ jobs:
         env:
           SDL_AUDIODRIVER: dummy
         run: |
+          git fetch --depth 5 origin impl/workqueue-fix
           git checkout -q "$REF"
           git log --oneline -1
           cmake -S . -B build-dbg \
