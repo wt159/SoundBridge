@@ -42,6 +42,8 @@
 
 **对 11-09 调研快照的更正**（不得再拿快照当现状）：`getSize` 非全量扫描、格式 11 个非 12 个、URL 在第一层即被拒、`m_abortDecode` 贯通范围更窄、`hls.c` 空 base 的真实失败机制、Radio Paradise 伪 `Content-Range` 是 OpenResty 前端特定行为、MDN 素材 CC0。详见两份 facts 的「与调研快照不一致之处」章节。
 
+**时点更正（2026-11-13，[直播源地图 #147](https://github.com/wt159/SoundBridge/issues/147)）**：本表按「历史留痕」不动，但下列三条描述已过期，以 [`doc/live-source-spec.md`](live-source-spec.md) §3.2 与源码为准：① 「全自有 `sdk/` 源码 `interrupt_callback` 零命中」不再成立（`HlsExtractor.cpp:92-94` 已挂）；② 「`protocol_whitelist` 项目未设置（默认 NULL）」不再成立（两处均设 `http,tcp`）；③ 「`m_abortDecode` 未贯通 4 个 `avioRead` 阻塞点」不再成立（P1 已贯通）。另「`CONFIG_HTTPS/TLS = 1` 隐含 https 可用」措辞不准：`CONFIG_OPENSSL 0` + `CONFIG_GNUTLS 0` ⇒ `https://` 实际不可用。
+
 ## 4. 全谱系形态清单与裁决表
 
 ### 4.1 切分维度
@@ -68,6 +70,8 @@
 - **S3 HLS LIVE / S4 ICY 直播**：长度未知不可 seek、无自然终点、取消信号未贯通到阻塞读点，且公开电台直播服务有明确 ToS 红线。重开条件 = 独立连接 / 重连状态机 effort + 授权复核通过 + 无限流 EOS / UI 语义定稿。
 - **S5 / S6 DASH**：当前构建 `CONFIG_DASH_DEMUXER 0`（`libxml2` 未启用）；DASH-IF 测试向量为 CC BY-NC-ND 4.0，明确「测试向量本身不得为商业目的分发」；纯音频测试流少。重开条件 = 显式启用 dash demuxer 并评估依赖与授权 + 清单类接入路径落地。
 
+**P3 接缝（2026-11-13）**：S3（HLS LIVE）/ S4（ICY 直播）两行的表格单元格与判据**一字不动**；两形态的连接 / 重连生命周期与无限流终止语义已由 [`doc/live-source-spec.md`](live-source-spec.md) 收口，见其 §4 / §9 / §11.2。原「重开触发条件」中的两项**技术**条件（独立连接 / 重连状态机意见、无限流 EOS / UI 语义定稿）已命中；「授权明确」属图外 effort，按新规格 §10.4 的清单与责任闭环。三档归类按新规格 §10.3 逐形态填写。
+
 ### 4.3 判定边界（静态点播源）
 
 | 边界 | 判定规则 |
@@ -90,6 +94,8 @@
 - `getSize()` 返回 `UNKNOWN_ERROR`（基类默认）= 长度未知；`AVSEEK_SIZE` 返回 `<0` = 不支持取大小；`AVIOContext.seekable = 0` = 流不可 seek（三者语义由协议事实票用 FFmpeg 4.4 官方 doxygen 逐字确认）；`flags()` 已有 `kIsHTTPBasedSource` / `kStreamedFromLocalHost` 预留位。
 - **`read_packet` 对流式数据不得返回 0、须返回 AVERROR**（FFmpeg `avio.h` 官方措辞）；现有 `avioRead` 把 `readAt` 的 0 直接译作 `AVERROR_EOF`，只适用于已知长度的静态点播源，无限流源不适用。
 
+**措辞更正（2026-11-13，[#148](https://github.com/wt159/SoundBridge/issues/148) §7）**：上一条中 `AVSEEK_SIZE` 返回 `<0` = 不支持取大小、`AVIOContext.seekable = 0` = 流不可 seek **两句标为工程约定，无 FFmpeg 4.4 doxygen 逐字出处**；`read_packet` 对流式数据不得返回 0、须返回 AVERROR 那句**保留逐字引用**。原句按历史留痕不动。
+
 ### 5.2 静态点播总长
 
 取首个 `206` 的 `Content-Range: bytes …/<total>` 或 HEAD 的 `Content-Length`（依据 RFC 9110）。**禁止全量扫描**：`FileSource::getSize` 本就是 O(1) 缓存，网络源更不应为了取长度先下载一遍。伪总长的识别见 §4.3。
@@ -99,6 +105,8 @@
 - `m_abortDecode` 仍是**唯一取消信号**（ADR 0003）；规格不引入第二个取消面。
 - 「贯通到 `avioRead` 阻塞点 + `AVFormatContext.interrupt_callback` + 连接 / 读超时」登记为 **P1 前置能力，属图外实现 effort**；本图不改生产代码。在这项落地之前，任何无限流形态都不具备可判定的取消语义，这是 S3/S4 本版不做的硬理由之一。
 - 超时归**数据源层**（连接 / 读超时），不进播放任务状态；`seekToMs` 仍只保留单槽语义，不新增定位入口。
+
+- **播放主路径未设读超时（2026-11-13，[#155](https://github.com/wt159/SoundBridge/issues/155) 实证）**：`HlsExtractor::open()` 的 opts 只有 `protocol_whitelist`，播放主路径 15 s 挂死；由图外实现 effort 在 `open()` 补 `rw_timeout=3000000`（只补它、不设 `timeout`）。重连预算归数据源层、不进播放任务状态，但它**不是超时的一种**；三层定性、`av_opt_copy(parent)` 通道与「3 s 表现为 EOF 不是超时错误」的形态限定见 [`doc/live-source-spec.md`](live-source-spec.md) §3.3 / §5.3 / §6.4。本节前三条逐字不动。
 
 ### 5.4 与播放器状态契约的冲突与化解
 
@@ -206,6 +214,8 @@ URL 通过**既有播放列表字符串入口**进入，不新增 / 不修改 `s
 | **P2** | HLS VOD（原生 URL 层） | **已做**（2026-11-12，`impl/p2-1-url-direct`（`f9e148318`）ff 进 master，分支已于收口审计清理，票 [#143](https://github.com/wt159/SoundBridge/issues/143)–[#146](https://github.com/wt159/SoundBridge/issues/146)；契约 = `protocol_whitelist="http,tcp"`，理由见 #143 resolution） | 四项重开条件于 2026-11-12 全部命中后启动 |
 | **P3** | HLS LIVE / ICY 直播 | 不做 | 独立连接 / 重连状态机 effort + 授权明确 + 无限流 EOS / UI 语义定稿 |
 | **P4** | DASH VOD / LIVE | 不做 | 显式启用 dash demuxer 并评估 libxml2 依赖与 DASH-IF 授权 |
+
+**P1 / P3 更正（2026-11-13）**：上表单元格与判据一字不动，在此登记口径更正。① **P1 行**：「连接期与非播放主路径已落地，播放主路径待补」——`HttpSource` 的 socket `SO_RCVTIMEO=3s` 与 `UrlSource::fetchHead()` 的 `timeout=3000000` 已生效，但 `HlsExtractor::open()` + segment（播放主路径）**完全无效**，补 `rw_timeout` 由图外 effort 落地（[#155](https://github.com/wt159/SoundBridge/issues/155)）。② **P3 行**：「两项技术重开条件已命中」——独立连接 / 重连状态机意见与无限流 EOS / UI 语义已由 [`doc/live-source-spec.md`](live-source-spec.md) 定稿并可判定；「授权明确」按该规格 §10.4 的清单在图外闭环，本图不判「已明确」。③ **P3 不启用 FFmpeg 原生 `reconnect*` 家族，重连由自有状态机驱动**（理由三条：预算不可计量 / 取消不可打断 / hls 不下传 segment，见新规格 §5.5 与 [ADR 0007](../docs/adr/0007-reconnect-state-machine-ownership.md)）。④ `reconnectAtOffset`（`DataSource.hpp:173`）标注「**历史虚接缝，P3 不使用**」，废弃但不删、不改签名。
 
 **图外实现 effort**：按一票一决策切票，本图只产规格与决策、不带执行；GitHub 票正文是历史留痕不改，只在需要更正的旧票上加 comment。
 
