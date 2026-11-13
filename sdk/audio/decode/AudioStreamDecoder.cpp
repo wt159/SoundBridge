@@ -681,17 +681,17 @@ void AudioStreamDecoder::threadFunc()
         PacketCursor cursor(m_extractor);
         AudioBuffer::AudioBufferPtr packet;
         while (!m_stopRequest.load()) {
-        const int64_t seekMs = m_seekRequestMs.exchange(-1);
-        if (seekMs >= 0) {
-            // P3 归零例外的实现层短路（#153 D21）——与 runFfmpegPacketLoop 的 seek
-            // 分支同判：无限流（durationMs==0 且直通提取器）上任何 seek 都静默忽略，
-            // 不进 SEEKING、不改段基准。cursor.rewind() 在 LIVE 上会走 packetAt(0)
-            // 的 av_seek_frame，必败且错误被 hls 洗成裸 -1 → 会把「拖回 0」误变 EOS。
-            if (m_durationMs == 0 && m_extractor != nullptr
-                && m_extractor->supportsLiveReconnect()) {
-                continue;
-            }
-            m_state.store(StreamDecoderState::SEEKING);
+            const int64_t seekMs = m_seekRequestMs.exchange(-1);
+            if (seekMs >= 0) {
+                // P3 归零例外的实现层短路（#153 D21）——与 runFfmpegPacketLoop 的 seek
+                // 分支同判：无限流（isLivePassthrough：durationMs==0 单一信号 + 直通
+                // 提取器）上任何 seek 都静默忽略，不进 SEEKING、不改段基准。
+                // cursor.rewind() 在 LIVE 上会走 packetAt(0) 的 av_seek_frame，必败
+                // 且错误被 hls 洗成裸 -1 → 会把「拖回 0」误变 EOS。
+                if (isLivePassthrough()) {
+                    continue;
+                }
+                m_state.store(StreamDecoderState::SEEKING);
                 std::this_thread::sleep_for(std::chrono::milliseconds(12));
                 // 位置口径与丢弃口径与通用分支一致：ring 里放的是「写进去的那一档」PCM，
                 // m_seekDiscardBytes 数的是重采样之前的源格式 PCM，两者不互相换算。
@@ -726,8 +726,7 @@ void AudioStreamDecoder::threadFunc()
                 int readErr = 0;
                 const bool hasDiag = (m_extractor != nullptr)
                     && m_extractor->consumeLastReadError(&readErr);
-                if (hasDiag && m_durationMs == 0 && m_extractor != nullptr
-                    && m_extractor->supportsLiveReconnect()
+                if (hasDiag && isLivePassthrough()
                     && readErr != AVERROR_EXIT && readErr != AVERROR_INVALIDDATA) {
                     const ReconnectResult rc = reconnectForLiveCore();
                     if (rc == kReconnectResumed) {
@@ -1020,14 +1019,13 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
     for (;;) {
         const int64_t seekMs = m_seekRequestMs.exchange(-1);
         if (seekMs >= 0) {
-            // P3 归零例外的实现层短路（#153 D21）：无限流（durationMs==0 且直通提取器）上
+            // P3 归零例外的实现层短路（#153 D21）：无限流（isLivePassthrough）上
             // 任何 seek 都静默忽略——不进 SEEKING、不改段基准、不回调。理由：直通路径的
             // 重放走 packetAt(0) 的 av_seek_frame，LIVE 上必然失败且错误被 hls 洗成裸 -1
             // → nullptr → 会把「拖回 0」误变曲目结束（EOS）。公开契约不动：durationMs==0
             // && pos>0 的空操作已由 MusicPlayer 层 pos > durationMs 保证（一字不动），
             // 这里补的是 pos==0 穿透后的实现层短路，不是改 §7 公开契约。
-            if (m_durationMs == 0 && m_extractor != nullptr
-                && m_extractor->supportsLiveReconnect()) {
+            if (isLivePassthrough()) {
                 continue;
             }
             m_state.store(StreamDecoderState::SEEKING);
@@ -1085,8 +1083,7 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
             int readErr = 0;
             const bool hasDiag = (m_extractor != nullptr)
                 && m_extractor->consumeLastReadError(&readErr);
-            if (hasDiag && m_durationMs == 0 && m_extractor != nullptr
-                && m_extractor->supportsLiveReconnect()
+            if (hasDiag && isLivePassthrough()
                 && readErr != AVERROR_EXIT && readErr != AVERROR_INVALIDDATA) {
                 const ReconnectResult rc = reconnectForLive(cursor, decode);
                 if (rc == kReconnectResumed) {
@@ -1171,7 +1168,7 @@ AudioStreamDecoder::reconnectForLiveCore()
         // 尝试计数仪表（规格 §10.2 事件计数判据的取数点，票 #159）：计数的是
         // 「真正走到重开一步」的尝试（等待期被打断的不计）。预算破坏（改常数 /
         // 去掉计数）用它直接变红，不受 FFmpeg read_data 吞错重试 burst 干扰。
-        m_reconnectAttempts.fetch_add(1, std::memory_order_relaxed);
+        m_reconnectAttempts.fetch_add(1, std::memory_order_release);
 
         // 无状态重开原语（D1）：open 失败 = 本次重连失败，计入预算，不进 EOS、
         // 不重发回调（#155：两个失败面共用同一预算）。
@@ -1180,13 +1177,19 @@ AudioStreamDecoder::reconnectForLiveCore()
             continue;
         }
 
-        // 规格一致性准入（D5）：重开后 AudioSpec / codecID / durationMs 与首次 open
-        // 一致才成功；不一致（码率 / 编解码器切换、LIVE 转 VOD）判本次重连失败、
-        // 计入预算，不做隐式规格切换——保住 duration()==0 不变与 position 单调（D12）。
+        // 规格一致性准入（D5/§5.4）：重开后的流身份（codec + AudioSpec 身份字段 +
+        // 标称时长）与首次 open 一致才成功；不一致（码率 / 编解码器切换、LIVE 转
+        // VOD）判本次重连失败、计入预算，不做隐式规格切换——保住 duration()==0
+        // 不变与 position 单调（D12）。samples 是长度估计不是流身份，不比对；
+        // extradata 需要提取器新增访问 API（HLS AAC-in-TS 带内 ADTS 场景收益
+        // 有限），登记图外（票 #158 comment）。
         const AudioSpec spec = m_extractor->getAudioSpec();
         if (m_extractor->getAudioCodecID() != m_codecID
             || spec.sampleRate != m_srcSpec.sampleRate
+            || spec.format != m_srcSpec.format
             || spec.numChannel != m_srcSpec.numChannel
+            || spec.bitsPerSample != m_srcSpec.bitsPerSample
+            || spec.bytesPerSample != m_srcSpec.bytesPerSample
             || spec.durationMs != m_srcSpec.durationMs) {
             LOGW("live reconnect attempt %d: spec mismatch, counted as failed", attempt + 1);
             continue;

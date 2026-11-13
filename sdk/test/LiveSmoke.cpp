@@ -120,6 +120,7 @@ const StreamDecoderState kDecoderErrorState = StreamDecoderState::ERROR;
 #pragma pop_macro("ERROR")
 
 // 稳态观察器：边排空 ring 边采样状态 / 错误 / 位置 / 时长（LiveWatch 同形）。
+// 另记录状态迁移序列（§10.2：判据输出 = 事件计数 + 回调序列 + 有限时间返回）。
 struct SmokeWatch {
     AudioRingBuffer &ring;
     AudioStreamDecoder &decoder;
@@ -128,6 +129,8 @@ struct SmokeWatch {
     bool sawEosOrSeeking = false;
     bool posRegressed = false;
     uint64_t maxPosMs = 0;
+    std::vector<std::string> stateLog;   // 观察到的状态迁移序列（去重连续重复项）
+    int errorCodeAtError = -1;           // 首次进入 ERROR 时的错误码值
 
     SmokeWatch(AudioRingBuffer &r, AudioStreamDecoder &d) : ring(r), decoder(d) { }
 
@@ -139,16 +142,43 @@ struct SmokeWatch {
             if (ring.read(buf, once) == 0) break;
         }
         const StreamDecoderState st = decoder.state();
+        const char *name = "ERROR";
         if (st == kDecoderErrorState) {
             sawError = true;
-        } else if (st != StreamDecoderState::DECODING) {
+            if (errorCodeAtError < 0) {
+                errorCodeAtError = static_cast<int>(decoder.errorCode());
+            }
+        } else if (st == StreamDecoderState::DECODING) {
+            name = "DECODING";
+        } else if (st == StreamDecoderState::SEEKING) {
+            name = "SEEKING";
             sawEosOrSeeking = true;
+        } else if (st == StreamDecoderState::EOS) {
+            name = "EOS";
+            sawEosOrSeeking = true;
+        } else {
+            name = "IDLE";
         }
+        if (stateLog.empty() || stateLog.back() != name) stateLog.push_back(name);
         const uint64_t p = decoder.positionMs();
         if (p < maxPosMs) posRegressed = true;
         if (p > maxPosMs) maxPosMs = p;
     }
 };
+
+// 回调序列输出（§10.2）：打印观察到的状态迁移序列与终局错误码。
+void printStates(const char *scenario, const SmokeWatch &watch)
+{
+    std::fprintf(stderr, "[smoke]   states(%s):", scenario);
+    for (std::vector<std::string>::const_iterator it = watch.stateLog.begin();
+         it != watch.stateLog.end(); ++it) {
+        std::fprintf(stderr, " %s", it->c_str());
+    }
+    if (watch.errorCodeAtError >= 0) {
+        std::fprintf(stderr, " (errorCode=%d)", watch.errorCodeAtError);
+    }
+    std::fprintf(stderr, "\n");
+}
 
 // 稳态窗口：播放 wallSeconds 墙钟时间，逐 tick 采样。返回结束时的观察器。
 // 场景时长是场景本身（无限流「不主动结束」的定义域），不是墙钟数值断言。
@@ -214,6 +244,7 @@ int main()
         check(decoder.liveReconnectAttempts() == 0, "zero reconnects in steady state");
         check(server.failCount() == 0, "zero injected failures");
         check(decoder.state() == StreamDecoderState::DECODING, "still DECODING at 8s");
+        printStates("live-steady", watch);
         printCounts("live-steady", decoder, server, "/live");
 
         // ── 场景 3 前置：就用这条稳态流做 stop() 有限时间返回（D20 终止路径）。
@@ -226,6 +257,7 @@ int main()
         check(stopStatus == std::future_status::ready, "stop() returned within 5s guard");
         check(decoder.state() == StreamDecoderState::IDLE, "state IDLE after stop()");
         check(decoder.positionMs() >= posAtStop, "position not reset by stop");
+        printStates("live-stop", watch);
         printCounts("live-stop", decoder, server, "/live");
     }
 
@@ -254,6 +286,7 @@ int main()
         check(watch.posRegressed == false, "position monotonic");
         check(watch.maxPosMs >= 1000, "position advanced (supply flowing)");
         check(decoder.state() == StreamDecoderState::DECODING, "still DECODING at 8s");
+        printStates("icy-steady", watch);
         printCounts("icy-steady", decoder, server, "/stream");
 
         decoder.stop();

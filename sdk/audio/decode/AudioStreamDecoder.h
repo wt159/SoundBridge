@@ -65,8 +65,10 @@ public:
     // P3 重连状态机的事件计数仪表（规格 §10.2 事件计数判据的取数点，票 #159）：
     // 只统计「真正走到重开一步」的尝试（等待期被打断的不计）。它是仪表而非能力位，
     // 供判据套件验证「预算 = 3 次尝试」不被破坏，不受 FFmpeg read_data 吞错重试
-    // 在 mock 侧产生的请求 burst 干扰。
-    int liveReconnectAttempts() const { return m_reconnectAttempts.load(std::memory_order_relaxed); }
+    // 在 mock 侧产生的请求 burst 干扰。内存序：写侧 release / 读侧 acquire
+    // （AGENTS.md 测试钩子纪律）；归属解码线程是规格指定（§5.3 状态机归解码线程），
+    // 与「钩子不落解码线程」的偏离已登记票面。
+    int liveReconnectAttempts() const { return m_reconnectAttempts.load(std::memory_order_acquire); }
 
     // 四个观测点的快照（规格第 5 节 / 票面 #56）。它们是仪表，不是判据：
     // 本票只要求可读、可复现，不在这里对任何数值判红绿。
@@ -121,6 +123,13 @@ private:
     // 预算 + 无状态重开 + 规格一致性准入（两条供给分支共用）。返回 Resumed 时
     // 提取器已重开成功且规格一致，但游标/解码器重建由调用分支各自完成。
     ReconnectResult reconnectForLiveCore();
+    // 直通提取器上的 LIVE 判定（§5.3 / D2）：durationMs==0 单一信号 + 提取器支持
+    // 无状态重开。两条供给分支的诊断入口与 seek 短路共用同一谓词。
+    bool isLivePassthrough() const
+    {
+        return m_durationMs == 0 && m_extractor != nullptr
+            && m_extractor->supportsLiveReconnect();
+    }
     // ffmpeg 逐包分支的包装：core + cursor 重建 + ffmpeg packet decoder 重建。
     ReconnectResult reconnectForLive(std::unique_ptr<PacketCursor> &cursor,
                                      std::unique_ptr<AudioDecode> &decode);
