@@ -258,11 +258,14 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());
     std::shared_ptr<DataSource> source;
-    // P2-1（issue #144 / #143 契约 §2/§4）：http(s) 分派加一级清单内容判定。
+    // P2-1→P3（issue #144/#152 / 规格 §9）：http(s) 分派加一级清单内容判定。
     // .m3u8 与其余 http URL 由 UrlSource 构造期一次性头部嗅探做内容层判定：
-    //   命中 m3u8 + VOD 特征（ENDLIST / PLAYLIST-TYPE:VOD）→ UrlSource 直通路径；
-    //   命中清单但无 VOD 特征（LIVE / 伪清单）→ 分派失败明确拒绝，不回退；
-    //   嗅探失败 / 非清单内容 → 维持 P0 二选一（HttpSource 扩展名/探测层拒绝）。
+    //   VOD 特征（ENDLIST / PLAYLIST-TYPE:VOD）→ UrlSource 直通路径（现状不动）；
+    //   LIVE 正面特征（#EXTM3U + 无 ENDLIST/VOD + 至少一条分片/variant 行，
+    //   EVENT 归 LIVE，D17/D18）→ UrlSource 直通路径放行，durationMs==0；
+    //   伪清单 / 坏清单 → 分派失败明确拒绝，不回退；
+    //   嗅探失败 / 非清单内容 → P0 二选一（HttpSource 探测层），探测命中 Icy-*
+    //   时改走原生 URL 层直通（D19：明确拒绝自定义 AVIO 路径，不静默回退）。
     // .mpd（P4 未重开）与 https:// 维持 P0 网络外拒绝（requestCount()==0 判据不动）。
     std::string extractorExtension = fileProperties.extensionName;
     const bool isHttp = musicPath.rfind("http://", 0) == 0;
@@ -270,21 +273,47 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     if (isHttp && !UrlSource::isMpdExtensionUrl(musicPath)) {
         UrlSource *urlSource = new UrlSource(musicPath.c_str());
         if (urlSource->initCheck() == OK && urlSource->headLooksLikePlaylist()) {
-            if (urlSource->headHasVodFeatures()) {
+            if (urlSource->headHasVodFeatures() || urlSource->headLooksLikeLivePlaylist()) {
                 source.reset(urlSource);
-                // 清单内容已确认为 m3u8：按内容走注册表，不用 URL 上的扩展名。
+                // 清单内容已确认为 m3u8（VOD 或 LIVE/EVENT 直通）：按内容走注册表，
+                // 不用 URL 上的扩展名；LIVE 的无限流语义由解码线程状态机承接。
                 extractorExtension = "m3u8";
             } else {
+                // 伪清单 / 坏清单（#EXTM3U 起始但不满足 VOD 或 LIVE 正面特征集）：
+                // 明确拒绝不回退（规格 §9.1：防止空清单无限重试）。
                 delete urlSource;
                 recordScanRejection(ErrorCode::FileOpenFailed);
                 reportError(ErrorCode::FileOpenFailed,
-                            "playlist content has no VOD features (LIVE rejected)",
+                            "playlist content has neither VOD nor LIVE features",
                             musicProperties);
                 return;
             }
         } else {
             delete urlSource;
-            source.reset(new HttpSource(musicPath.c_str()));
+            HttpSource *httpSource = new HttpSource(musicPath.c_str());
+            if (httpSource->initCheck() != OK && httpSource->icyDetected()) {
+                // P3 ICY（#152 D19）：探测命中 Icy-* → 这是无限直播流，明确拒绝
+                // 自定义 AVIO 路径（要求已知长度 + Range/206），改走原生 URL 层
+                // 直通提取器（avformat_open_input 自动探测 demuxer，复用同一
+                // 诊断旁路），不静默回退。
+                delete httpSource;
+                UrlSource *icySource = new UrlSource(musicPath.c_str());
+                if (icySource->initCheck() == OK) {
+                    source.reset(icySource);
+                    // 按内容映射注册键：ICY 不带 .m3u8 扩展名，直通提取器靠
+                    // 自动探测承载（HlsExtractor 的 P3 直通职能）。
+                    extractorExtension = "m3u8";
+                } else {
+                    delete icySource;
+                    recordScanRejection(ErrorCode::FileOpenFailed);
+                    reportError(ErrorCode::FileOpenFailed,
+                                "icy source native url open failed",
+                                musicProperties);
+                    return;
+                }
+            } else {
+                source.reset(httpSource);
+            }
         }
     } else if (isHttp || isHttps) {
         source.reset(new HttpSource(musicPath.c_str()));

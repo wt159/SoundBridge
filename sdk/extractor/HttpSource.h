@@ -20,6 +20,11 @@ public:
     virtual std::string toString() { return m_name; }
     virtual void close();
 
+    // P3（#152 D19）：探测期是否命中 Icy-* 响应头。initCheck != OK 时可查：
+    // true = 这是无限直播流，分派层据此把结论从拒绝改走原生 URL 层直通。
+    // P0 三次探测 / 206 / Accept-Ranges / 总长判据本身一字不动。
+    bool icyDetected() const { return m_icyDetected; }
+
 private:
     bool probe();
 
@@ -30,5 +35,6 @@ private:
     off64_t m_total;
     sdk_utils::status_t m_initCheck;
     bool m_wsaHeld;
+    bool m_icyDetected;
     std::mutex m_lock;
 };

@@ -173,6 +173,30 @@ public:
     // 解码器在 EOS 汇总处据此报 DataTruncated（规格 3.2「能判定短读时」/ 条目 23）。
     virtual bool isDataTruncated() const { return false; }
 
+    // —— P3 直通源生命周期接口（doc/live-source-spec.md §5/§6，ADR 0006 / 0007）——
+    // 三者都是 sdk 内部面（ExtractorHelper 本就不在公开 API 里），默认 no-op：
+    // 本地提取器与 HttpSource 直读路径不经此口，解码侧按 false 分流回既有路径。
+    //
+    // 诊断旁路（#151 / ADR 0006）：返回最近一次 av_read_frame 负返回并**消费一次失效**。
+    // 不是第二个层间单元——包仍是唯一层间单元，packetAt 的 nullptr 语义不扩展；
+    // 三条生命周期不变量：open 置无失败 / 任一成功读包即清零 / 消费一次失效。
+    // 返回 false 表示本提取器无诊断（调用方按既有 EOS 汇总处置）。
+    virtual bool consumeLastReadError(int *outError)
+    {
+        if (outError != nullptr) *outError = 0;
+        return false;
+    }
+
+    // 无状态重开原语（#149 / ADR 0007）：closeFmt + open，从新滑动窗口头顺序迭代。
+    // 不持预算、不 sleep、不重试、不判可解性——预算与等待在解码线程状态机里。
+    // 返回 false = 本提取器不支持重开或本次 open 失败（调用方计入重连预算）。
+    virtual bool reopenConnection() { return false; }
+
+    // 直通 / 无限流形态支持性（与重开能力同源同一提取器）：seek 归零例外在无限流上
+    // 静默短路的判据（#153 D21），也是解码侧「单一入口」进重连通道的前提。
+    // sdk 内部判据，不是 player.h 公开能力位（#75 §7 不引入 isSeekable()）。
+    virtual bool supportsLiveReconnect() const { return false; }
+
 protected:
     ExtractorHelper() { }
 

@@ -158,6 +158,7 @@ set(UNIT_TEST_SOURCES
     unit/test_bad_input.cpp
     unit/test_streaming_budget.cpp
     unit/test_http_source.cpp
+    unit/test_live_source.cpp
 )
 
 add_executable(UnitTests ${UNIT_TEST_SOURCES})
@@ -249,6 +250,40 @@ set_tests_properties(sdk_interaction_tests PROPERTIES
     # 真实音频设备 + 真实文件，单独一组：设备打不开或播放卡住都不连累快集。
     # 2026-11-07 实测 14 例 / 11.8 s（含播放位置推进对真实时间的等待），180 s 给足余量。
     TIMEOUT 180)
+
+# ============================================================
+# LiveSmoke（票 #159 / live-source-spec.md §10.2 D23）：P3 直播源手工冒烟。
+# 独立可执行，**不注册 add_test**（D23：本地 LIVE/ICY 正路径不进 CI 门禁，
+# 不新增 ctest 目标与耗时 gate）；由人在本机运行，判据 = 事件计数 + 回调
+# 序列 + stop() 有限时间返回。素材全本地 mock，公网零依赖。
+# ============================================================
+add_executable(LiveSmoke
+    LiveSmoke.cpp
+)
+
+target_link_libraries(LiveSmoke
+    PRIVATE
+    # 顺序敏感：LiveSmoke.cpp 不直接引用 AudioResample，静态库单遍扫描下
+    # AudioResample.a 必须排在 AudioDecode.a 之后（AudioStreamDecoder 的
+    # createResampler/resample 符号由它满足）。
+    sdk
+    LogWrapper
+    Extractor
+    AudioDecode
+    AudioResample
+    utils
+    Threads::Threads
+)
+
+if(WIN32)
+    target_link_libraries(LiveSmoke PRIVATE ws2_32)
+endif()
+
+target_include_directories(LiveSmoke
+    PRIVATE
+    ${SDK_TEST_COMMON_INCLUDES}
+)
+
 
 # ============================================================
 # Coverage Report Targets (Linux only, gated by root CMakeLists.txt)

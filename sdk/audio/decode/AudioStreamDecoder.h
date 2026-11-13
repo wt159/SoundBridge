@@ -62,6 +62,12 @@ public:
     sdk::ErrorCode errorCode() const;
     std::string errorDetail() const;
 
+    // P3 重连状态机的事件计数仪表（规格 §10.2 事件计数判据的取数点，票 #159）：
+    // 只统计「真正走到重开一步」的尝试（等待期被打断的不计）。它是仪表而非能力位，
+    // 供判据套件验证「预算 = 3 次尝试」不被破坏，不受 FFmpeg read_data 吞错重试
+    // 在 mock 侧产生的请求 burst 干扰。
+    int liveReconnectAttempts() const { return m_reconnectAttempts.load(std::memory_order_relaxed); }
+
     // 四个观测点的快照（规格第 5 节 / 票面 #56）。它们是仪表，不是判据：
     // 本票只要求可读、可复现，不在这里对任何数值判红绿。
     // 线程安全：可从消费线程读取，不影响解码线程。
@@ -106,6 +112,18 @@ private:
     // 编解码器；seek 按「顺序重放」重建解码器并从包序列起点重新迭代（#49 第二档）。
     std::unique_ptr<AudioDecode> createFfmpegPacketDecoder();
     void runFfmpegPacketLoop();
+    // P3 重连状态机（doc/live-source-spec.md §5，#149/#150 / ADR 0007）：解码线程持有
+    // 全部预算与等待逻辑；提取器只执行无状态重开原语。返回值三态：
+    //   kReconnectResumed    —— 重开成功且规格一致，已换新游标与新解码器，续播；
+    //   kReconnectExhausted  —— 3 次重开全部失败（预算耗尽，唯一终局出口）；
+    //   kReconnectInterrupted —— stop / 取消 / 新 seek 中断等待或重开，静默回主循环。
+    enum ReconnectResult { kReconnectResumed, kReconnectExhausted, kReconnectInterrupted };
+    // 预算 + 无状态重开 + 规格一致性准入（两条供给分支共用）。返回 Resumed 时
+    // 提取器已重开成功且规格一致，但游标/解码器重建由调用分支各自完成。
+    ReconnectResult reconnectForLiveCore();
+    // ffmpeg 逐包分支的包装：core + cursor 重建 + ffmpeg packet decoder 重建。
+    ReconnectResult reconnectForLive(std::unique_ptr<PacketCursor> &cursor,
+                                     std::unique_ptr<AudioDecode> &decode);
     bool writeDecodedBytes(const char *pcm, size_t pcmSize);
     // 按当前的 m_srcSpec / m_devSpec 造一个重采样器；失败返回 nullptr。
     std::shared_ptr<AudioResample> createResampler();
@@ -160,6 +178,8 @@ private:
     std::atomic<bool> m_abortDecode;
     // 仅在控制线程（start / stop）写：记录本次注入的数据源，stop 时解绑避免悬垂。
     DataSourceBase *m_abortSource;
+    // P3 重连状态机的尝试计数（见 liveReconnectAttempts()），解码线程写、任意线程读。
+    std::atomic<int> m_reconnectAttempts;
 
     // EOS 汇总的计量：解码产出的**源格式**帧数与采样率。
     // 刻意不复用 positionMs() 背后的段基准 / ring 读计数——那两处只回答「消费端走到哪」，

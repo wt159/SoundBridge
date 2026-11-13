@@ -28,11 +28,17 @@ public:
     // 构造期头部嗅探结果（内容层判定，#143 契约 §2）：
     // headLooksLikePlaylist —— 跳过 BOM/空白后以 #EXTM3U / <?xml 起始；
     // headHasVodFeatures    —— 含 #EXT-X-ENDLIST 或 #EXT-X-PLAYLIST-TYPE:VOD。
+    // headLooksLikeLivePlaylist —— P3 LIVE 正面特征集（#152 D17）：#EXTM3U 起始
+    //   （<?xml 归 .mpd / P4 拒绝，不放行）+ 无 ENDLIST + 无 PLAYLIST-TYPE:VOD
+    //   + 至少一条分片 / variant 行（#EXTINF 或 #EXT-X-STREAM-INF）。
+    //   PLAYLIST-TYPE:EVENT 归 LIVE 放行（#152 D18，已更正 #143 一条结论）。
     // master playlist（#EXT-X-STREAM-INF，本身无 ENDLIST）跟随首个 variant URI
-    // 复查一次，VOD/LIVE 语义落在 media playlist 层；variant 取回失败按无
-    // VOD 特征处理（语义保守）。
+    // 复查一次，语义是「判形态」（#152 / 规格 §9.3）：variant 有 VOD 特征 → VOD；
+    // 仍无 ENDLIST / VOD → LIVE 放行；variant 取回失败 / 无法解析 → 明确拒绝
+    // （不静默回退、不按「保守归 LIVE」放行）。
     bool headLooksLikePlaylist() const { return m_headPlaylist; }
     bool headHasVodFeatures() const { return m_headVod; }
+    bool headLooksLikeLivePlaylist() const { return m_headLive; }
 
     // 扩展名层清单判定：URL 路径（剥 query/fragment）以 .m3u8 / .mpd 结尾。
     // 与 HttpSource 内部的 isPlaylistExtension 同一语义。
@@ -53,5 +59,6 @@ private:
     std::vector<uint8_t> m_head;
     bool m_headPlaylist;
     bool m_headVod;
+    bool m_headLive;
     sdk_utils::status_t m_initCheck;
 };

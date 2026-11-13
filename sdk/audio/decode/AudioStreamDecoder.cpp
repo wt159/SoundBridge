@@ -2,6 +2,11 @@
 #include "FLACDecode.h"
 #include "LogWrapper.h"
 #include "VorbisDecode.h"
+// P3 单一入口的负返回分类（#151 §6.3）：AVERROR_EXIT / AVERROR_EOF /
+// AVERROR_INVALIDDATA 逐字来自 liberror.h；诊断旁路的 int 值即 av_read_frame 返回值。
+extern "C" {
+#include "libavutil/avutil.h"
+}
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -41,6 +46,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_bytesPerMs(0)
     , m_abortDecode(false)
     , m_abortSource(nullptr)
+    , m_reconnectAttempts(0)
     , m_decodedFrames(0)
     , m_decodedRate(0)
     , m_pcmFrameBytes(0)
@@ -115,6 +121,7 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_packetHeldBytes = 0;
     m_packetsPulled.store(0);
     m_packetsPulledAtFirstPcm.store(0);
+    m_reconnectAttempts.store(0);
     m_firstPcmNoted = false;
 
     m_errorCode.store(sdk::ErrorCode::Ok);
@@ -674,9 +681,17 @@ void AudioStreamDecoder::threadFunc()
         PacketCursor cursor(m_extractor);
         AudioBuffer::AudioBufferPtr packet;
         while (!m_stopRequest.load()) {
-            const int64_t seekMs = m_seekRequestMs.exchange(-1);
-            if (seekMs >= 0) {
-                m_state.store(StreamDecoderState::SEEKING);
+        const int64_t seekMs = m_seekRequestMs.exchange(-1);
+        if (seekMs >= 0) {
+            // P3 归零例外的实现层短路（#153 D21）——与 runFfmpegPacketLoop 的 seek
+            // 分支同判：无限流（durationMs==0 且直通提取器）上任何 seek 都静默忽略，
+            // 不进 SEEKING、不改段基准。cursor.rewind() 在 LIVE 上会走 packetAt(0)
+            // 的 av_seek_frame，必败且错误被 hls 洗成裸 -1 → 会把「拖回 0」误变 EOS。
+            if (m_durationMs == 0 && m_extractor != nullptr
+                && m_extractor->supportsLiveReconnect()) {
+                continue;
+            }
+            m_state.store(StreamDecoderState::SEEKING);
                 std::this_thread::sleep_for(std::chrono::milliseconds(12));
                 // 位置口径与丢弃口径与通用分支一致：ring 里放的是「写进去的那一档」PCM，
                 // m_seekDiscardBytes 数的是重采样之前的源格式 PCM，两者不互相换算。
@@ -702,6 +717,33 @@ void AudioStreamDecoder::threadFunc()
             }
 
             if (!cursor.nextPacket(packet)) {
+                // P3 单一入口（与 runFfmpegPacketLoop 同构，#149 D2 / #151 D11 / ADR 0006）：
+                // EOS 之前先查一次诊断旁路（消费即失效）。LIVE（durationMs==0 单一信号）
+                // 上 EOF = 供给停滞、EIO / HTTP 错 = 数据源层失败，都进重连通道；
+                // AVERROR_EXIT = 取消；AVERROR_INVALIDDATA = 内容层坏数据，仍交 EOS
+                // 汇总兜底（ADR 0002 不动）。VOD（durationMs>0）与无诊断提取器落到
+                // 下方既有 EOS 收场，行为与今天逐字一致（D14：都记、只由消费侧分流）。
+                int readErr = 0;
+                const bool hasDiag = (m_extractor != nullptr)
+                    && m_extractor->consumeLastReadError(&readErr);
+                if (hasDiag && m_durationMs == 0 && m_extractor != nullptr
+                    && m_extractor->supportsLiveReconnect()
+                    && readErr != AVERROR_EXIT && readErr != AVERROR_INVALIDDATA) {
+                    const ReconnectResult rc = reconnectForLiveCore();
+                    if (rc == kReconnectResumed) {
+                        // 重连静默成功（D6）：零回调、零状态变化。reopenConnection 已把
+                        // 提取器 m_consumed 归零，rewind 即从新窗口的头重新顺序迭代。
+                        cursor.rewind();
+                        continue;
+                    }
+                    if (rc == kReconnectExhausted) {
+                        // 预算耗尽是唯一终局出口（D20/D9）：沿用既有 FileOpenFailed。
+                        setError(sdk::ErrorCode::FileOpenFailed,
+                                 "live source reconnect budget exhausted");
+                        break;
+                    }
+                    continue;   // Interrupted：stop / 取消 / 新 seek，回主循环头处置
+                }
                 if (m_stopRequest.load() || m_abortDecode.load()) {
                     break;   // P1：取消导致的读中断不是 EOS，不触发曲目结束序列
                 }
@@ -978,6 +1020,16 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
     for (;;) {
         const int64_t seekMs = m_seekRequestMs.exchange(-1);
         if (seekMs >= 0) {
+            // P3 归零例外的实现层短路（#153 D21）：无限流（durationMs==0 且直通提取器）上
+            // 任何 seek 都静默忽略——不进 SEEKING、不改段基准、不回调。理由：直通路径的
+            // 重放走 packetAt(0) 的 av_seek_frame，LIVE 上必然失败且错误被 hls 洗成裸 -1
+            // → nullptr → 会把「拖回 0」误变曲目结束（EOS）。公开契约不动：durationMs==0
+            // && pos>0 的空操作已由 MusicPlayer 层 pos > durationMs 保证（一字不动），
+            // 这里补的是 pos==0 穿透后的实现层短路，不是改 §7 公开契约。
+            if (m_durationMs == 0 && m_extractor != nullptr
+                && m_extractor->supportsLiveReconnect()) {
+                continue;
+            }
             m_state.store(StreamDecoderState::SEEKING);
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
             applySegmentBase(static_cast<uint64_t>(seekMs));
@@ -1022,6 +1074,36 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
 
         AudioBuffer::AudioBufferPtr packet;
         if (!cursor->nextPacket(packet)) {
+            // P3 单一入口（#149 D2 / #151 D11 / ADR 0006）：flush 之前先查一次诊断旁路
+            // （消费即失效）。LIVE（durationMs==0 单一信号，#151 D12）上 EOF = 供给停滞、
+            // EIO / HTTP 错 = 数据源层失败，都进重连通道；AVERROR_EXIT = 取消（不重连）；
+            // AVERROR_INVALIDDATA = 内容层坏数据，仍交播放期 EOS 汇总（ADR 0002 不动）。
+            // VOD（durationMs>0）与无诊断提取器 hasDiag=false → 落到下方既有 EOS 汇总，
+            // 行为与今天逐字一致（D14：都记、只由消费侧分流）。
+            // 取消检查优先级高于任何分类：stop / abort 的 break 在下方既有检查点，
+            // 不产生第二条取消通道。
+            int readErr = 0;
+            const bool hasDiag = (m_extractor != nullptr)
+                && m_extractor->consumeLastReadError(&readErr);
+            if (hasDiag && m_durationMs == 0 && m_extractor != nullptr
+                && m_extractor->supportsLiveReconnect()
+                && readErr != AVERROR_EXIT && readErr != AVERROR_INVALIDDATA) {
+                const ReconnectResult rc = reconnectForLive(cursor, decode);
+                if (rc == kReconnectResumed) {
+                    continue;   // 重连静默成功（D6）：零回调、零状态变化，继续按已消费 PCM 推进
+                }
+                if (rc == kReconnectExhausted) {
+                    // 预算耗尽是唯一终局出口（D20/D9）：沿用既有 FileOpenFailed →
+                    // error → state，不新增错误码、不逐次上报重试失败。
+                    setError(sdk::ErrorCode::FileOpenFailed,
+                             "live source reconnect budget exhausted");
+                    break;
+                }
+                // kReconnectInterrupted：stop / 取消 / 新 seek —— 静默回主循环头，
+                // 由既有检查处置（stop → break；seek → 取槽处理）。
+                continue;
+            }
+
             // 序列耗尽：先清掉编解码器内部延迟，再做 EOS 汇总。
             const int flushRet = decode->flushDecode();
             if (m_stopRequest.load()) {
@@ -1057,4 +1139,81 @@ void AudioStreamDecoder::runFfmpegPacketLoop()
             break;
         }
     }
+}
+
+AudioStreamDecoder::ReconnectResult
+AudioStreamDecoder::reconnectForLiveCore()
+{
+    // P3 重连状态机（doc/live-source-spec.md §5.2/§5.3，#149/#150 / ADR 0007）：
+    // 状态机（预算、等待、终局）归解码线程；提取器只执行无状态重开原语。
+    // 本函数只做预算 + 重开 + 规格一致性准入，不含分支重建（调用方各自完成）。
+    //
+    // 预算（D8/D9，策略参数非 CI 门禁阈值）：有限重连 3 次、每次尝试前固定等待
+    // 1 s（100 ms 分片 ×10，轮询取消，不裸 sleep）、单次窗口 ≤4 s（1 s 等待 +
+    // 3 s rw_timeout 墙钟 + O(1) 一致性判定）、总预算 ≤12 s（含重开窗口）。
+    // 第 3 次失败即耗尽，没有额外最后一次。
+    // 停止上界（D10）：stop() 的唯一硬保证是 100 ms 取消粒度——等待期由分片轮询
+    // 打断；avformat_open_input / find_stream_info 的阻塞由同一 interrupt_callback
+    // 打断（rw_timeout=3s 是播放主路径唯一墙钟，#155 D15）。总预算不是 stop 上界。
+    // 不托管 FFmpeg 原生 reconnect*（D4）：预算不可计量、取消不可打断、hls 不下传。
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        // 1 s 固定间隔：100 ms 分片 ×10，取消 / 新 seek 随时可打断（不裸 sleep）。
+        for (int slice = 0; slice < 10; ++slice) {
+            if (m_stopRequest.load() || m_abortDecode.load()
+                || m_seekRequestMs.load() >= 0) {
+                return kReconnectInterrupted;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (m_stopRequest.load() || m_abortDecode.load()) {
+            return kReconnectInterrupted;
+        }
+        // 尝试计数仪表（规格 §10.2 事件计数判据的取数点，票 #159）：计数的是
+        // 「真正走到重开一步」的尝试（等待期被打断的不计）。预算破坏（改常数 /
+        // 去掉计数）用它直接变红，不受 FFmpeg read_data 吞错重试 burst 干扰。
+        m_reconnectAttempts.fetch_add(1, std::memory_order_relaxed);
+
+        // 无状态重开原语（D1）：open 失败 = 本次重连失败，计入预算，不进 EOS、
+        // 不重发回调（#155：两个失败面共用同一预算）。
+        if (!m_extractor->reopenConnection()) {
+            LOGW("live reconnect attempt %d: reopen failed", attempt + 1);
+            continue;
+        }
+
+        // 规格一致性准入（D5）：重开后 AudioSpec / codecID / durationMs 与首次 open
+        // 一致才成功；不一致（码率 / 编解码器切换、LIVE 转 VOD）判本次重连失败、
+        // 计入预算，不做隐式规格切换——保住 duration()==0 不变与 position 单调（D12）。
+        const AudioSpec spec = m_extractor->getAudioSpec();
+        if (m_extractor->getAudioCodecID() != m_codecID
+            || spec.sampleRate != m_srcSpec.sampleRate
+            || spec.numChannel != m_srcSpec.numChannel
+            || spec.durationMs != m_srcSpec.durationMs) {
+            LOGW("live reconnect attempt %d: spec mismatch, counted as failed", attempt + 1);
+            continue;
+        }
+        LOGI("live reconnect attempt %d: reopened and admitted", attempt + 1);
+        return kReconnectResumed;
+    }
+    return kReconnectExhausted;
+}
+
+AudioStreamDecoder::ReconnectResult
+AudioStreamDecoder::reconnectForLive(std::unique_ptr<PacketCursor> &cursor,
+                                     std::unique_ptr<AudioDecode> &decode)
+{
+    // ffmpeg 逐包分支（mp3 / aac 等）的重连包装：core 通过后重建包游标与解码器
+    // （复用 seek 分支的现成写法）。PCM 逐包分支（wav / aiff）在同文件内直接调
+    // reconnectForLiveCore + cursor.rewind()（重开已把提取器 m_consumed 归零）。
+    const ReconnectResult rc = reconnectForLiveCore();
+    if (rc != kReconnectResumed) {
+        return rc;
+    }
+    cursor.reset(new PacketCursor(m_extractor));
+    decode = createFfmpegPacketDecoder();
+    if (decode == nullptr) {
+        // 重建失败（实现 / 资源层病态，非网络失败面）：网络失败在 core 里已计满
+        // 预算；重建失败不重复扣预算，按耗尽终局（FileOpenFailed）。
+        return kReconnectExhausted;
+    }
+    return kReconnectResumed;
 }

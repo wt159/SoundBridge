@@ -121,6 +121,7 @@ bool UrlSource::isMpdExtensionUrl(const std::string &url)
 UrlSource::UrlSource(const char *url)
     : m_headPlaylist(false)
     , m_headVod(false)
+    , m_headLive(false)
     , m_initCheck(NO_INIT)
 {
     m_name = url ? std::string(url) : std::string("<null>");
@@ -137,8 +138,8 @@ UrlSource::UrlSource(const char *url)
         return;
     }
     m_initCheck = OK;
-    LOGI("url source ready, headBytes=%zu playlist=%d vod=%d", m_head.size(),
-         m_headPlaylist ? 1 : 0, m_headVod ? 1 : 0);
+    LOGI("url source ready, headBytes=%zu playlist=%d vod=%d live=%d", m_head.size(),
+         m_headPlaylist ? 1 : 0, m_headVod ? 1 : 0, m_headLive ? 1 : 0);
 }
 
 UrlSource::~UrlSource() { }
@@ -165,9 +166,11 @@ bool UrlSource::sniffHead()
     }
     classifyHead();
 
-    // P2-2（issue #145 / #143 契约 §2）：master playlist 本身无 ENDLIST，
-    // VOD/LIVE 语义由 variant 承载。跟随首个 variant URI 复查一次；
-    // 取回失败或 variant 无 VOD 特征都维持「无 VOD 特征」→ 拒绝（语义保守）。
+    // P3（#152 / 规格 §9.3）：master playlist 本身无 ENDLIST，VOD/LIVE 语义由
+    // variant 承载。跟随首个 variant URI 复查一次，语义是「判形态」：variant 有
+    // VOD 特征 → VOD；仍无 ENDLIST / VOD → LIVE 放行（正面特征满足时）；
+    // **取回失败 / 无法解析 → 明确拒绝**（m_headLive=false，不静默回退、
+    // 不按「保守归 LIVE」放行，依规格 §6.3 分派失败出口）。
     if (m_headPlaylist && !m_headVod && containsAscii(m_head, "#EXT-X-STREAM-INF")) {
         std::string variantUri;
         if (firstVariantUri(m_head, variantUri)) {
@@ -176,7 +179,11 @@ bool UrlSource::sniffHead()
             if (!variantUrl.empty() && fetchHead(variantUrl, variantHead)) {
                 m_head.swap(variantHead);
                 classifyHead();
+            } else {
+                m_headLive = false;
             }
+        } else {
+            m_headLive = false;
         }
     }
     return true;
@@ -239,15 +246,24 @@ void UrlSource::classifyHead()
     }
     const char *body = (const char *)m_head.data() + i;
     const size_t bodyLen = m_head.size() - i;
-    m_headPlaylist
-        = (bodyLen >= 7 && std::memcmp(body, "#EXTM3U", 7) == 0)
-          || (bodyLen >= 5 && std::memcmp(body, "<?xml", 5) == 0);
+    const bool extm3u = bodyLen >= 7 && std::memcmp(body, "#EXTM3U", 7) == 0;
+    const bool xml = bodyLen >= 5 && std::memcmp(body, "<?xml", 5) == 0;
+    m_headPlaylist = extm3u || xml;
     if (m_headPlaylist) {
-        // VOD 特征追加（#143 契约 §2）：#EXT-X-ENDLIST 或 #EXT-X-PLAYLIST-TYPE:VOD。
-        // PLAYLIST-TYPE:EVENT 有界但增长，不满足「有界窗口」定义 → 无 VOD 特征 → 拒绝。
+        // VOD 特征（#143 契约 §2）：#EXT-X-ENDLIST 或 #EXT-X-PLAYLIST-TYPE:VOD。
         m_headVod = containsAscii(m_head, "#EXT-X-ENDLIST")
                     || containsAscii(m_head, "#EXT-X-PLAYLIST-TYPE:VOD");
+        // P3 LIVE 正面特征集（#152 D17/D18）：#EXTM3U 起始 + 无 ENDLIST
+        // + 无 PLAYLIST-TYPE:VOD + 至少一条分片 / variant 行。只凭「有 EXTM3U
+        // 且无 ENDLIST」不够——会把空清单 / 伪清单 / 坏清单放进来再无限重试。
+        // PLAYLIST-TYPE:EVENT 归 LIVE 放行（D18）；<?xml 起始（.mpd/P4）不放行。
+        // 已知误判面（规格 §9.3 显式登记）：超长清单尾部 ENDLIST 嗅探不到 →
+        // VOD 误判为 LIVE；不放宽嗅探长度（会动 P2 判据数值）。
+        m_headLive = extm3u && !m_headVod
+                     && (containsAscii(m_head, "#EXTINF")
+                         || containsAscii(m_head, "#EXT-X-STREAM-INF"));
     } else {
         m_headVod = false;
+        m_headLive = false;
     }
 }

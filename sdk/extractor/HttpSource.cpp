@@ -420,6 +420,11 @@ bool doRequest(const std::string &host, const std::string &port,
                           + "Host: " + hostHeader + "\r\n"
                           + "Range: bytes=" + std::to_string((long long)start) + "-"
                           + std::to_string((long long)end) + "\r\n"
+                          // P3（#152 D19）：嗅探请求主动带 Icy-MetaData: 1（与 FFmpeg
+                          // icy=1 默认一致），消除「服务端只在收到该头才回 Icy-* →
+                          // 被当静态点播」的漏网面。静态点播服务器忽略该头，
+                          // P0 三次探测 / 206 / Accept-Ranges / 总长判据一字不动。
+                          + "Icy-MetaData: 1\r\n"
                           + "Connection: close\r\n"
                           + "\r\n";
     if (!sendAll(sock, req.data(), req.size())) {
@@ -469,7 +474,13 @@ bool doRequest(const std::string &host, const std::string &port,
             out.body.insert(out.body.end(), buf, buf + n);
         }
     } else {
-        while (true) {
+        // P3（#152 D19，票 #158）：无 Content-Length 的响应按「读到连接关闭」处理
+        // 会撞上无限直播流（ICY 端点永无 EOF）——探测把 mp3 无限读进内存直到
+        // socket 超时，15 s 都出不来。嗅探只需头部与少量 body：超过上限即停止
+        // 读取并视为取回应答。静态点播服务器的 206/200 响应恒带 Content-Length
+        // （P0 判据依赖 CL），不走此分支，行为不变。
+        const size_t kNoContentLengthBodyCap = 1024 * 1024;
+        while (out.body.size() < kNoContentLengthBodyCap) {
             if (sbAbortRequested(owner)) {
                 closeSocket(sock);
                 LOG_ERROR(LOG_TAG, "http request cancelled by abort flag");
@@ -586,7 +597,7 @@ bool verifyHeadAgain(const std::string &host, const std::string &port,
 } // namespace
 
 HttpSource::HttpSource(const char *url)
-    : m_total(-1), m_initCheck(NO_INIT), m_wsaHeld(false)
+    : m_total(-1), m_initCheck(NO_INIT), m_wsaHeld(false), m_icyDetected(false)
 {
     m_name = url ? std::string(url) : std::string("<null>");
     LOG_DEBUG(LOG_TAG, "%s", m_name.c_str());
@@ -683,7 +694,11 @@ bool HttpSource::probe()
         Response resp;
         if (!doRequest(m_host, m_port, m_path, 0, 15, resp, this)) return false;
         if (hasIcyHeader(resp.headers)) {
-            LOG_ERROR(LOG_TAG, "Icy-* header present, reject infinite stream");
+            // P3（#152 D19）：ICY 命中从「静默失败」改为「记录 + 失败」——返回值
+            // 语义不变（probe 失败 → initCheck != OK），分派层据 icyDetected() 把
+            // 结论从拒绝改走原生 URL 层直通（明确拒绝自定义 AVIO 路径，不静默回退）。
+            m_icyDetected = true;
+            LOGW("Icy-* header present: not a static VOD source, defer to native URL path");
             return false;
         }
         if (isRedirect(resp.status)) {
