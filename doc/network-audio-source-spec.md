@@ -108,6 +108,8 @@
 
 - **播放主路径未设读超时（2026-11-13，[#155](https://github.com/wt159/SoundBridge/issues/155) 实证）**：`HlsExtractor::open()` 的 opts 只有 `protocol_whitelist`，播放主路径 15 s 挂死；由图外实现 effort 在 `open()` 补 `rw_timeout=3000000`（只补它、不设 `timeout`）。重连预算归数据源层、不进播放任务状态，但它**不是超时的一种**；三层定性、`av_opt_copy(parent)` 通道与「3 s 表现为 EOF 不是超时错误」的形态限定见 [`doc/live-source-spec.md`](live-source-spec.md) §3.3 / §5.3 / §6.4。本节前三条逐字不动。
 
+- **P3 落地时点更正（2026-11-13，收口后审计补录）**：上一条「播放主路径未设读超时 / 由图外实现 effort 补 `rw_timeout`」与 §11 更正 ① 的同口径措辞均为**定稿时点快照**。P3-1 [#158](https://github.com/wt159/SoundBridge/issues/158)（提交 `efaddd3ff`，[PR #160](https://github.com/wt159/SoundBridge/pull/160)）已在 `HlsExtractor::open()` 增设 `rw_timeout=3000000`（D15 三条约束见 [`doc/live-source-spec.md`](live-source-spec.md) §6.4），播放主路径 15 s 挂死解除、该附加准入项已闭环；③「授权明确」仍属界外，按其 §10.4 七项清单由人复核归档。本节既有行、§11 表格单元格与所有判据数值 / `TIMEOUT` 一字不动。
+
 ### 5.4 与播放器状态契约的冲突与化解
 
 `doc/player-state-contract.md` §7 裁「UI 从 `duration()==0` 单一信号得知不可 seek，**不引入能力位 / `isSeekable()`**」，并列为本图 Notes 的不可推翻前提。本规格因此**不新增任何公开能力位**：§5.1 的能力表达全部收在数据源层内部，公开面继续沿用 `duration()==0`（§8.2）。这是本图唯一触碰不可推翻前提之处，已在能力模型票与公开 API 票的 resolution 中显式登记并化解，§12.2 再列一次。
@@ -216,6 +218,8 @@ URL 通过**既有播放列表字符串入口**进入，不新增 / 不修改 `s
 | **P4** | DASH VOD / LIVE | 不做 | 显式启用 dash demuxer 并评估 libxml2 依赖与 DASH-IF 授权 |
 
 **P1 / P3 更正（2026-11-13）**：上表单元格与判据一字不动，在此登记口径更正。① **P1 行**：「连接期与非播放主路径已落地，播放主路径待补」——`HttpSource` 的 socket `SO_RCVTIMEO=3s` 与 `UrlSource::fetchHead()` 的 `timeout=3000000` 已生效，但 `HlsExtractor::open()` + segment（播放主路径）**完全无效**，补 `rw_timeout` 由图外 effort 落地（[#155](https://github.com/wt159/SoundBridge/issues/155)）。② **P3 行**：「两项技术重开条件已命中」——独立连接 / 重连状态机意见与无限流 EOS / UI 语义已由 [`doc/live-source-spec.md`](live-source-spec.md) 定稿并可判定；「授权明确」按该规格 §10.4 的清单在图外闭环，本图不判「已明确」。③ **P3 不启用 FFmpeg 原生 `reconnect*` 家族，重连由自有状态机驱动**（理由三条：预算不可计量 / 取消不可打断 / hls 不下传 segment，见新规格 §5.5 与 [ADR 0007](../docs/adr/0007-reconnect-state-machine-ownership.md)）。④ `reconnectAtOffset`（`DataSource.hpp:173`）标注「**历史虚接缝，P3 不使用**」，废弃但不删、不改签名。
+
+> **时点指针**：本条更正 ① 中「补 `rw_timeout` 由图外 effort 落地」已于 P3-1 闭环，见 §5.3「P3 落地时点更正」；本条其余口径、上表单元格与判据一字不动。
 
 **图外实现 effort**：按一票一决策切票，本图只产规格与决策、不带执行；GitHub 票正文是历史留痕不改，只在需要更正的旧票上加 comment。
 

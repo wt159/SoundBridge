@@ -346,6 +346,8 @@
 
 **结论**：两项**技术**重开条件已命中，P3 实现 effort 可开工且不再需要语义裁决；③ 与附加项是**实现 effort 的准入检查项**，不是语义空白。若图外 effort 未落地这两项，P3 不得宣布整体准入。
 
+> **P3 执行落地时点注记（2026-11-13，收口后审计补录）**：§11.2 表格、本节结论、§6.4 开头「本图不执行」、§12.1 接缝清单与 §14 验收矩阵中「授权复核与 `rw_timeout` 补齐登记为图外未闭环项」均为**定稿时点的准入判定快照**（提交 `4eab701e8`），不是实现状态真源。P3 图外执行票链 [#157](https://github.com/wt159/SoundBridge/issues/157) / [#158](https://github.com/wt159/SoundBridge/issues/158) / [#159](https://github.com/wt159/SoundBridge/issues/159) 已全部 CLOSED，实现 `efaddd3ff` + 审查修复 `c39ff451e` 经 [PR #160](https://github.com/wt159/SoundBridge/pull/160) 合入 master，master push 与 PR 共 6 个 CI run 全 `success` attempt 1。**附加项「播放主路径挂死」已闭环**：`HlsExtractor::open()` 已按 D15 三条约束增设 `rw_timeout=3000000`，15 s 挂死解除；**③「授权明确」仍为界外未闭环项**，按 §10.4 七项清单由人复核归档，整体准入仍不得宣布。实现真源以 `sdk/` 与 #158 / #159 收口 comment 为准；本规格既有行、表格单元格、判据数值与 `TIMEOUT` 一字不动，[#147](https://github.com/wt159/SoundBridge/issues/147) / [#156](https://github.com/wt159/SoundBridge/issues/156) 已挂更正 comment。
+
 ## 12. 文档接缝与更正（只加指针与注记，原判据与表格一字不动）
 
 ### 12.1 接缝回填清单（在 `doc/network-audio-source-spec.md` 落地）
