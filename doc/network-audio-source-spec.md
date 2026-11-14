@@ -227,6 +227,8 @@ URL 通过**既有播放列表字符串入口**进入，不新增 / 不修改 `s
 
 **文档回填清单**：`doc/streaming-playback-spec.md` §1、`doc/bad-input-spec.md` §12、`doc/player-state-contract.md` §7 / §9、`doc/observability-contract.md` §1、`doc/format-support.md` 维护规则、`GLOSSARY.md`、`doc/开发方向建议.md`。原判据、表格与数值一字不动。
 
+> **D25 人工复核归档时点注记（2026-11-14，人工闭环后补录）**：§11 上一条「阶段表时点快照」末句「③『授权明确』仍属界外未闭环」与「P1 / P3 更正」②「本图不判『已明确』」均为定稿时点快照，不是当前状态真源。D25 七项授权复核清单已由仓库 owner（人工）于 2026-11-14 逐项复核并归档（归档载体 [#157 comment](https://github.com/wt159/SoundBridge/issues/157#issuecomment-6878511814)，#147 / #154 / #156 / #159 已挂更正 comment），P3 第三项重开条件「授权明确」**命中**；连同已落地的 P3 实现与 `rw_timeout` 补齐，**P3 整体准入阻塞解除**。**边界不变**：§10 四条规范性措辞、「无条款不得反推允许」、时点快照纪律与三档归类一字不动；本规格仍不写死任何公网 URL 与授权结论；任何具体公网电台进产品冒烟前须按 [`doc/live-source-spec.md`](live-source-spec.md) §10.4 重核并补齐「条款页 URL + 抓取日期 + 版本」，复核周期为永久流程项。既有行、表格单元格、判据数值与 `TIMEOUT` 一字不动，本条为纯新增时点注记。
+
 ## 12. 不可推翻前提核对与文档接缝
 
 ### 12.1 逐条核对
