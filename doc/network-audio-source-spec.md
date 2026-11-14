@@ -221,6 +221,8 @@ URL 通过**既有播放列表字符串入口**进入，不新增 / 不修改 `s
 
 > **时点指针**：本条更正 ① 中「补 `rw_timeout` 由图外 effort 落地」已于 P3-1 闭环，见 §5.3「P3 落地时点更正」；本条其余口径、上表单元格与判据一字不动。
 
+> **阶段表时点快照（2026-11-14，收口后审计补录）**：§11 阶段表「本版」列与 §9.2 验收矩阵「取消与超时贯通 / 尚未落地前不作为门禁」行，是**规划图定稿时点**（`8ed93dfcd`）的分阶段清单，不是实现状态看板。P1 已由 `5223bb325`…`37c7265d9` 落地、P3 已由 `efaddd3ff` + `c39ff451e` 落地（[#157](https://github.com/wt159/SoundBridge/issues/157)–[#159](https://github.com/wt159/SoundBridge/issues/159)，[PR #160](https://github.com/wt159/SoundBridge/pull/160)；播放主路径 `rw_timeout` 见 §5.3 落地时点更正），P2 行已自行登记「已做」。**表格单元格与判据一字不动**，读者按本注记理解「本版」列；③「授权明确」仍属界外未闭环，见 [`doc/live-source-spec.md`](live-source-spec.md) §10.4 / §11.2 落地时点注记。
+
 **图外实现 effort**：按一票一决策切票，本图只产规格与决策、不带执行；GitHub 票正文是历史留痕不改，只在需要更正的旧票上加 comment。
 
 **文档回填清单**：`doc/streaming-playback-spec.md` §1、`doc/bad-input-spec.md` §12、`doc/player-state-contract.md` §7 / §9、`doc/observability-contract.md` §1、`doc/format-support.md` 维护规则、`GLOSSARY.md`、`doc/开发方向建议.md`。原判据、表格与数值一字不动。
