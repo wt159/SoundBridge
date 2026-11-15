@@ -1181,8 +1181,9 @@ AudioStreamDecoder::reconnectForLiveCore()
         // 标称时长）与首次 open 一致才成功；不一致（码率 / 编解码器切换、LIVE 转
         // VOD）判本次重连失败、计入预算，不做隐式规格切换——保住 duration()==0
         // 不变与 position 单调（D12）。samples 是长度估计不是流身份，不比对；
-        // extradata 需要提取器新增访问 API（HLS AAC-in-TS 带内 ADTS 场景收益
-        // 有限），登记图外（票 #158 comment）。
+        // extradata 不参与比对：getCodecExtraData() 已有内部虚接口且已在本链路消费
+        // （config.extraData 赋值处）；#163 裁定维持界外不实现，理由是收益不足
+        // （LIVE 直通 extradata 常为空、§5.4 已有足够身份字段），非公开 API 边界。
         const AudioSpec spec = m_extractor->getAudioSpec();
         if (m_extractor->getAudioCodecID() != m_codecID
             || spec.sampleRate != m_srcSpec.sampleRate

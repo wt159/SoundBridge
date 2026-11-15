@@ -62,7 +62,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
-          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat') }}
+          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat', 'scripts/setup_windows_env.ps1') }}
           restore-keys: |
             3rdparty-win-
 
@@ -143,7 +143,9 @@ jobs:
       # 的 bin；Qt 的 bin 这个步骤用不上，留着是为了与下面的 PATH 导出清单一致。
       #
       # pipefail 下 grep 无匹配也返回 1，与 exe 起不来在日志里分不开，故先把 rc 与
-      # 输出完整落盘再筛，失败也不阻塞 PR（与 Linux 侧同名步骤的观测定位一致）。
+      # 输出完整落盘再筛，失败也不阻塞 PR。注意：Linux 侧同名步骤无
+      # continue-on-error、无 `|| true`，是门禁式留痕；本步骤是纯观测，
+      # 两者门禁属性不同（#68），原「观测定位一致」为时点误述。
       - name: Report coverage matrix numbers
         continue-on-error: true
         shell: bash
@@ -168,4 +170,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: sdk/3rdparty/dist/windows_x86_64_gcc_debug
-          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat') }}
+          key: 3rdparty-win-${{ hashFiles('sdk/3rdparty/CMakeLists.txt', 'sdk/3rdparty/build_option.cmake', 'cmake/toolchain/toolchain.windows_x86_64_mingw.cmake', 'sdk/3rdparty/ffmpeg-4.4.4/build.sh', 'sdk/3rdparty/boost_1_81_0/windows_build.bat', 'sdk/3rdparty/boost_1_81_0/bootstrap.bat', 'scripts/setup_windows_env.ps1') }}

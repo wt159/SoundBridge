@@ -24,9 +24,15 @@ on:
       - '.github/workflows/sdk-coverage.yml'
   workflow_dispatch:
 
+concurrency:
+  group: sdk-coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   coverage:
     runs-on: ubuntu-24.04
+    # 与 sdk-windows 对齐：串行冷构建留足余量，挂死不再依赖默认 360 min（#92）。
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
 

@@ -71,13 +71,16 @@ if(UNIX)
     set(SDK_TEST_LD_PATH "${3RDPARTY_DIST_DIR}/lib")
 endif()
 
+# 2026-11-15（#169）：下面 7 个 TestSdkSuite 老目标此前未显式设 TIMEOUT，依赖 CTest
+# 默认 1500 s；此处显式化为同一数值，零行为变更、不放宽，便于逐目标审计。
 add_test(
     NAME sdk_core_tests
     COMMAND ${CMAKE_COMMAND} -E env "PATH=${SDK_TEST_PATH}" $<TARGET_FILE:TestSdkSuite> core
 )
 set_tests_properties(sdk_core_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 add_test(
     NAME sdk_resample_tests
@@ -85,7 +88,8 @@ add_test(
 )
 set_tests_properties(sdk_resample_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 add_test(
     NAME sdk_decode_tests
@@ -93,7 +97,8 @@ add_test(
 )
 set_tests_properties(sdk_decode_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 add_test(
     NAME sdk_player_tests
@@ -101,7 +106,8 @@ add_test(
 )
 set_tests_properties(sdk_player_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 add_test(
     NAME sdk_all_tests
@@ -109,7 +115,8 @@ add_test(
 )
 set_tests_properties(sdk_all_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 set(SB_MEDIA_DIR "${SDK_ROOT_DIR}/../music")
 add_test(
@@ -118,7 +125,8 @@ add_test(
 )
 set_tests_properties(sdk_media_smoke PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 add_test(
     NAME sdk_extractor_spec_tests
@@ -126,7 +134,8 @@ add_test(
 )
 set_tests_properties(sdk_extractor_spec_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SDK_TEST_LD_PATH}"
+    TIMEOUT 1500)
 
 # ============================================================
 # New Unit Tests (Doctest-based)
