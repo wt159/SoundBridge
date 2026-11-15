@@ -10,11 +10,11 @@ sdk/extractor/
 ├── DataSource.hpp            # 数据源抽象（含取消信号接缝 setAbortFlag/abortRequested）
 ├── FileSource.*              # 本地文件数据源
 ├── HttpSource.*              # 网络静态点播数据源（自写 BSD socket HTTP/1.1 Range）
-├── UrlSource.*               # URL 直通数据源（FFmpeg 原生 URL 层，HLS VOD 用）
+├── UrlSource.*               # URL 直通数据源（FFmpeg 原生 URL 层；HLS VOD / LIVE / ICY 共用）
 ├── AbortInterrupt.hpp        # 取消信号 → AVERROR_EXIT 的 interrupt_callback
 ├── FileSearch.*              # 文件搜集
 ├── asf/                      # ASF/WMA/AMR 共享实现；看 asf/AGENTS.md
-├── hls/                      # HLS VOD 清单直通（原生 URL 层，不传自定义 pb）
+├── hls/                      # HLS 清单直通（VOD / LIVE / EVENT / ICY，原生 URL 层，不传自定义 pb）
 └── {aac,aiff,ape,flac,m4a,mkv,mp3,ogg,wav}/
                            # 每种格式一组 extractor 实现
 ```

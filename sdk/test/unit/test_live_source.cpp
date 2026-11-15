@@ -327,4 +327,130 @@ TEST_SUITE("LiveSourceReconnect")
 
         decoder.stop();
     }
+
+    // 票 #162 判据①（规格 §10.1②「分片 404」/ §5.3 重开失败计入预算）：
+    // LIVE 窗口化 mock 下，单段 404 会被 hls demuxer 跳过并继续推进窗口，nullptr
+    // 不上提，单独注入不触发解码层重连；全窗口 404 更会让重开后的 hls 无限跳过
+    // 失败段、30s 内不出现终局（#162 resolution 实证登记）。因此用 playlist 404
+    // 触发一次重连，并只让重开的首个 segment 404：本次重开失败计入预算，之后
+    // 恢复续播。segmentFailCount 与 failCount 分别证明两个失败面都参与。
+    // 可红变异 = 去掉 setSegmentFailWindow（segmentFailCount 归零）。
+    TEST_CASE("segment 404 makes one reopen fail and then resumes")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.liveWindowPath = "/live";
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/live") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        REQUIRE(cb.errors.empty());
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs == 0);
+
+        const long long scanLiveFetches = server.requestCountFor("/live");
+        const long long scanSegmentFetches = server.segmentRequestCount();
+        REQUIRE(scanSegmentFetches > 0);
+        server.setPlaylistFailWindow((int)scanLiveFetches, 4);
+        server.setSegmentFailWindow((int)scanSegmentFetches, 1);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = props->signalProperties.spec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(props->processProperties.extractor.get()) == sdk_utils::OK);
+
+        LiveWatch watch{ring, decoder};
+        REQUIRE(pollUntil([&server]() { return server.segmentFailCount() >= 1; },
+                          20000, &watch));
+        const uint64_t posAtStall = watch.maxPosMs;
+        REQUIRE(pollUntil([&]() { return watch.maxPosMs >= posAtStall + 300; },
+                          30000, &watch));
+        CHECK(server.segmentFailCount() == 1);
+        CHECK(server.failCount() >= 1);
+        CHECK(decoder.liveReconnectAttempts() >= 1);
+        CHECK(watch.sawSeekingOrEos == false);
+        CHECK(watch.sawError == false);
+        CHECK(watch.durationNonZero == false);
+        CHECK(watch.posRegressed == false);
+        CHECK(decoder.state() == StreamDecoderState::DECODING);
+        decoder.stop();
+    }
+
+    // 票 #162 判据②（规格 §10.1② 3 s 墙钟面 / §3.3 形态限定）：playlist 404
+    // 触发重连，重开的首个 segment「发完响应头不发 body」→ 读超时以 EOF 收场 →
+    // 本次重开失败计入预算；窗口只注入一次，后续重开成功并续播。墙钟只作防挂死
+    // 守卫，不基于墙钟数值断言、不写「捕获 ETIMEDOUT」。可红变异 = 去掉
+    // setSegmentHangWindow（segmentHangCount 归零）。
+    TEST_CASE("headers-without-body makes one reopen fail and then resumes")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.liveWindowPath = "/live";
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/live") });
+        REQUIRE(playlist->getMusicCount() == 1);
+        REQUIRE(cb.currentBufs.size() == 1);
+        REQUIRE(cb.errors.empty());
+        MusicPropertiesPtr props = cb.currentBufs.front();
+        REQUIRE(props->signalProperties.durationMs == 0);
+
+        const long long scanLiveFetches = server.requestCountFor("/live");
+        const long long scanSegmentFetches = server.segmentRequestCount();
+        REQUIRE(scanSegmentFetches > 0);
+        server.setPlaylistFailWindow((int)scanLiveFetches, 4);
+        server.setSegmentHangWindow((int)scanSegmentFetches, 1);
+
+        AudioRingBuffer ring(1 << 20);
+        AudioSpec devSpec = props->signalProperties.spec;
+        AudioStreamDecoder decoder(&ring, devSpec);
+        REQUIRE(decoder.start(props->processProperties.extractor.get()) == sdk_utils::OK);
+
+        LiveWatch watch{ring, decoder};
+        REQUIRE(pollUntil([&server]() { return server.segmentHangCount() >= 1; },
+                          20000, &watch));
+        const uint64_t posAtStall = watch.maxPosMs;
+        REQUIRE(pollUntil([&]() { return watch.maxPosMs >= posAtStall + 300; },
+                          30000, &watch));
+        CHECK(server.segmentHangCount() == 1);
+        CHECK(decoder.liveReconnectAttempts() >= 1);
+        CHECK(watch.sawSeekingOrEos == false);
+        CHECK(watch.sawError == false);
+        CHECK(watch.durationNonZero == false);
+        CHECK(watch.posRegressed == false);
+        CHECK(decoder.state() == StreamDecoderState::DECODING);
+        decoder.stop();
+    }
+
+    // 票 #162 判据③（规格 §5.3「首次 open 超时 → 工厂 FileOpenFailed」）：
+    // 首个 playlist 请求发完响应头不发 body，avformat_open_input 在 rw_timeout
+    // 3s 到点以 EOF 收场，扫描期必须明确失败、不挂死、不静默成功。不写
+    // 「3s 内返回」类墙钟数值断言；错误码 FileOpenFailed 与规格 §5.3 措辞及
+    // MusicPlayList.cpp 的 initCheck 失败出口一致。可红变异 = 去掉
+    // setPlaylistHangWindow（扫描成功、零错误）。
+    TEST_CASE("first open timeout fails the scan explicitly")
+    {
+        const std::vector<uint8_t> &bytes = fixtureBytes();
+        REQUIRE(bytes.size() > 64);
+        MockHttpServer::Config cfg;
+        cfg.liveWindowPath = "/live";
+        MockHttpServer server(bytes, cfg);
+        REQUIRE(server.port() > 0);
+        server.setPlaylistHangWindow(0, 1000000);
+
+        DispatchCallback cb;
+        std::shared_ptr<MusicPlayList> playlist = loadPlayList(cb, { server.url("/live") });
+        REQUIRE(playlist->getMusicCount() == 0);
+        REQUIRE(cb.errors.size() == 1);
+        CHECK(cb.errors.front() == ErrorCode::FileOpenFailed);
+        CHECK(server.playlistHangCount() >= 1);
+        CHECK(server.segmentRequestCount() == 0);   // open 阶段就没拿到清单正文
+    }
 }

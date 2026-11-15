@@ -18,7 +18,10 @@ namespace {
 
 // 头部嗅探上限：清单头部字节足够做清单类与 VOD 特征判定。到达上限即停
 // （#EXT-X-ENDLIST 在超长清单尾部时嗅探不到 → 按无 VOD 特征拒绝）：
-// 宁可把超长 VOD 误拒成 LIVE，也不放行无界读取 —— 语义保守（#143 契约 §2）。
+// 宁可把超长 VOD 保守归到「无 ENDLIST」侧，也不放行无界读取（#143 契约 §2）。
+// 时点注记（2026-11-15，票 #162）：原措辞「误拒成 LIVE」属 P2 时点；P3
+// （#152 D18 / 规格 §9.2）后 LIVE / EVENT 已放行，本处只保留嗅探上限语义，
+// 不再含「拒绝」结论。放行判据见 test_http_source.cpp 的 EVENT 用例。
 const size_t kHeadSniffMaxBytes = 512 * 1024;
 const int kHeadSniffTimeoutUs = 3 * 1000 * 1000;   // 3s，与 HttpSource socket 超时口径一致
 

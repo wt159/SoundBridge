@@ -653,8 +653,11 @@ std::string makeHlsPlaylist(bool vod)
     return text;
 }
 
-// P2-2（issue #145）：PLAYLIST-TYPE:EVENT（有界但增长，无 ENDLIST）。
-// 依 #143 契约 §2 归 LIVE 侧拒绝。
+// PLAYLIST-TYPE:EVENT（有界但增长、无 ENDLIST）的清单 fixture。
+// P2-2（#145）曾「依 #143 契约 §2 归 LIVE 侧拒绝」；P3（#152 D18 /
+// doc/live-source-spec.md §9.2）已翻转为 LIVE 放行，EVENT 与裸 LIVE 语义一致
+// （durationMs==0 单一信号）。放行判据见本文件 "EVENT playlist is admitted
+// like LIVE" 用例，本 fixture 为拒绝 / 放行两组判据共用。
 std::string makeEventPlaylist()
 {
     return "#EXTM3U\r\n"

@@ -382,6 +382,33 @@ public:
         m_failPlaylistFetches.store(count, std::memory_order_relaxed);
     }
 
+    // P3-3（票 #162 / 规格 §10.1②）：按「segment 请求序号」锚定的两类停发注入，
+    // 与「全局请求序号」「playlist 取回序号」两套注入面互不干扰。扫描期 / 播放期的
+    // segment 取回次数可实测，测试用 segmentRequestCount() 取 S 后设 [S, S+n)。
+    // ① 404：回 404 + Content-Length: 0 并断开；② 发头不发 body：回 200 +
+    // Content-Length 后不发 body，客户端 rw_timeout（3s）到点断开即释放串行
+    // serve 线程（另设 5s 上限双保险，析构 join 永不卡死）。
+    void setSegmentFailWindow(int fromSeq, int count)
+    {
+        m_failSegmentFromSeq.store(fromSeq, std::memory_order_relaxed);
+        m_failSegmentFetches.store(count, std::memory_order_relaxed);
+    }
+    void setSegmentHangWindow(int fromSeq, int count)
+    {
+        m_hangSegmentFromSeq.store(fromSeq, std::memory_order_relaxed);
+        m_hangSegmentFetches.store(count, std::memory_order_relaxed);
+    }
+    long long segmentRequestCount() const { return m_segmentRequests.load(); }
+    long long segmentFailCount() const { return m_segmentFailCount.load(); }
+    long long segmentHangCount() const { return m_segmentHangCount.load(); }
+    // 首次 open 超时面：按 playlist 取回序号挂起「发完响应头不发 body」。
+    void setPlaylistHangWindow(int fromSeq, int count)
+    {
+        m_hangPlaylistFromSeq.store(fromSeq, std::memory_order_relaxed);
+        m_hangPlaylistFetches.store(count, std::memory_order_relaxed);
+    }
+    long long playlistHangCount() const { return m_playlistHangCount.load(); }
+
     std::string url(const std::string &path) const
     {
         return "http://127.0.0.1:" + std::to_string(m_port) + path;
@@ -459,6 +486,20 @@ private:
         if (!m_config.liveWindowPath.empty()) {
             if (reqPath == m_config.liveWindowPath) {
                 const int seq = m_liveSeq.fetch_add(1);
+                // P3-3 首次 open 超时面（票 #162）：发完响应头不发 body，客户端
+                // rw_timeout（3s）到点以 EOF 收场。与下方 404 注入窗口互斥。
+                const int hangFrom = m_hangPlaylistFromSeq.load(std::memory_order_relaxed);
+                const int hangCount = m_hangPlaylistFetches.load(std::memory_order_relaxed);
+                if (hangCount > 0 && seq >= hangFrom && seq < hangFrom + hangCount) {
+                    m_playlistHangCount.fetch_add(1);
+                    const std::string resp = "HTTP/1.1 200 OK\r\n"
+                                             "Content-Type: application/vnd.apple.mpegurl\r\n"
+                                             "Content-Length: 4096\r\n"
+                                             "Connection: close\r\n\r\n";
+                    sendAll(client, resp);
+                    holdOpenWithoutBody(client);
+                    return;
+                }
                 // 断流注入 v2：命中 [fromSeq, fromSeq+count) 的取回回 404（不计入
                 // 请求序号注入面，两者互不干扰）。取回本身已推进 m_liveSeq。
                 if (m_failPlaylistFetches.load(std::memory_order_relaxed) > 0) {
@@ -498,6 +539,33 @@ private:
                 && segPath.compare(segPath.size() - 3, 3, ".ts") == 0) {
                 long long seqVal = -1;
                 if (parseInt64(segPath.substr(3, segPath.size() - 6), seqVal) && seqVal >= 0) {
+                    const int segReqSeq = m_segmentRequests.fetch_add(1);
+                    // P3-3 停发注入（票 #162）：按 segment 请求序号命中窗口。404 与
+                    // 发头不发 body 互斥、前者优先；两者都不计入 m_failCount（既有用例
+                    // 对 playlist 404 计数有精确断言）。
+                    const int failFrom = m_failSegmentFromSeq.load(std::memory_order_relaxed);
+                    const int failCount = m_failSegmentFetches.load(std::memory_order_relaxed);
+                    if (failCount > 0 && segReqSeq >= failFrom && segReqSeq < failFrom + failCount) {
+                        m_segmentFailCount.fetch_add(1);
+                        const std::string resp = "HTTP/1.1 404 Not Found\r\n"
+                                                 "Content-Length: 0\r\n"
+                                                 "Connection: close\r\n\r\n";
+                        sendAll(client, resp);
+                        return;
+                    }
+                    const int hangFrom = m_hangSegmentFromSeq.load(std::memory_order_relaxed);
+                    const int hangCount = m_hangSegmentFetches.load(std::memory_order_relaxed);
+                    if (hangCount > 0 && segReqSeq >= hangFrom && segReqSeq < hangFrom + hangCount) {
+                        const std::vector<uint8_t> body = liveSegmentBytes(m_bytes, (int)seqVal);
+                        m_segmentHangCount.fetch_add(1);
+                        std::string resp = "HTTP/1.1 200 OK\r\n"
+                                           "Content-Type: video/mp2t\r\n"
+                                           "Content-Length: " + std::to_string(body.empty() ? 1 : body.size()) + "\r\n"
+                                           "Connection: close\r\n\r\n";
+                        sendAll(client, resp);
+                        holdOpenWithoutBody(client);
+                        return;
+                    }
                     const std::vector<uint8_t> body = liveSegmentBytes(m_bytes, (int)seqVal);
                     if (!body.empty()) {
                         std::string resp = "HTTP/1.1 200 OK\r\n"
@@ -727,6 +795,33 @@ private:
         return true;
     }
 
+    // P3-3（票 #162）：发完响应头不发 body 的停发形态。客户端 rw_timeout 到点会
+    // 主动关闭连接，select 可读探测及时释放串行 serve 线程；5 s 上限是双保险，
+    // 保证 mock 析构 join 永不卡死。不主动发 body、不回 EOF 状态码。
+    void holdOpenWithoutBody(Socket s)
+    {
+        const std::chrono::steady_clock::time_point deadline
+            = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!m_stop.load() && std::chrono::steady_clock::now() < deadline) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(s, &rfds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 50000;
+            const int ready = ::select((int)s + 1, &rfds, nullptr, nullptr, &tv);
+            if (ready < 0) break;
+            if (ready > 0) {
+                char probe = 0;
+                const int n = ::recv(s, &probe, 1, MSG_PEEK);
+                // n == 0 才是对端关闭（FIN）；n < 0 多为 setRecvTimeout 的 2s
+                // SO_RCVTIMEO 到点，不能当成断开，否则 2s 就提前收场、够不到
+                // 客户端 3s 的 rw_timeout。5s 上限仍是析构 join 的双保险。
+                if (n == 0) break;
+            }
+        }
+    }
+
     const std::vector<uint8_t> &m_bytes;
     const Config m_config;
     std::vector<uint8_t> m_mp3Bytes;
@@ -745,6 +840,17 @@ private:
     // 断流注入 v2 的窗口（setPlaylistFailWindow 写、handle 线程读）。
     std::atomic<int> m_failPlaylistFromSeq{-1};
     std::atomic<int> m_failPlaylistFetches{0};
+    // P3-3 按 segment 请求序号的注入窗口与独立计数（票 #162）。
+    std::atomic<long long> m_segmentRequests{0};
+    std::atomic<long long> m_segmentFailCount{0};
+    std::atomic<long long> m_segmentHangCount{0};
+    std::atomic<int> m_failSegmentFromSeq{-1};
+    std::atomic<int> m_failSegmentFetches{0};
+    std::atomic<int> m_hangSegmentFromSeq{-1};
+    std::atomic<int> m_hangSegmentFetches{0};
+    std::atomic<int> m_hangPlaylistFromSeq{-1};
+    std::atomic<int> m_hangPlaylistFetches{0};
+    std::atomic<long long> m_playlistHangCount{0};
 };
 
 // 轮询 mock server 的只读就绪信号：确认 client 已阻塞在读响应头的 recv 上。

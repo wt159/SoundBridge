@@ -13,9 +13,12 @@ sdk/test/unit/
 ├── test_media_coverage.cpp   # 全格式解码覆盖度与时长基线（判据见 doc/format-support.md）
 ├── test_playlist.cpp         # MusicPlayList / FileProperties
 ├── test_http_source.cpp      # HttpSource / URL 分派 / HLS VOD 直通（本地 mock server，零公网依赖）
+├── test_live_source.cpp      # LIVE 重连状态机事件计数判据（LiveSourceReconnect 套件）
 ├── test_utils.cpp            # AudioRingBuffer / ByteUtils / AudioBuffer
 └── test_cosmos.cpp           # Optional / Lazy / ScopeGuard / Range / Timer / WorkQueue
 ```
+
+`../LiveSmoke.cpp`（`sdk/test/` 根）是独立可执行（D23）：注册构建、不注册 ctest，承接 LIVE / ICY 稳态 8s 与 `stop()` 有限时间返回的手工冒烟；不在本子目录树内，也不编进 `UnitTests`。
 
 ## WHERE TO LOOK
 | 任务 | 位置 | 备注 |
@@ -27,6 +30,8 @@ sdk/test/unit/
 | 解码覆盖度基线 | `test_media_coverage.cpp` | 双向容差判据、必备素材清单；理由见 `doc/format-support.md` |
 | 播放列表行为 | `test_playlist.cpp` | `WorkQueue` + `promise/future` 协调异步添加 |
 | 网络源 / URL 分派 / HLS | `test_http_source.cpp` | 本地 mock HTTP/HLS server，零公网依赖；契约见 `doc/network-audio-source-spec.md` |
+| LIVE 重连 / 停发形态判据 | `test_live_source.cpp` | `LiveSourceReconnect` 套件；mock 注入见 `../mocks/HttpMocks.hpp`；契约见 `doc/live-source-spec.md` §5.3 / §10 |
+| LIVE / ICY 手工冒烟 | `../LiveSmoke.cpp` | 独立可执行、不注册 ctest；稳态 8s + `stop()` 上界，D23 判据载体 |
 | 基础工具/容器 | `test_utils.cpp`, `test_cosmos.cpp` | 纯单元级，无媒体依赖 |
 
 ## CONVENTIONS
@@ -55,3 +60,4 @@ ctest --test-dir build -R sdk_extractor_spec_tests --output-on-failure
 - `test_playlist.cpp` 用静态 `WorkQueue` 和回调同步封装测试夹具；改播放列表异步逻辑时先核这些 helper 是否还成立。
 - `test_cosmos.cpp` / `test_utils.cpp` 更像纯内存单测，失败时通常不需要跑整套媒体回归。
 - `test_cosmos.cpp` 的 `Cosmos::WorkQueue` 套件（#142）盯三条结构不变量：任务 id 单调非零 / 队列自身是非空真源 / `stop()` 后队列必清空；改 `WorkQueue.hpp` 必跑它。
+- `test_live_source.cpp`（票 #159 / #162）按「事件计数为主、墙钟只作防挂死守卫」组织：注入面按 playlist 取回序号 / segment 请求序号锚定，不要改回全局请求序号（扫描期 `find_stream_info` 的 reload 次数随素材浮动）。FFmpeg hls 会跳过失败 segment 并继续推进窗口，单段失败不上提 `nullptr`；判据须让 playlist 侧触发重连或让首次 open 直接失败。
