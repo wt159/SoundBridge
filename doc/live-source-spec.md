@@ -417,3 +417,10 @@
 **零改动声明**：本图只写 `doc/live-source-spec.md`、`docs/adr/0006-*`、`docs/adr/0007-*` 与 `doc/network-audio-source-spec.md` 的追加注记；`GLOSSARY.md` 一字不动。未改 `sdk/` / `app/` / CI 配置 / 用例 / 任何既有判据数值、容差、基线、`TIMEOUT`。#155 的实证探针在仓库外 `D:/tmp/sbprobe155/`，未入库。
 
 **fog 清空记录**（地图 `Not yet specified` 已清空）：①「直播曲目的最长播放保护」→ [#150](https://github.com/wt159/SoundBridge/issues/150) 裁「不需要独立上限，终局唯一来自 stop / 切歌 / 预算耗尽」；②「重连失败的用户可见性」→ [#149](https://github.com/wt159/SoundBridge/issues/149) 裁「什么都不发」，[#150](https://github.com/wt159/SoundBridge/issues/150) 收口预算耗尽时序；③「ICY 内联元数据出口」→ [#152](https://github.com/wt159/SoundBridge/issues/152) 裁「不提供」并写入界外（§8.7）。
+
+## 时点注记（2026-11-15，#167）
+
+本文所有「55 用例 / 396 断言」表述均为 2026-11-04 时点计数；2026-11-06 起实跑为
+**55 用例 / 398 断言**（`7e85f5f13` 新增 2 条断言，四段 201+36+57+104，见 #22 / #118 的
+时点更正 comment）。本注记只登记时点口径：**55 用例基线、所有既有数值与判定结论一字不动**；
+裁定与逐处落点见 #167 resolution，事实真源见 #165 resolution。
