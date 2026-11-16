@@ -47,8 +47,8 @@ public:
     // 置取消位并 join。幂等；join 只在调用它的线程上发生。
     void stop();
     // 只置取消位、不 join：切歌软取消把旧任务移入退役槽时使用
-    // （规格 doc/buffering-switching-spec.md §5）。join 仍由 stop() 在
-    // 发起新任务的同一线程完成。
+    // （规格 doc/buffering-switching-spec.md §5）。join 仍由 stop() 完成，调用点
+    // 是退役线程退出后的消费拍，以及下一次切歌 / stop / 析构。
     void requestStop();
     void seekToMs(uint64_t targetMs);
 
