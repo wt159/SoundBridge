@@ -204,7 +204,7 @@ TEST_SUITE("PlaybackLifecycle")
         decoder.stop();
     }
 
-    TEST_CASE("switching tracks releases the previous task instead of reusing it")
+    TEST_CASE("switching tracks retires the previous task and reaps it on the next switch")
     {
         RealMediaFixture fixture;
         if (!fixture.exists("music.wav")) {
@@ -242,12 +242,25 @@ TEST_SUITE("PlaybackLifecycle")
         CHECK_MESSAGE(second->ring->readPos() == 0, "新任务的 ring 段内读计数没有归零");
         CHECK_MESSAGE(second->decoder->positionMs() == 0, "新任务的位置没有从 0 起算");
 
-        // 旧任务必须在新任务启动前就被销毁：ring 不可复用，decode 线程也必须已经 join
-        // （否则销毁 ring 就是让后台线程写已释放内存，这条断言会以崩溃或写穿的形式失败）。
-        CHECK_MESSAGE(weakOldRing.expired(), "旧任务的 ring 没有在切歌时释放");
-        CHECK_MESSAGE(weakOldDecoder.expired(), "旧任务的 decoder 没有在切歌时销毁（join 未完成）");
+        // 软取消（规格 doc/buffering-switching-spec.md §5）：旧任务只 abort 并移入退役槽，
+        // 不 join；ring / decoder 保活，下一次切歌才回收。
+        CHECK_MESSAGE(!weakOldRing.expired(), "旧任务的 ring 在切歌时被立即释放（软取消未生效）");
+        CHECK_MESSAGE(!weakOldDecoder.expired(),
+                      "旧任务的 decoder 在切歌时被立即 join（软取消未生效）");
+
+        // 第二次切歌：单槽退役把上上次的任务收尾，第一个任务此时才过期。
+        std::weak_ptr<AudioRingBuffer> weakSecondRing = second->ring;
+        second.reset();
+        REQUIRE(playlist->setCurrentIndexSync(0));
+        sdk::PlaybackTaskPtr third = playlist->currentTask();
+        REQUIRE(third != nullptr);
+        CHECK(third->trackIndex == 0);
+        CHECK_MESSAGE(weakOldRing.expired(), "退役槽没有在下一次切歌回收旧任务");
+        CHECK_MESSAGE(weakOldDecoder.expired(), "退役槽没有在下一次切歌 join 旧 decoder");
+        CHECK_MESSAGE(!weakSecondRing.expired(), "刚退役的任务应立即保活到下一次切歌");
 
         playlist->stopCurrentTask();
+        CHECK_MESSAGE(weakSecondRing.expired(), "stop 没有回收退役槽");
     }
 
     TEST_CASE("stop drops the task and the next play starts a fresh one")

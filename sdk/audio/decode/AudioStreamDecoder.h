@@ -46,6 +46,10 @@ public:
     sdk_utils::status_t start(ExtractorHelper *extractor, bool startThread);
     // 置取消位并 join。幂等；join 只在调用它的线程上发生。
     void stop();
+    // 只置取消位、不 join：切歌软取消把旧任务移入退役槽时使用
+    // （规格 doc/buffering-switching-spec.md §5）。join 仍由 stop() 在
+    // 发起新任务的同一线程完成。
+    void requestStop();
     void seekToMs(uint64_t targetMs);
 
     StreamDecoderState state() const;
@@ -78,6 +82,13 @@ public:
     // 生产消费端（MusicPlayer::Impl::consumeAudioData）与判据套件的消费端走同一个入口。
     // 只有解码器自己看得见的静默窗口（SEEKING / 已请求停止 / 已置取消位）里的调用才计数。
     void noteSilenceFill();
+    // 消费端在「DECODING 且非静默窗口」时从 ring 读到 0 字节：记一拍欠流。
+    // 观测项，不设阈值（规格 §4）。
+    void noteUnderrun();
+    // 设备 write() 返回 < 0：记一次写失败。只记录，不改失败后的行为（规格 §4.5）。
+    void noteDeviceWriteFailure();
+    // 首播门槛等待超时：记一次到点放行（规格 §2.3）。
+    void notePrefillTimeout();
 
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
@@ -214,6 +225,10 @@ private:
     // 消费线程会写 silenceFills，所以用原子量；其余只在解码线程写、任意线程读。
     std::atomic<size_t> m_peakHeldBytes;
     std::atomic<size_t> m_silenceFills;
+    // 欠流 / 写失败 / 门槛超时：消费线程写，任意线程读（规格 §4）。
+    std::atomic<size_t> m_underrunTicks;
+    std::atomic<size_t> m_deviceWriteFailures;
+    std::atomic<size_t> m_prefillTimeouts;
     std::atomic<uint64_t> m_startToFirstPcmUs;
     std::atomic<uint64_t> m_initScanUs;
     // 解码侧此刻手上的包字节数（alloc/free 增量，只在解码线程读写）。

@@ -5,6 +5,7 @@
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "MusicPlayList.h"
+#include "PrefillGate.h"
 #include "WorkQueue.hpp"
 #include <chrono>
 #include <cstring>
@@ -72,6 +73,12 @@ private:
     void stopConsumerThread();
     void consumeAudioData();
     bool shouldFillSilence();
+    // 首播门槛（规格 doc/buffering-switching-spec.md §2）：设备 start 前等 ring
+    // 攒够 prefillMs；超时记仪表后照常起播。
+    size_t prefillTargetBytes() const;
+    bool waitForPrefill(const PlaybackTaskPtr &task);
+    // 用户发起的段切换统一出口：trace → switching 门闩 → 净空设备队列（规格 §3.2）。
+    void beginSegmentSwitch(const char *reason);
     void handleDecodeError(const MusicPropertiesPtr &cur);
 
 private:
@@ -328,6 +335,9 @@ void MusicPlayer::Impl::_play()
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
         return;
     }
+    // 首播门槛（规格 §2）：open 之后、start 之前等 ring 攒够一段 PCM。
+    // 超时不报错：照常起播，SDL 用静音补齐；网络源首帧慢时这是常态。
+    waitForPrefill(m_musicList->currentTask());
     if (m_audioDev->start() != 0) {
         onMusicPlayListError(ErrorCode::AudioDeviceStartFailed, "audio device start failed",
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
@@ -411,6 +421,12 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
     // 位置只有一个来源：解码器的段基准 + ring 段内读计数（见 AudioStreamDecoder::positionMs）。
     // 消费端不再自己维护字节偏移，避免 seek 目标与播放进度两套口径互相打架。
     cur->signalProperties.curPositionMs = pos;
+    // 净空设备队列：里面最多还有 256 KB 旧位置的 PCM（≈1.49 s @44.1k/2ch/S16），
+    // 不清就会先播完旧位置才听到新位置（规格 §3.1）。seek 不设 m_switching：
+    // SEEKING 已有独立静默窗口，叠加会改变 shouldFillSilence() 的既有口径。
+    if (m_audioDev != nullptr) {
+        m_audioDev->clearQueue();
+    }
     task->decoder->seekToMs(pos);
     // seek 是合法回退：重置单调基准并立即上报一次（规格 §3 / §7）。
     bumpPositionSession();
@@ -420,9 +436,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
 void MusicPlayer::Impl::_next()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    bumpTraceId("next");
-    m_switching.store(true);
-    m_audioDev->clearQueue();
+    beginSegmentSwitch("next");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -441,9 +455,7 @@ void MusicPlayer::Impl::_next()
 void MusicPlayer::Impl::_previous()
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    bumpTraceId("previous");
-    m_switching.store(true);
-    m_audioDev->clearQueue();
+    beginSegmentSwitch("previous");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -462,8 +474,7 @@ void MusicPlayer::Impl::_previous()
 void MusicPlayer::Impl::_setCurrentIndex(int index)
 {
     LOG_INFO(LOG_TAG, "%s", __func__);
-    bumpTraceId("setIndex");
-    m_switching.store(true);
+    beginSegmentSwitch("setIndex");
     MusicPropertiesPtr cur;
     {
         std::lock_guard<std::mutex> lock(m_curMusicMutex);
@@ -477,6 +488,49 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
     if (!m_musicList->setCurrentIndexSync(index)) {
         m_switching.store(false);
     }
+}
+
+void MusicPlayer::Impl::beginSegmentSwitch(const char *reason)
+{
+    bumpTraceId(reason);
+    m_switching.store(true);
+    if (m_audioDev != nullptr) {
+        m_audioDev->clearQueue();
+    }
+}
+
+size_t MusicPlayer::Impl::prefillTargetBytes() const
+{
+    // 时间口径 150 ms（规格 §2.1），按设备 spec 换算成字节；下限 4096 B。
+    int bytesPerSample = m_devSpec.bytesPerSample;
+    if (bytesPerSample <= 0) {
+        bytesPerSample = getBytePreSampleByAudioFormat(m_devSpec.format);
+    }
+    if (m_devSpec.sampleRate > 0 && m_devSpec.numChannel > 0 && bytesPerSample > 0) {
+        const uint64_t bytesPerMs = static_cast<uint64_t>(m_devSpec.sampleRate)
+            * static_cast<uint64_t>(m_devSpec.numChannel)
+            * static_cast<uint64_t>(bytesPerSample) / 1000;
+        const uint64_t target = bytesPerMs * 150;
+        return target > 4096 ? static_cast<size_t>(target) : 4096;
+    }
+    return 4096;
+}
+
+bool MusicPlayer::Impl::waitForPrefill(const PlaybackTaskPtr &task)
+{
+    if (task == nullptr || task->ring == nullptr || task->decoder == nullptr) {
+        return false;
+    }
+    const size_t target = prefillTargetBytes();
+    const sdk_utils::PrefillResult result = sdk_utils::waitForPrefill(
+        *task->ring, target, 300, [&task]() {
+            const StreamDecoderState st = task->decoder->state();
+            return st == StreamDecoderState::ERROR || st == StreamDecoderState::IDLE;
+        });
+    if (result == sdk_utils::PrefillResult::TimedOut) {
+        task->decoder->notePrefillTimeout();
+    }
+    return result == sdk_utils::PrefillResult::Reached;
 }
 
 bool MusicPlayer::Impl::shouldFillSilence()
@@ -509,7 +563,7 @@ void MusicPlayer::Impl::consumeAudioData()
     if (shouldFillSilence()) {
         const size_t len = 4096;
         std::vector<char> silence(len, 0);
-        m_audioDev->write(silence.data(), len);
+        const int silenceWriteRet = m_audioDev->write(silence.data(), len);
         // 观测点（规格第 5 节 / 票面 #56）：静音填充次数记在当前曲目的解码器上。
         // 只记账、不改任何分支；解码器只统计静默窗口内的调用，
         // 所以稳态播放期间这个数恒为 0（判据的口径是「稳态窗口静音填充为零」）。
@@ -521,6 +575,9 @@ void MusicPlayer::Impl::consumeAudioData()
         PlaybackTaskPtr task = m_musicList->currentTask();
         if (task != nullptr && task->decoder != nullptr) {
             task->decoder->noteSilenceFill();
+            if (silenceWriteRet < 0) {
+                task->decoder->noteDeviceWriteFailure();
+            }
         }
         return;
     }
@@ -547,7 +604,9 @@ void MusicPlayer::Impl::consumeAudioData()
     size_t got = ring->read(buf.data(), kChunkSize);
 
     if (got > 0) {
-        m_audioDev->write(buf.data(), got);
+        if (m_audioDev->write(buf.data(), got) < 0) {
+            task->decoder->noteDeviceWriteFailure();
+        }
 
         // 单一位置来源：解码器按「段基准 + ring 段内已读字节」换算。
         // 消费端只负责告知时间，不再累计自己的字节偏移（seek / 切歌时两套计数会漂移）。
@@ -566,6 +625,14 @@ void MusicPlayer::Impl::consumeAudioData()
                     reportPosition(curPositionMs, trackIndex, false, epoch);
                 }
             });
+        }
+    }
+
+    if (got == 0) {
+        // 欠流一拍：DECODING 且非静默窗口（shouldFillSilence() 已在函数开头返回 false）。
+        // 只有 0 字节才算；不足 4096 B 时照常送出，仍有声音（规格 §4.1）。
+        if (task->decoder->state() == StreamDecoderState::DECODING) {
+            task->decoder->noteUnderrun();
         }
     }
 

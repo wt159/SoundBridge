@@ -87,8 +87,8 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 // 一次播放任务：ring 与 decoder 由**当前曲目独占**，跨曲目不复用（规格 #55 第 4.3 节）。
 //
 // - 创建者：播放列表在做「这次要播哪首」的决定时造；消费者只借指针，不持有所有权。
-// - 销毁时机：新任务 start() **之前** —— stop / 切歌 / 停止播放都把旧任务整个丢掉，
-//   旧 ring 的引用计数归零，旧 decoder 析构时 join 掉自己的解码线程。
+// - 销毁时机：切歌时旧任务移入退役槽（abort 不 join），join 推迟到下一次切歌 / stop /
+//   析构（规格 doc/buffering-switching-spec.md §5）；旧 ring 保活到 join 完成。
 // - 成员声明顺序决定析构顺序：decoder 声明在 ring 之后，所以先析构 decoder（其析构函数
 //   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
 struct PlaybackTask {
@@ -156,7 +156,8 @@ public:
     // 为「当前曲目」准备播放任务。已经有一个活着的任务（暂停后恢复）就复用；
     // 没有 / 已结束 / 已失败则先 stop+join 旧任务，再建新 ring + 新 decoder。
     bool startCurrentTask();
-    // 丢弃当前任务：先 join 解码线程，再销毁 ring（旧 PCM 一律丢弃、不 drain）。
+    // 丢弃当前任务：先回收退役任务，再 join 当前解码线程，然后销毁 ring
+    // （旧 PCM 一律丢弃、不 drain）。stop 是终态，两个槽都同步 join。
     void stopCurrentTask();
 
     // 本次播放会话内因坏数据失败过的曲目：自动跳过不再回头重试（同一曲不重试第二次）。
@@ -178,9 +179,13 @@ protected:
 
 private:
     bool selectTrack(size_t index);
-    // 换任务：stop+join 旧任务并销毁旧 ring，再为新曲造 ring + decoder 并 start()。
-    // 全程在调用它的控制线程上完成（WorkQueue 单线程串行），禁止 detach / 后台 join。
+    // 换任务：旧任务只 abort、移入退役槽（不 join），再为新曲造 ring + decoder 并 start()。
+    // 退役任务的 join 推迟到下一次切歌 / stop / 析构（规格 §5）。
     bool replacePlaybackTask(const MusicPropertiesPtr &musicProperties);
+    // 把当前任务移入退役槽：只置取消位，不 join；槽满时先 join 上一个退役任务。
+    void retireCurrentTask();
+    // 回收退役槽：同步 join 并释放。调用点只有下一次切歌 / stop / 析构。
+    void joinRetiredTask();
     // 只清位置 / 数据量这类元数据；任务（ring / decoder）不属于曲目，不在遍历范围内。
     void resetTrackProgressExcept(size_t keepIndex);
     void reportError(ErrorCode code, const std::string &detail,
@@ -194,6 +199,8 @@ private:
     // 当前播放任务。只有控制线程写，消费者读快照；锁只保护指针本身，ring 内部无锁。
     mutable std::mutex m_taskMutex;
     PlaybackTaskPtr m_currentTask;
+    // 单槽退役：切歌时旧任务在这里等下一次控制事件 join（规格 §5.1）。
+    PlaybackTaskPtr m_retiredTask;
     mutable std::mutex m_failedMutex;
     std::set<size_t> m_failedIndices;
     mutable std::mutex m_rejectMutex;

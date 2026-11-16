@@ -57,6 +57,9 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_md5Mismatch(false)
     , m_peakHeldBytes(0)
     , m_silenceFills(0)
+    , m_underrunTicks(0)
+    , m_deviceWriteFailures(0)
+    , m_prefillTimeouts(0)
     , m_startToFirstPcmUs(0)
     , m_initScanUs(0)
     , m_packetHeldBytes(0)
@@ -116,6 +119,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_startClock = std::chrono::steady_clock::now();
     m_peakHeldBytes.store(0);
     m_silenceFills.store(0);
+    m_underrunTicks.store(0);
+    m_deviceWriteFailures.store(0);
+    m_prefillTimeouts.store(0);
     m_startToFirstPcmUs.store(0);
     m_initScanUs.store(0);
     m_packetHeldBytes = 0;
@@ -218,10 +224,15 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
     return start(extractor, true);
 }
 
-void AudioStreamDecoder::stop()
+void AudioStreamDecoder::requestStop()
 {
     m_stopRequest.store(true);
     m_abortDecode.store(true);
+}
+
+void AudioStreamDecoder::stop()
+{
+    requestStop();
     if (m_thread.joinable()) {
         m_thread.join();
     }
@@ -278,6 +289,9 @@ StreamMetrics AudioStreamDecoder::metrics() const
     out.packetsPulledAtFirstPcm = m_packetsPulledAtFirstPcm.load();
     // 现场重算包边界的 CPU 成本是提取器侧的独立指标（只记录、不设阈值）。
     out.packetBoundaryMicros = m_extractor != nullptr ? m_extractor->packetBoundaryMicros() : 0;
+    out.underrunTicks        = m_underrunTicks.load();
+    out.deviceWriteFailures  = m_deviceWriteFailures.load();
+    out.prefillTimeouts      = m_prefillTimeouts.load();
     return out;
 }
 
@@ -320,6 +334,24 @@ void AudioStreamDecoder::noteSilenceFill()
         return;
     }
     m_silenceFills.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteUnderrun()
+{
+    // 消费端已在调用点判过窗口（DECODING + 非静默窗口），这里只记账。
+    // 不复用 noteSilenceFill() 的内部判据：解码器看不到 m_switching / shuttingDown
+    // （规格 doc/buffering-switching-spec.md §4.4）。
+    m_underrunTicks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteDeviceWriteFailure()
+{
+    m_deviceWriteFailures.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::notePrefillTimeout()
+{
+    m_prefillTimeouts.fetch_add(1, std::memory_order_relaxed);
 }
 
 void AudioStreamDecoder::noteHeldBytes(size_t bytes)

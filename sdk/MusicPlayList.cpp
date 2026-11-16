@@ -436,6 +436,8 @@ bool MusicPlayList::startCurrentTask()
 
 void MusicPlayList::stopCurrentTask()
 {
+    // stop 是终态：先回收退役任务，再回收当前任务，两个都同步 join。
+    joinRetiredTask();
     PlaybackTaskPtr task;
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
@@ -453,6 +455,49 @@ void MusicPlayList::stopCurrentTask()
     task->ring.reset();
 }
 
+void MusicPlayList::retireCurrentTask()
+{
+    PlaybackTaskPtr retired;
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        retired.swap(m_currentTask);
+    }
+    if (retired == nullptr) {
+        return;
+    }
+    // 只置取消位，不 join：join 会顶住消费节拍（规格 §5.1）。
+    if (retired->decoder != nullptr) {
+        retired->decoder->requestStop();
+    }
+    PlaybackTaskPtr previous;
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        previous.swap(m_retiredTask);
+        m_retiredTask = retired;
+    }
+    // 单槽：上一个退役任务在这里收尾，仍由本控制线程 join。
+    if (previous != nullptr && previous->decoder != nullptr) {
+        previous->decoder->stop();
+    }
+}
+
+void MusicPlayList::joinRetiredTask()
+{
+    PlaybackTaskPtr retired;
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        retired.swap(m_retiredTask);
+    }
+    if (retired == nullptr) {
+        return;
+    }
+    if (retired->decoder != nullptr) {
+        retired->decoder->stop();
+    }
+    retired->decoder.reset();
+    retired->ring.reset();
+}
+
 bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicProperties)
 {
     if (musicProperties == nullptr) {
@@ -468,8 +513,9 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
     const auto switchStart = std::chrono::steady_clock::now();
 
-    // 顺序不可交换：先 stop+join 旧任务、旧 ring 引用计数归零，再建新任务。
-    stopCurrentTask();
+    // 切歌软取消（规格 §5）：旧任务只 abort 并移入退役槽，不 join；
+    // 新任务立即启动，join 推迟到下一次切歌 / stop / 析构。
+    retireCurrentTask();
 
     std::shared_ptr<AudioRingBuffer> ring
         = std::make_shared<AudioRingBuffer>(AudioRingBuffer::kDefaultCapacity);
