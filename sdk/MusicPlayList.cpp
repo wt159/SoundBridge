@@ -377,8 +377,8 @@ bool MusicPlayList::selectTrack(size_t index)
     }
 
     MusicPropertiesPtr next = m_musicListProperties.at(index);
-    // 切歌窗口：旧任务在新任务 start() 之前 stop+join 并销毁旧 ring，
-    // 所以上一首的 PCM 不可能流进下一首（规格 4.1 切歌行）。
+    // 切歌窗口：旧任务只置取消位并移入退役槽（不 join，旧 ring 保活到回收），
+    // 新任务用新的 ring，所以上一首的 PCM 不可能流进下一首（规格 §5.1 / 4.1 切歌行）。
     if (!replacePlaybackTask(next)) {
         return false;
     }
@@ -522,7 +522,7 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         return false;
     }
 
-    // 切歌开销：新任务 start() 之前销毁旧任务（join + 丢 ring）的那段时间。
+    // 切歌开销：旧任务退役（只置取消位，不 join）到新任务 start() 完成的那段时间。
     // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
     const auto switchStart = std::chrono::steady_clock::now();
 

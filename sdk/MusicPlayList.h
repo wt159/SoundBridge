@@ -155,7 +155,8 @@ public:
     // 以及扫描阶段都属于这一类。调用方拿到的是快照，持有期间任务不会被销毁。
     PlaybackTaskPtr currentTask() const;
     // 为「当前曲目」准备播放任务。已经有一个活着的任务（暂停后恢复）就复用；
-    // 没有 / 已结束 / 已失败则先 stop+join 旧任务，再建新 ring + 新 decoder。
+    // 没有 / 已结束 / 已失败则把旧任务移入退役槽（只置取消位，不 join），再建新 ring
+    // 与新 decoder（规格 §5.1）。
     bool startCurrentTask();
     // 丢弃当前任务：先回收退役任务，再 join 当前解码线程，然后销毁 ring
     // （旧 PCM 一律丢弃、不 drain）。stop 是终态，两个槽都同步 join。
@@ -184,7 +185,7 @@ protected:
 private:
     bool selectTrack(size_t index);
     // 换任务：旧任务只 abort、移入退役槽（不 join），再为新曲造 ring + decoder 并 start()。
-    // 退役任务的 join 推迟到下一次切歌 / stop / 析构（规格 §5）。
+    // 退役任务的 join 推迟到退役线程退出后的消费拍 / 下一次切歌 / stop / 析构（规格 §5）。
     bool replacePlaybackTask(const MusicPropertiesPtr &musicProperties);
     // 把当前任务移入退役槽：只置取消位，不 join；槽满时先 join 上一个退役任务。
     void retireCurrentTask();
