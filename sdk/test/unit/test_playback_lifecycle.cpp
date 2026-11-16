@@ -204,7 +204,7 @@ TEST_SUITE("PlaybackLifecycle")
         decoder.stop();
     }
 
-    TEST_CASE("switching tracks retires the previous task and reaps it on the next switch")
+    TEST_CASE("switching tracks retires the previous task and reaps it once its thread exits")
     {
         RealMediaFixture fixture;
         if (!fixture.exists("music.wav")) {
@@ -249,18 +249,36 @@ TEST_SUITE("PlaybackLifecycle")
                       "旧任务的 decoder 在切歌时被立即 join（软取消未生效）");
 
         // 第二次切歌：单槽退役把上上次的任务收尾，第一个任务此时才过期。
-        std::weak_ptr<AudioRingBuffer> weakSecondRing = second->ring;
+        std::weak_ptr<AudioRingBuffer> weakSecondRing       = second->ring;
+        std::weak_ptr<AudioStreamDecoder> weakSecondDecoder = second->decoder;
         second.reset();
         REQUIRE(playlist->setCurrentIndexSync(0));
         sdk::PlaybackTaskPtr third = playlist->currentTask();
         REQUIRE(third != nullptr);
         CHECK(third->trackIndex == 0);
+        std::weak_ptr<AudioRingBuffer> weakThirdRing = third->ring;
         CHECK_MESSAGE(weakOldRing.expired(), "退役槽没有在下一次切歌回收旧任务");
         CHECK_MESSAGE(weakOldDecoder.expired(), "退役槽没有在下一次切歌 join 旧 decoder");
         CHECK_MESSAGE(!weakSecondRing.expired(), "刚退役的任务应立即保活到下一次切歌");
 
+        // 非阻塞回收（规格 §5.1 / §5.3）：旧解码线程退出后，消费拍一次 reap 就能收尾，
+        // 不必等到下一次控制事件——切换窗口在旧线程退出时就结束，窗口外的常驻上界
+        // 因此回到单任务口径。这里替代消费拍显式调用同一个出口。
+        // 只借 weak_ptr 观察（不持强引用，否则 weakSecondDecoder 永远不会过期）。
+        REQUIRE_MESSAGE(
+            waitUntil(
+                [&weakSecondDecoder]() {
+                    std::shared_ptr<AudioStreamDecoder> d = weakSecondDecoder.lock();
+                    return d != nullptr && d->isThreadFinished();
+                },
+                5000),
+            "退役任务的解码线程在 requestStop 之后没有退出");
+        playlist->reapRetiredTaskIfFinished();
+        CHECK_MESSAGE(weakSecondRing.expired(), "退役线程已退出，reap 没有回收退役槽");
+        CHECK_MESSAGE(weakSecondDecoder.expired(), "退役线程已退出，reap 没有 join 旧 decoder");
+
         playlist->stopCurrentTask();
-        CHECK_MESSAGE(weakSecondRing.expired(), "stop 没有回收退役槽");
+        CHECK_MESSAGE(weakThirdRing.expired(), "stop 没有回收当前任务");
     }
 
     TEST_CASE("stop drops the task and the next play starts a fresh one")

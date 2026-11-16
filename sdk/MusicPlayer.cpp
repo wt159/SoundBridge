@@ -74,11 +74,14 @@ private:
     void consumeAudioData();
     bool shouldFillSilence();
     // 首播门槛（规格 doc/buffering-switching-spec.md §2）：设备 start 前等 ring
-    // 攒够 prefillMs；超时记仪表后照常起播。
-    size_t prefillTargetBytes() const;
-    bool waitForPrefill(const PlaybackTaskPtr &task);
-    // 用户发起的段切换统一出口：trace → switching 门闩 → 净空设备队列（规格 §3.2）。
+    // 攒够 prefillMs；超时记仪表后照常起播。sourceSpec 是设备 spec 不可用时的回退来源。
+    size_t prefillTargetBytes(const AudioSpec &sourceSpec) const;
+    sdk_utils::PrefillResult waitForPrefill(const PlaybackTaskPtr &task,
+                                            const AudioSpec &sourceSpec);
+    // 用户发起的段切换：begin 记 trace + 落 switching 门闩；end 只在切换真的发生时净空
+    // 设备队列（规格 §3.2）。切换失败（无下一首 / 索引越界）保留正在播的 PCM。
     void beginSegmentSwitch(const char *reason);
+    void endSegmentSwitch(bool switched);
     void handleDecodeError(const MusicPropertiesPtr &cur);
 
 private:
@@ -96,6 +99,11 @@ private:
     std::atomic<bool> m_autoSkipOnError;
     std::atomic<int> m_skipFailures;
     std::atomic<bool> m_switching;
+    // 首播门槛「同一任务内只等一次」的身份标记（规格 §2.3）：暂停后恢复、重复 play()
+    // 复用同一个 PlaybackTask，不再等第二次门闩（设备已在跑时再等只会超时）。
+    // weak_ptr 比较任务身份：任务销毁后自动失效，不会把新任务误判成旧任务。
+    // 读写只在 WorkQueue 线程（_play / consumeAudioData 同线程），不加锁。
+    std::weak_ptr<PlaybackTask> m_prefillWaitedTask;
     std::atomic<bool> m_shuttingDown;
     // 本次播放（一次 _play）里本次曲目的解码失败只上报一次，避免 10ms 消费循环刷屏
     std::atomic<bool> m_decodeErrorHandled;
@@ -335,9 +343,16 @@ void MusicPlayer::Impl::_play()
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
         return;
     }
-    // 首播门槛（规格 §2）：open 之后、start 之前等 ring 攒够一段 PCM。
+    // 首播门槛（规格 §2.2 第 3 步）：open 之后、start 之前等 ring 攒够一段 PCM。
     // 超时不报错：照常起播，SDL 用静音补齐；网络源首帧慢时这是常态。
-    waitForPrefill(m_musicList->currentTask());
+    const PlaybackTaskPtr gateTask         = m_musicList->currentTask();
+    const sdk_utils::PrefillResult prefill = waitForPrefill(gateTask, cur->signalProperties.spec);
+    if (prefill == sdk_utils::PrefillResult::Aborted && gateTask != nullptr
+        && gateTask->decoder != nullptr && gateTask->decoder->state() == StreamDecoderState::ERROR) {
+        // 等待期解码线程已进 ERROR：设备不必起，交给既有失败分支（§2.3）。
+        handleDecodeError(cur);
+        return;
+    }
     if (m_audioDev->start() != 0) {
         onMusicPlayListError(ErrorCode::AudioDeviceStartFailed, "audio device start failed",
                              static_cast<int>(cur->index), cur->fileProperties.fullPath);
@@ -447,9 +462,7 @@ void MusicPlayer::Impl::_next()
         m_switching.store(false);
         return;
     }
-    if (!m_musicList->nextSync()) {
-        m_switching.store(false);
-    }
+    endSegmentSwitch(m_musicList->nextSync());
 }
 
 void MusicPlayer::Impl::_previous()
@@ -466,9 +479,7 @@ void MusicPlayer::Impl::_previous()
         m_switching.store(false);
         return;
     }
-    if (!m_musicList->previousSync()) {
-        m_switching.store(false);
-    }
+    endSegmentSwitch(m_musicList->previousSync());
 }
 
 void MusicPlayer::Impl::_setCurrentIndex(int index)
@@ -485,52 +496,83 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
         m_switching.store(false);
         return;
     }
-    if (!m_musicList->setCurrentIndexSync(index)) {
-        m_switching.store(false);
-    }
+    endSegmentSwitch(m_musicList->setCurrentIndexSync(index));
 }
 
 void MusicPlayer::Impl::beginSegmentSwitch(const char *reason)
 {
     bumpTraceId(reason);
     m_switching.store(true);
+}
+
+void MusicPlayer::Impl::endSegmentSwitch(bool switched)
+{
+    if (!switched) {
+        // 切换没发生（无下一首 / 索引越界）：设备队列里正在播的 PCM 必须留着，
+        // 否则「点了下一首但列表到头」会变成一次人为欠流（规格 §3.2）。
+        m_switching.store(false);
+        return;
+    }
+    // 净空时机：切换是同步完成的，消费拍与本函数同处一条 WorkQueue 线程，
+    // 两者之间插不进任何写入，所以「切换后净空」与「切换前净空」对设备队列等价；
+    // 而失败路径因此不再白白清空。队列里最多是旧位置的 256 KB（≈1.49 s，§3.1）。
     if (m_audioDev != nullptr) {
         m_audioDev->clearQueue();
     }
 }
 
-size_t MusicPlayer::Impl::prefillTargetBytes() const
+size_t MusicPlayer::Impl::prefillTargetBytes(const AudioSpec &sourceSpec) const
 {
-    // 时间口径 150 ms（规格 §2.1），按设备 spec 换算成字节；下限 4096 B。
-    int bytesPerSample = m_devSpec.bytesPerSample;
-    if (bytesPerSample <= 0) {
-        bytesPerSample = getBytePreSampleByAudioFormat(m_devSpec.format);
+    // 规格 §2.1 的算式：max(4096, rate × channels × bytesPerSample ÷ 1000 × 150)。
+    // 必须先乘后除：44100/2/S16 得 26 460 B，与规格落点逐字节一致；先除后乘会把
+    // 44100/1000 截成 44，少算 60 B。
+    const uint64_t kPrefillMs = 150;
+    const size_t kFloor       = 4096;
+    auto bytesFor             = [kPrefillMs](const AudioSpec &spec) -> size_t {
+        int bytesPerSample = spec.bytesPerSample;
+        if (bytesPerSample <= 0) {
+            bytesPerSample = getBytePreSampleByAudioFormat(spec.format);
+        }
+        if (spec.sampleRate <= 0 || spec.numChannel <= 0 || bytesPerSample <= 0) {
+            return 0;
+        }
+        const uint64_t bytes = static_cast<uint64_t>(spec.sampleRate)
+            * static_cast<uint64_t>(spec.numChannel) * static_cast<uint64_t>(bytesPerSample)
+            * kPrefillMs / 1000;
+        return static_cast<size_t>(bytes);
+    };
+    // 设备 spec 先算；设备没给出可用 PCM 格式时退回源 spec 同式换算；
+    // 两者都不可用才用下限（§2.1 的三级回退）。
+    size_t target = bytesFor(m_devSpec);
+    if (target == 0) {
+        target = bytesFor(sourceSpec);
     }
-    if (m_devSpec.sampleRate > 0 && m_devSpec.numChannel > 0 && bytesPerSample > 0) {
-        const uint64_t bytesPerMs = static_cast<uint64_t>(m_devSpec.sampleRate)
-            * static_cast<uint64_t>(m_devSpec.numChannel)
-            * static_cast<uint64_t>(bytesPerSample) / 1000;
-        const uint64_t target = bytesPerMs * 150;
-        return target > 4096 ? static_cast<size_t>(target) : 4096;
-    }
-    return 4096;
+    return target > kFloor ? target : kFloor;
 }
 
-bool MusicPlayer::Impl::waitForPrefill(const PlaybackTaskPtr &task)
+sdk_utils::PrefillResult MusicPlayer::Impl::waitForPrefill(const PlaybackTaskPtr &task,
+                                                           const AudioSpec &sourceSpec)
 {
     if (task == nullptr || task->ring == nullptr || task->decoder == nullptr) {
-        return false;
+        return sdk_utils::PrefillResult::Aborted;
     }
-    const size_t target = prefillTargetBytes();
+    // 同一任务内不重复等待（§2.3）：暂停→恢复、重复 play() 都复用同一个任务，
+    // ring 里的 PCM 还在，再等一次只会白等到 300 ms 超时并误计 prefillTimeouts。
+    if (m_prefillWaitedTask.lock() == task) {
+        return sdk_utils::PrefillResult::Reached;
+    }
+    const size_t target = prefillTargetBytes(sourceSpec);
     const sdk_utils::PrefillResult result = sdk_utils::waitForPrefill(
         *task->ring, target, 300, [&task]() {
             const StreamDecoderState st = task->decoder->state();
             return st == StreamDecoderState::ERROR || st == StreamDecoderState::IDLE;
         });
     if (result == sdk_utils::PrefillResult::TimedOut) {
+        // 每个任务最多记一次：上面的身份标记保证同一任务不会走进这里第二次。
         task->decoder->notePrefillTimeout();
     }
-    return result == sdk_utils::PrefillResult::Reached;
+    m_prefillWaitedTask = task;
+    return result;
 }
 
 bool MusicPlayer::Impl::shouldFillSilence()
@@ -560,6 +602,13 @@ bool MusicPlayer::Impl::shouldFillSilence()
 
 void MusicPlayer::Impl::consumeAudioData()
 {
+    // 退役槽非阻塞回收（规格 §5.1 / §5.3）：旧解码线程已经退出时立刻 join 并释放，
+    // 让切换窗口在旧线程退出后即结束（窗口外回落到单任务峰值），而不是拖到下一次
+    // 控制事件。线程还在跑（例如卡在网络读）时这里什么都不做——消费拍上绝不等。
+    if (m_musicList != nullptr) {
+        m_musicList->reapRetiredTaskIfFinished();
+    }
+
     if (shouldFillSilence()) {
         const size_t len = 4096;
         std::vector<char> silence(len, 0);
@@ -576,6 +625,8 @@ void MusicPlayer::Impl::consumeAudioData()
         if (task != nullptr && task->decoder != nullptr) {
             task->decoder->noteSilenceFill();
             if (silenceWriteRet < 0) {
+                // 规格 §4.1 对 deviceWriteFailures 的定义是无条件「write() 返回 < 0 的次数」，
+                // 没有把静音分支排除在外：静音写失败同样说明设备侧出了问题，照记。
                 task->decoder->noteDeviceWriteFailure();
             }
         }

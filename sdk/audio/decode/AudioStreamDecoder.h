@@ -60,6 +60,9 @@ public:
     // 提取器 init 期给出的标称时长，播放期间不变；0 表示未知。
     uint64_t durationMs() const;
     bool canDecode() const;
+    // 解码线程是否已退出（含早退）。切歌软取消的退役槽据此做非阻塞回收：
+    // 只有为 true 时才 join，避免下一次控制事件被旧任务的阻塞读顶住（规格 §5）。
+    bool isThreadFinished() const { return m_threadFinished.load(std::memory_order_acquire); }
 
     // 进入 ERROR 之前先写原因：错误码只表达原因，处置由调用方按 ErrorInfo 决定
     // （docs/adr/0001-error-code-expresses-cause.md）。未进入 ERROR 时返回 Ok。
@@ -238,6 +241,8 @@ private:
     std::atomic<size_t> m_packetsPulledAtFirstPcm;
     std::chrono::steady_clock::time_point m_startClock;
     bool m_firstPcmNoted;
+    // 线程退出标记：threadFunc 的所有出口都置 true（含 null ring / null extractor 早退）。
+    std::atomic<bool> m_threadFinished;
 
     std::thread m_thread;
 };

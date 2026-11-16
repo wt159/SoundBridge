@@ -469,15 +469,11 @@ void MusicPlayList::retireCurrentTask()
     if (retired->decoder != nullptr) {
         retired->decoder->requestStop();
     }
-    PlaybackTaskPtr previous;
+    // 单槽：先回收上一个退役任务（其线程通常已退出，join 立即返回）。
+    joinRetiredTask();
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
-        previous.swap(m_retiredTask);
         m_retiredTask = retired;
-    }
-    // 单槽：上一个退役任务在这里收尾，仍由本控制线程 join。
-    if (previous != nullptr && previous->decoder != nullptr) {
-        previous->decoder->stop();
     }
 }
 
@@ -498,6 +494,23 @@ void MusicPlayList::joinRetiredTask()
     retired->ring.reset();
 }
 
+void MusicPlayList::reapRetiredTaskIfFinished()
+{
+    PlaybackTaskPtr retired;
+    {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        if (m_retiredTask == nullptr || m_retiredTask->decoder == nullptr
+            || !m_retiredTask->decoder->isThreadFinished()) {
+            return;
+        }
+        retired.swap(m_retiredTask);
+    }
+    // 线程已退出，stop() 里的 join 立即返回；仍由 WorkQueue 线程完成。
+    retired->decoder->stop();
+    retired->decoder.reset();
+    retired->ring.reset();
+}
+
 bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicProperties)
 {
     if (musicProperties == nullptr) {
@@ -514,7 +527,7 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     const auto switchStart = std::chrono::steady_clock::now();
 
     // 切歌软取消（规格 §5）：旧任务只 abort 并移入退役槽，不 join；
-    // 新任务立即启动，join 推迟到下一次切歌 / stop / 析构。
+    // 新任务立即启动，join 交给退役线程退出后的消费拍，或下一次切歌 / stop / 析构。
     retireCurrentTask();
 
     std::shared_ptr<AudioRingBuffer> ring

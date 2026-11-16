@@ -87,8 +87,9 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 // 一次播放任务：ring 与 decoder 由**当前曲目独占**，跨曲目不复用（规格 #55 第 4.3 节）。
 //
 // - 创建者：播放列表在做「这次要播哪首」的决定时造；消费者只借指针，不持有所有权。
-// - 销毁时机：切歌时旧任务移入退役槽（abort 不 join），join 推迟到下一次切歌 / stop /
-//   析构（规格 doc/buffering-switching-spec.md §5）；旧 ring 保活到 join 完成。
+// - 销毁时机：切歌时旧任务移入退役槽（abort 不 join），join 交给退役线程退出后的消费拍
+//   （`reapRetiredTaskIfFinished()`）或下一次切歌 / stop / 析构（规格
+//   doc/buffering-switching-spec.md §5）；旧 ring 保活到 join 完成。
 // - 成员声明顺序决定析构顺序：decoder 声明在 ring 之后，所以先析构 decoder（其析构函数
 //   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
 struct PlaybackTask {
@@ -159,6 +160,9 @@ public:
     // 丢弃当前任务：先回收退役任务，再 join 当前解码线程，然后销毁 ring
     // （旧 PCM 一律丢弃、不 drain）。stop 是终态，两个槽都同步 join。
     void stopCurrentTask();
+    // 非阻塞回收：退役任务的解码线程已退出时 join 并释放。消费定时任务每拍调用，
+    // 让「切换窗口」在旧线程退出后立即结束，而不是拖到下一次控制事件（规格 §5.3）。
+    void reapRetiredTaskIfFinished();
 
     // 本次播放会话内因坏数据失败过的曲目：自动跳过不再回头重试（同一曲不重试第二次）。
     // 用户按播放（MusicPlayer::play）时清空，视为新会话。
@@ -184,7 +188,8 @@ private:
     bool replacePlaybackTask(const MusicPropertiesPtr &musicProperties);
     // 把当前任务移入退役槽：只置取消位，不 join；槽满时先 join 上一个退役任务。
     void retireCurrentTask();
-    // 回收退役槽：同步 join 并释放。调用点只有下一次切歌 / stop / 析构。
+    // 回收退役槽：同步 join 并释放。调用点：下一次切歌 / stop / 析构，
+    // 以及退役线程退出后的消费拍（reapRetiredTaskIfFinished）。
     void joinRetiredTask();
     // 只清位置 / 数据量这类元数据；任务（ring / decoder）不属于曲目，不在遍历范围内。
     void resetTrackProgressExcept(size_t keepIndex);

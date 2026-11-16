@@ -67,6 +67,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_packetsPulledAtFirstPcm(0)
     , m_startClock()
     , m_firstPcmNoted(false)
+    , m_threadFinished(true)
     , m_thread()
 {
 }
@@ -211,9 +212,11 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     // 新段的清零由 threadFunc() 的第一件事完成。生产链每次播放任务都用新 ring，
     // 所以控制线程返回时消费端不可能从这颗 ring 里读到上一首的 PCM。
     if (startThread) {
+        m_threadFinished.store(false, std::memory_order_release);
         m_state.store(StreamDecoderState::DECODING);
         m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
     } else {
+        m_threadFinished.store(true, std::memory_order_release);
         m_state.store(StreamDecoderState::IDLE);
     }
     return sdk_utils::OK;
@@ -236,6 +239,7 @@ void AudioStreamDecoder::stop()
     if (m_thread.joinable()) {
         m_thread.join();
     }
+    m_threadFinished.store(true, std::memory_order_release);
     // P1：解码线程已退出，解绑裸指针，避免 decoder 析构后数据源持有悬垂 flag。
     if (m_abortSource != nullptr) {
         m_abortSource->setAbortFlag(nullptr);
@@ -535,6 +539,16 @@ bool AudioStreamDecoder::canDecode() const
 
 void AudioStreamDecoder::threadFunc()
 {
+    // 所有出口（含下面的早退）都置退出标记：退役槽据此做非阻塞回收（规格 §5）。
+    struct ExitMarker {
+        explicit ExitMarker(std::atomic<bool> &flag)
+            : finished(flag)
+        {
+        }
+        ~ExitMarker() { finished.store(true, std::memory_order_release); }
+        std::atomic<bool> &finished;
+    } exitMarker(m_threadFinished);
+
     if (m_ring == nullptr || m_extractor == nullptr) {
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;
