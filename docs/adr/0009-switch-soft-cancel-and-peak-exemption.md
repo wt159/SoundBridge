@@ -42,3 +42,11 @@
 - 需要新判据：旧 task 在新 task 启动后仍存活（`weak_ptr` 未过期）、下一次控制事件后过期、退役任务 ERROR 不上报。
 - 风险集中在任务生命周期：退役 task 必须持有 ring 的 shared_ptr 直到 decoder join 完成，`PlaybackTask` 的成员声明顺序（decoder 在 ring 之后）不得改。
 - 实现属图外 P2 effort，必须在 P1（首播门槛 + 欠流可观测）之后落地，否则无法判断软取消是否把欠流推高。
+
+## 附注（实现后补记，2026-11-16）
+
+上面的决策正文不动，这里只补实现落地时对「join 点」的细化：
+
+- 退役槽由消费拍每拍调 `MusicPlayList::reapRetiredTaskIfFinished()`，只在 `AudioStreamDecoder::isThreadFinished()` 为真时才 join。旧解码线程已退出（本地文件路径下是毫秒级）⇒ 下一次消费拍（≤10 ms）就把退役槽收掉，实际 join 点**早于**「下一次切歌 / stop / 析构」；旧线程卡在网络读 ⇒ 该拍什么都不做，join 仍由下一次切歌 / stop 承担，「后果」第二条的代价不变。
+- 不这么做的代价：join 只挂在控制事件上时，稳态播放期间会恒有 2 个 `PlaybackTask` 并存，切换窗口永不结束，规格 §5.3「窗口外回落到 `262144 + P + 64KB`」不成立。
+- 判据随之从「下一次控制事件后过期」改为「退役线程退出后由消费拍回收」：旧 task 在新 task 启动后仍存活（`weak_ptr` 未过期）→ `isThreadFinished()` 为真 → `reapRetiredTaskIfFinished()` 后过期。见 `sdk/test/unit/test_playback_lifecycle.cpp` 的 `PlaybackLifecycle`「switching tracks retires the previous task and reaps it once its thread exits」。
