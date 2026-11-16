@@ -1,9 +1,14 @@
 #include <AudioBuffer.h>
 #include <AudioRingBuffer.h>
 #include <ByteUtils.h>
+#include <PrefillGate.h>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <doctest/doctest.h>
 #include <string>
+#include <thread>
+#include <vector>
 
 TEST_SUITE("AudioRingBuffer")
 {
@@ -281,5 +286,61 @@ TEST_SUITE("AudioBuffer")
         char result[10] = { 0 };
         buffer.getData(50, 10, result);
         REQUIRE(result[0] == 1);
+    }
+}
+
+TEST_SUITE("PrefillGate")
+{
+    TEST_CASE("reaches the target once the writer fills the ring")
+    {
+        AudioRingBuffer ring(4096);
+        std::thread writer([&ring]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::vector<char> data(2048, 1);
+            ring.write(data.data(), data.size());
+        });
+
+        const auto begin = std::chrono::steady_clock::now();
+        const sdk_utils::PrefillResult result
+            = sdk_utils::waitForPrefill(ring, 1024, 1000, nullptr);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - begin)
+                                 .count();
+        writer.join();
+
+        CHECK(result == sdk_utils::PrefillResult::Reached);
+        CHECK(ring.availableRead() >= 1024);
+        CHECK_MESSAGE(elapsed < 500, "门槛在数据到齐后没有及时返回，实耗 " << elapsed << " ms");
+    }
+
+    TEST_CASE("times out when the writer never fills the ring")
+    {
+        AudioRingBuffer ring(4096);
+        const auto begin = std::chrono::steady_clock::now();
+        const sdk_utils::PrefillResult result
+            = sdk_utils::waitForPrefill(ring, 1024, 80, nullptr);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - begin)
+                                 .count();
+
+        CHECK(result == sdk_utils::PrefillResult::TimedOut);
+        CHECK_MESSAGE(elapsed >= 70, "超时返回早于预算，实耗 " << elapsed << " ms");
+        CHECK_MESSAGE(elapsed < 500, "超时返回远晚于预算，实耗 " << elapsed << " ms");
+    }
+
+    TEST_CASE("aborts when the caller cancels the wait")
+    {
+        AudioRingBuffer ring(4096);
+        std::atomic<bool> aborted(false);
+        std::thread canceller([&aborted]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            aborted.store(true);
+        });
+
+        const sdk_utils::PrefillResult result
+            = sdk_utils::waitForPrefill(ring, 1024, 1000, [&aborted]() { return aborted.load(); });
+        canceller.join();
+
+        CHECK(result == sdk_utils::PrefillResult::Aborted);
     }
 }

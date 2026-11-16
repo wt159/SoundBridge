@@ -40,4 +40,14 @@ struct StreamMetrics {
     //    每次拉包都要 demux 现场解析 cluster / block 头，这份成本只记独立指标、
     //    不设阈值、不参与任何判据（规格第 5 节末段）。其余格式恒为 0。
     uint64_t packetBoundaryMicros = 0;
+    // 7) 欠流拍数：消费端在「DECODING 且非静默窗口」时从 ring 读到 0 字节的次数
+    //    （10 ms 一拍，规格 doc/buffering-switching-spec.md §4）。它是观测项，
+    //    不设阈值、不作为门禁；silenceFills 的口径不受影响。
+    size_t underrunTicks = 0;
+    // 8) 设备写失败次数：AudioDevice::write() 返回 < 0 的次数。只记录，
+    //    不改写失败后的行为（规格 §4.5）。
+    size_t deviceWriteFailures = 0;
+    // 9) 首播门槛等待超时次数：设备 start 前等 ring 攒够门槛，300 ms 到点放行的次数
+    //    （规格 §2.3）。它是仪表，不是判据。
+    size_t prefillTimeouts = 0;
 };

@@ -57,6 +57,9 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_md5Mismatch(false)
     , m_peakHeldBytes(0)
     , m_silenceFills(0)
+    , m_underrunTicks(0)
+    , m_deviceWriteFailures(0)
+    , m_prefillTimeouts(0)
     , m_startToFirstPcmUs(0)
     , m_initScanUs(0)
     , m_packetHeldBytes(0)
@@ -64,6 +67,7 @@ AudioStreamDecoder::AudioStreamDecoder(AudioRingBuffer *ring, const AudioSpec &d
     , m_packetsPulledAtFirstPcm(0)
     , m_startClock()
     , m_firstPcmNoted(false)
+    , m_threadFinished(true)
     , m_thread()
 {
 }
@@ -116,6 +120,9 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     m_startClock = std::chrono::steady_clock::now();
     m_peakHeldBytes.store(0);
     m_silenceFills.store(0);
+    m_underrunTicks.store(0);
+    m_deviceWriteFailures.store(0);
+    m_prefillTimeouts.store(0);
     m_startToFirstPcmUs.store(0);
     m_initScanUs.store(0);
     m_packetHeldBytes = 0;
@@ -205,9 +212,11 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor, bool s
     // 新段的清零由 threadFunc() 的第一件事完成。生产链每次播放任务都用新 ring，
     // 所以控制线程返回时消费端不可能从这颗 ring 里读到上一首的 PCM。
     if (startThread) {
+        m_threadFinished.store(false, std::memory_order_release);
         m_state.store(StreamDecoderState::DECODING);
         m_thread = std::thread(&AudioStreamDecoder::threadFunc, this);
     } else {
+        m_threadFinished.store(true, std::memory_order_release);
         m_state.store(StreamDecoderState::IDLE);
     }
     return sdk_utils::OK;
@@ -218,13 +227,19 @@ sdk_utils::status_t AudioStreamDecoder::start(ExtractorHelper *extractor)
     return start(extractor, true);
 }
 
-void AudioStreamDecoder::stop()
+void AudioStreamDecoder::requestStop()
 {
     m_stopRequest.store(true);
     m_abortDecode.store(true);
+}
+
+void AudioStreamDecoder::stop()
+{
+    requestStop();
     if (m_thread.joinable()) {
         m_thread.join();
     }
+    m_threadFinished.store(true, std::memory_order_release);
     // P1：解码线程已退出，解绑裸指针，避免 decoder 析构后数据源持有悬垂 flag。
     if (m_abortSource != nullptr) {
         m_abortSource->setAbortFlag(nullptr);
@@ -278,6 +293,9 @@ StreamMetrics AudioStreamDecoder::metrics() const
     out.packetsPulledAtFirstPcm = m_packetsPulledAtFirstPcm.load();
     // 现场重算包边界的 CPU 成本是提取器侧的独立指标（只记录、不设阈值）。
     out.packetBoundaryMicros = m_extractor != nullptr ? m_extractor->packetBoundaryMicros() : 0;
+    out.underrunTicks        = m_underrunTicks.load();
+    out.deviceWriteFailures  = m_deviceWriteFailures.load();
+    out.prefillTimeouts      = m_prefillTimeouts.load();
     return out;
 }
 
@@ -320,6 +338,24 @@ void AudioStreamDecoder::noteSilenceFill()
         return;
     }
     m_silenceFills.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteUnderrun()
+{
+    // 消费端已在调用点判过窗口（DECODING + 非静默窗口），这里只记账。
+    // 不复用 noteSilenceFill() 的内部判据：解码器看不到 m_switching / shuttingDown
+    // （规格 doc/buffering-switching-spec.md §4.4）。
+    m_underrunTicks.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::noteDeviceWriteFailure()
+{
+    m_deviceWriteFailures.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioStreamDecoder::notePrefillTimeout()
+{
+    m_prefillTimeouts.fetch_add(1, std::memory_order_relaxed);
 }
 
 void AudioStreamDecoder::noteHeldBytes(size_t bytes)
@@ -503,6 +539,16 @@ bool AudioStreamDecoder::canDecode() const
 
 void AudioStreamDecoder::threadFunc()
 {
+    // 所有出口（含下面的早退）都置退出标记：退役槽据此做非阻塞回收（规格 §5）。
+    struct ExitMarker {
+        explicit ExitMarker(std::atomic<bool> &flag)
+            : finished(flag)
+        {
+        }
+        ~ExitMarker() { finished.store(true, std::memory_order_release); }
+        std::atomic<bool> &finished;
+    } exitMarker(m_threadFinished);
+
     if (m_ring == nullptr || m_extractor == nullptr) {
         setError(sdk::ErrorCode::DecodeInitFailed, "decoder thread without ring or extractor");
         return;

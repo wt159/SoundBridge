@@ -46,6 +46,10 @@ public:
     sdk_utils::status_t start(ExtractorHelper *extractor, bool startThread);
     // 置取消位并 join。幂等；join 只在调用它的线程上发生。
     void stop();
+    // 只置取消位、不 join：切歌软取消把旧任务移入退役槽时使用
+    // （规格 doc/buffering-switching-spec.md §5）。join 仍由 stop() 完成，调用点
+    // 是退役线程退出后的消费拍，以及下一次切歌 / stop / 析构。
+    void requestStop();
     void seekToMs(uint64_t targetMs);
 
     StreamDecoderState state() const;
@@ -56,6 +60,9 @@ public:
     // 提取器 init 期给出的标称时长，播放期间不变；0 表示未知。
     uint64_t durationMs() const;
     bool canDecode() const;
+    // 解码线程是否已退出（含早退）。切歌软取消的退役槽据此做非阻塞回收：
+    // 只有为 true 时才 join，避免下一次控制事件被旧任务的阻塞读顶住（规格 §5）。
+    bool isThreadFinished() const { return m_threadFinished.load(std::memory_order_acquire); }
 
     // 进入 ERROR 之前先写原因：错误码只表达原因，处置由调用方按 ErrorInfo 决定
     // （docs/adr/0001-error-code-expresses-cause.md）。未进入 ERROR 时返回 Ok。
@@ -78,6 +85,13 @@ public:
     // 生产消费端（MusicPlayer::Impl::consumeAudioData）与判据套件的消费端走同一个入口。
     // 只有解码器自己看得见的静默窗口（SEEKING / 已请求停止 / 已置取消位）里的调用才计数。
     void noteSilenceFill();
+    // 消费端在「DECODING 且非静默窗口」时从 ring 读到 0 字节：记一拍欠流。
+    // 观测项，不设阈值（规格 §4）。
+    void noteUnderrun();
+    // 设备 write() 返回 < 0：记一次写失败。只记录，不改失败后的行为（规格 §4.5）。
+    void noteDeviceWriteFailure();
+    // 首播门槛等待超时：记一次到点放行（规格 §2.3）。
+    void notePrefillTimeout();
 
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
@@ -214,6 +228,10 @@ private:
     // 消费线程会写 silenceFills，所以用原子量；其余只在解码线程写、任意线程读。
     std::atomic<size_t> m_peakHeldBytes;
     std::atomic<size_t> m_silenceFills;
+    // 欠流 / 写失败 / 门槛超时：消费线程写，任意线程读（规格 §4）。
+    std::atomic<size_t> m_underrunTicks;
+    std::atomic<size_t> m_deviceWriteFailures;
+    std::atomic<size_t> m_prefillTimeouts;
     std::atomic<uint64_t> m_startToFirstPcmUs;
     std::atomic<uint64_t> m_initScanUs;
     // 解码侧此刻手上的包字节数（alloc/free 增量，只在解码线程读写）。
@@ -223,6 +241,8 @@ private:
     std::atomic<size_t> m_packetsPulledAtFirstPcm;
     std::chrono::steady_clock::time_point m_startClock;
     bool m_firstPcmNoted;
+    // 线程退出标记：threadFunc 的所有出口都置 true（含 null ring / null extractor 早退）。
+    std::atomic<bool> m_threadFinished;
 
     std::thread m_thread;
 };

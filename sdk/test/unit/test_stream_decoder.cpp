@@ -928,3 +928,29 @@ TEST_SUITE("AbortSignalWiring Decoder")
         CHECK(source.injectedFlag() == nullptr);
     }
 }
+
+TEST_SUITE("DecoderInstrumentation")
+{
+    TEST_CASE("underrun, write-failure and prefill counters are independent and reset on start")
+    {
+        AudioRingBuffer ring(1024);
+        AudioStreamDecoder decoder(&ring, makeDevSpec());
+        decoder.noteUnderrun();
+        decoder.noteUnderrun();
+        decoder.noteDeviceWriteFailure();
+        decoder.notePrefillTimeout();
+
+        const StreamMetrics counts = decoder.metrics();
+        CHECK(counts.underrunTicks == 2);
+        CHECK(counts.deviceWriteFailures == 1);
+        CHECK(counts.prefillTimeouts == 1);
+        CHECK_MESSAGE(counts.silenceFills == 0, "新增计数不应污染 silenceFills");
+
+        // start() 先清零仪表再校验参数：null 提取器返回失败，但计数必须已归零。
+        CHECK(decoder.start(nullptr) != sdk_utils::OK);
+        const StreamMetrics reset = decoder.metrics();
+        CHECK(reset.underrunTicks == 0);
+        CHECK(reset.deviceWriteFailures == 0);
+        CHECK(reset.prefillTimeouts == 0);
+    }
+}
