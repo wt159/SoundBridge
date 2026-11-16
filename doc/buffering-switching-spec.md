@@ -70,7 +70,7 @@
 
 | 事件 | 净空设备队列 | 门闩 |
 |---|---|---|
-| `next` / `previous` / `setCurrentIndex`（用户发起） | **是** | `m_switching = true` → `clearQueue()` → 切任务 |
+| `next` / `previous` / `setCurrentIndex`（用户发起） | **是** | `m_switching = true` → 切任务 → `clearQueue()`（仅在切换真的发生时） |
 | `seek` | **是** | 不设 `m_switching`；SEEKING 窗口已存在 |
 | EOS 自动跳轨 | **否** | `m_switching.exchange(true)` 唯一赢家 |
 
@@ -78,7 +78,7 @@
 
 ### 3.2 出口与顺序
 
-- 新增私有 `MusicPlayer::Impl::beginSegmentSwitch()`：`bumpTraceId` → `m_switching.store(true)` → `m_audioDev->clearQueue()`；`_next` / `_previous` / `_setCurrentIndex` 三处改调它。
+- 新增私有 `MusicPlayer::Impl::beginSegmentSwitch()`（`bumpTraceId` → `m_switching.store(true)`）与配对的 `endSegmentSwitch(bool switched)`（`switched == true` 时 `m_audioDev->clearQueue()`）；`_next` / `_previous` / `_setCurrentIndex` 三处改调这一对。净空放在切换真的发生之后：无下一首 / 索引越界时不再白白清掉正在播的 PCM。切换与控制事件同处一条 WorkQueue 线程，两者之间插不进写入，故与「切换前净空」对设备队列等价。
 - `_setCurrentIndex` 的既有缺陷（当前漏调 `clearQueue`）随本规格修复。
 - `seek` 在参数校验全部通过后、`seekToMs()` 之前调 `clearQueue()`；不设 `m_switching`。
 - 切歌失败分支仍 `m_switching.store(false)`，不改变既有回滚语义。
