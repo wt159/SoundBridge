@@ -48,6 +48,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - 首帧实测 spec 无条件覆盖声明 spec、惰性重采样器留解码器；失败与 EOS 由解码侧**单一汇总**。
 - 五种「不可增量」格式（m4a / asf / wma / ape / mkv）统一契约、init 期可只读扫描，但**索引与逐包时间轴产物必须 O(1)**，播放期按 offset 现场重算包边界。
 
+> **首播门槛时点注记（2026-11-16，地图 #173）**：本节「首播阈值 = ring 可读量 ≥ 4096 B」是定稿时点的字节口径；现行裁定改为**时间口径**——冷启动在设备 `start()` 前攒 150 ms（按设备 spec 换算，下限 4096 B），等待上限 300 ms，超时照常起播。判据与落点见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §2 / [`docs/adr/0008-prefill-threshold-and-underrun-observability.md`](../docs/adr/0008-prefill-threshold-and-underrun-observability.md)。**本节既有行一字不动**。
+
 ## 4. 生命周期、所有权与线程约束（#51）
 
 ### 4.1 状态迁移表
@@ -84,6 +86,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 旧任务软取消后已写进 ring 的 PCM **一律丢弃、不播完**（seek / 切歌 / stop 都清 ring 与设备队列）。切歌窗口不进首播判据，单独记「切换开销」、不设阈值（与 init 扫描耗时同构），稳态窗口从新曲首帧交付后重新起算。
 
+> **E4 部分解冻时点注记（2026-11-16，地图 #173）**：E4「prev/next 预缓冲只留元数据」的稳态部分不变；新增的解冻只允许**旧任务延迟退出**（abort 不 join、单槽退役、下一次控制事件回收），**不预解下一首**。所有权与峰值豁免见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5 / [`docs/adr/0009-switch-soft-cancel-and-peak-exemption.md`](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。**本节既有行一字不动**。
+
 ### 4.4 线程约束清单
 
 | 接口 / 状态 | 允许线程 |
@@ -112,6 +116,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - 规格要求新增四个观测点：分配记账峰值、稳态静音填充计数器、start→首帧时间戳、init 扫描耗时；实现交图外执行票。
 - **观测点覆盖边界（已知代价）**：`shouldFillSilence()` 不含「ring 空」条件，`got==0` 时静默跳过本轮、不填静音。因此静音计数器只覆盖 shuttingDown / switching / SEEKING 三类窗口，欠流判据实际判的是「稳态窗口内静音填充为零」，**不是「无欠流」**。不推翻 #48 定案，但规格必须写明，避免实现者误以为计数器抓得到欠流。
 - 高 / 低水位具体数值属实现参数；m4a / mkv 现场重算包边界的 CPU 成本上界不在本规格设阈值，只记为独立指标；端到端 drift 仍未判，留作后续 effort 输入。
+
+> **欠流观测时点注记（2026-11-16，地图 #173）**：新增独立计数器 `underrunTicks`（10 ms 拍中 ring 为空）与 `deviceWriteFailures`，只观测、不设阈值、不进门禁；`silenceFills` 的语义与 `== 0` 稳态判据**一字不动**。口径见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §4。**本节既有行与判据数值一字不动**。
 
 ## 6. seek 策略（#49）
 
