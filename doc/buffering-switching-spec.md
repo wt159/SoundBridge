@@ -203,7 +203,12 @@
 | 切换窗口峰值 | `PlaybackLifecycle`「switching tracks retires the previous task and reaps it once its thread exits」 | 已覆盖「退役后保活 → 线程退出后消费拍回收」两端；窗口内外的字节峰值仍按 §5.3 公式手算 |
 | EOS 不净空 | — | **未自动化**：需要真实素材播到 EOS 且能读到设备队列，`MusicPlayer` 级夹具未暴露 `getQueuedBytes()` |
 
-两条未覆盖项的共同缺口是「播放器没有对外暴露 per-decoder 仪表与设备队列读数」。补这个缺口要在公开头上新增读数接口（新的能力位），超出本规格 §8「不新增能力位」的口径，也不是 #173 的目的地，因此本轮**只登记不实现**：`underrunTicks` / `deviceWriteFailures` 的记账侧由 `DecoderInstrumentation` 覆盖，窗口判据在 `consumeAudioData()` 里由 `shouldFillSilence()` 的既有分支保护，落在代码评审可见范围。
+两条未覆盖项的缺口不止「读数」一项：
+
+- **读数**：`MusicPlayer` 没有对外暴露 per-decoder 仪表与设备队列读数。仓库里已有 `AudioDevice::setForceOpenFailureForTest()` 这类测试接缝先例，补读数不算破例，但仍是公开头新增接口。
+- **场景注入**（真正的卡点）：`DecoderInstrumentation` 只能直接调 `noteXxx()`，等于自证；要造「300 ms 门槛超时」需要慢供给替身，要造「EOS 时设备队列仍有尾音」需要能控住队列的设备替身。#175 已确认 `DecodeSupplyObserver` 没有注入口，慢供给只能靠 `packetAt()` 替换，两者都是新接缝。
+
+因此本轮**只登记不实现**：`underrunTicks` / `deviceWriteFailures` 的记账侧由 `DecoderInstrumentation` 覆盖，窗口判据在 `consumeAudioData()` 里由 `shouldFillSilence()` 的既有分支保护，落在代码评审可见范围。要闭这两条判据，得先立一个「可控供给替身 / 设备队列替身」的 effort，不在本规格的目的地内。
 
 ## 8. 不可推翻前提核对
 
