@@ -132,6 +132,7 @@
 - 退役槽 `MusicPlayList::m_retiredTask`，与 `m_currentTask` 同受 `m_taskMutex` 保护。
 - `replacePlaybackTask()`：`retireCurrentTask()`（移槽 + `requestStop()`）→ 建新 ring / decoder 并 `start()` → 发布新 current。
 - 若退役槽已有旧任务：先 `joinRetiredTask()` 再移入新退役任务（单槽，最多一个待回收）。
+- 非阻塞回收：消费拍每拍调 `reapRetiredTaskIfFinished()`，**只在 `decoder->isThreadFinished()` 为真时**才 join。旧线程已退出 ⇒ join 立即返回；旧线程还在跑（含卡在网络读）⇒ 这一拍什么都不做，绝不在消费拍上等。
 - `stopCurrentTask()`：先 join retired，再 join current；`stop` 是终态，不走退役槽。
 - 析构：`~MusicPlayList` join 两槽；`~MusicPlayer::Impl` 仍先 `m_workQueue.shutdown()` 再走 `_releaseAudio()`。
 
@@ -174,7 +175,7 @@
 | `ring->read()` / 10 ms `consumeAudioData()` / 静音填充 / `noteUnderrun()` | WorkQueue 消费线程 | 唯一消费者；不变 |
 | `ring->reset()` | 仅解码线程 | SEEKING / switching 静默窗口内；不变 |
 | `requestStop()` | WorkQueue 线程 | 只置位，不 join |
-| `stop()`（join） | WorkQueue 线程 | 新任务启动前 / 下一次控制事件 / 析构 |
+| `stop()`（join） | WorkQueue 线程 | 新任务启动前 / 下一次控制事件 / 退役线程退出后的消费拍 / 析构 |
 | 退役槽读写 | WorkQueue 线程 | 与 current 同锁 |
 | 设备 `open` / `start` / `stop` / `close` / `clearQueue` | WorkQueue 线程 | 不变 |
 | 首播门槛等待 | WorkQueue 控制线程 | 设备 open 后、start 前；≤300 ms |
@@ -191,6 +192,18 @@
 | EOS 不净空 | 真实素材播到 EOS | `getQueuedBytes()` 瞬间归零 | `sdk_player_integration` |
 
 **预算**：不新增 ctest 目标（保持 14 个），不放宽任何 `TIMEOUT`，BadInput 55 例 / 398 断言基线不动；新增用例 ≤6 条，等待类断言一律「事件 + 上限」。
+
+### 7.1 覆盖状态（`2b4a26c82` 落地后核对）
+
+| 判据 | 自动化落点 | 状态 |
+|---|---|---|
+| 首播门槛生效 | `PrefillGate`「reaches the target once the writer fills the ring」 | 已覆盖 |
+| 门槛超时降级 | `PrefillGate`「times out when the writer never fills the ring」（短预算、断言返回 `false` 与实耗区间）；`DecoderInstrumentation`「underrun, write-failure and prefill counters are independent and reset on start」覆盖 `prefillTimeouts` 的记账与随 `start()` 清零 | 记账侧已覆盖；「`_play()` 在 `TimedOut` 时调 `notePrefillTimeout()`」这条接线无自动化入口 |
+| 欠流计数 / 静默窗口不计数 | — | **未自动化**：`underrunTicks` 只由 `MusicPlayer::Impl::consumeAudioData()` 写，而 sdk 公开头没有 per-decoder 仪表读数（#175），`StreamingBudget` 的 decoder 级夹具够不到消费拍 |
+| 切换窗口峰值 | `PlaybackLifecycle`「switching tracks retires the previous task and reaps it once its thread exits」 | 已覆盖「退役后保活 → 线程退出后消费拍回收」两端；窗口内外的字节峰值仍按 §5.3 公式手算 |
+| EOS 不净空 | — | **未自动化**：需要真实素材播到 EOS 且能读到设备队列，`MusicPlayer` 级夹具未暴露 `getQueuedBytes()` |
+
+两条未覆盖项的共同缺口是「播放器没有对外暴露 per-decoder 仪表与设备队列读数」。补这个缺口要在公开头上新增读数接口（新的能力位），超出本规格 §8「不新增能力位」的口径，也不是 #173 的目的地，因此本轮**只登记不实现**：`underrunTicks` / `deviceWriteFailures` 的记账侧由 `DecoderInstrumentation` 覆盖，窗口判据在 `consumeAudioData()` 里由 `shouldFillSilence()` 的既有分支保护，落在代码评审可见范围。
 
 ## 8. 不可推翻前提核对
 
