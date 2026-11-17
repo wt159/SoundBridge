@@ -223,7 +223,7 @@
 | 切换失败不净空 | `MusicPlayer Interactive Paths` | `switch failure keeps the device queue` | 同上 |
 | 切换成功净空（对照） | `MusicPlayer Interactive Paths` | `successful switch clears the device queue` | 同上 |
 
-四条用例经 `SB_TEST_INTERACTION_SUITES` 进 `sdk_interaction_tests`，不新增 ctest 目标、不动任何 `TIMEOUT`。代码在 PR [#193](https://github.com/wt159/SoundBridge/pull/193)；合并前，下表所列用例只存在于该分支，master 上尚无同名用例。
+四条用例经 `SB_TEST_INTERACTION_SUITES` 进 `sdk_interaction_tests`，不新增 ctest 目标、不动任何 `TIMEOUT`。代码经 PR [#193](https://github.com/wt159/SoundBridge/pull/193) 合并（`6614444fb`）；该 PR 合并前，下表所列用例只存在于其分支，master 上没有同名用例。
 
 两处口径更正，原句保留、仅在此记明实际语义：
 
