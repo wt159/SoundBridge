@@ -38,6 +38,8 @@ public:
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+    size_t queuedBytesForTest() const;
+    StreamMetrics metricsForTest() const;
 
 protected:
     void _addMusic(const std::string &musicPath);
@@ -300,6 +302,24 @@ void MusicPlayer::Impl::setAutoSkipOnError(bool enabled)
 bool MusicPlayer::Impl::autoSkipOnError() const
 {
     return m_autoSkipOnError.load();
+}
+
+size_t MusicPlayer::Impl::queuedBytesForTest() const
+{
+    // getQueuedBytes() 在设备未 open 时本身返回 0，这里不特判。
+    return m_audioDev != nullptr ? m_audioDev->getQueuedBytes() : 0;
+}
+
+StreamMetrics MusicPlayer::Impl::metricsForTest() const
+{
+    if (m_musicList == nullptr) {
+        return StreamMetrics {};
+    }
+    PlaybackTaskPtr task = m_musicList->currentTask();
+    if (task == nullptr || task->decoder == nullptr) {
+        return StreamMetrics {};
+    }
+    return task->decoder->metrics();
 }
 
 void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
@@ -1047,5 +1067,15 @@ void MusicPlayer::setAutoSkipOnError(bool enabled)
 bool MusicPlayer::autoSkipOnError() const
 {
     return m_impl->autoSkipOnError();
+}
+
+size_t MusicPlayer::queuedBytesForTest() const
+{
+    return m_impl->queuedBytesForTest();
+}
+
+StreamMetrics MusicPlayer::metricsForTest() const
+{
+    return m_impl->metricsForTest();
 }
 }

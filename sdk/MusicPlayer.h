@@ -12,6 +12,7 @@
 #pragma once
 #include "ErrorCode.hpp"
 #include "PlaybackMode.h"
+#include "StreamMetrics.h"
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -72,6 +73,11 @@ public:
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+
+    // 仅供测试（ADR 0010）：设备队列当前深度（字节）。不进入 soundbridge::Player 的对外契约。
+    size_t queuedBytesForTest() const;
+    // 仅供测试（ADR 0010）：当前播放任务的解码器仪表快照；无任务时返回零值。
+    StreamMetrics metricsForTest() const;
 
 private:
     class Impl;

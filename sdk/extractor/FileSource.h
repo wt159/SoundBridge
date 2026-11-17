@@ -24,6 +24,12 @@ public:
 
     virtual std::string toString() { return m_name; }
 
+    // 仅供测试（ADR 0010）：把 payload 读取放慢，用来制造稳态欠流。
+    // 读点落在解码线程，是对 AGENTS.md「测试钩子绝不落解码线程」的显式例外，
+    // 例外边界：只此一处、默认 0（零生产开销）、release/acquire、只对 size >= 4096
+    // 的读生效（头部与格式探测的小读不受影响）、不得照抄成通例。
+    static void setReadDelayForTest(uint32_t ms);
+
 private:
     std::string getExtensionName(const std::string &filename);
 
