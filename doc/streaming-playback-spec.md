@@ -88,7 +88,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 > **E4 部分解冻时点注记（2026-11-16，地图 #173）**：E4「prev/next 预缓冲只留元数据」的稳态部分不变；新增的解冻只允许**旧任务延迟退出**（abort 不 join、单槽退役、消费拍在旧线程退出后回收），**不预解下一首**。所有权与峰值豁免见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5 / [`docs/adr/0009-switch-soft-cancel-and-peak-exemption.md`](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。**本节既有行一字不动**。
 
-> **旧任务退役时点注记（2026-11-16，地图 #173）**：§4.1 切歌行的「新任务 `start()` 之前销毁旧 ring」、§4.2 的「join 必须由发起新任务的同一线程在新任务启动前完成」、§4.3 表中 `AudioRingBuffer`「新任务 `start()` 之前引用计数归零」与 `AudioStreamDecoder`「join 由发起新任务的线程在启动前完成」、§4.4 的「join 在新任务启动前」，都是**定稿时点的同步 join 口径**。现行裁定改为软取消：旧任务只置取消位并移入单槽退役，**旧 ring 保活**；join 由退役线程退出后的消费拍（`isThreadFinished()` 为真才 join，消费拍上绝不等）、下一次切歌、`stop()` 或析构完成。不变的部分：旧任务在 EOS 汇总后停止写 ring、不持有新曲 ring、不预解下一首；状态迁移、判据数值、10 ms push 与「不给 ring 加 mutex」一字不动。口径见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5.1 / [ADR 0009](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。
+> **旧任务退役时点注记（2026-11-16，地图 #173）**：§4.1 `play` 行的「`start()` 先 stop+join 旧线程」与切歌行的「新任务 `start()` 之前销毁旧 ring」、§4.2 的「join 必须由发起新任务的同一线程在新任务启动前完成」、§4.3 表中 `AudioRingBuffer`「新任务 `start()` 之前引用计数归零」与 `AudioStreamDecoder`「join 由发起新任务的线程在启动前完成」、§4.4 的「join 在新任务启动前」，都是**定稿时点的同步 join 口径**。现行裁定改为软取消：旧任务只置取消位并移入单槽退役，**旧 ring 保活**；join 由退役线程退出后的消费拍（`isThreadFinished()` 为真才 join，消费拍上绝不等）、下一次切歌、`stop()` 或析构完成。不变的部分：旧任务在 EOS 汇总后停止写 ring、不持有新曲 ring、不预解下一首；状态迁移、判据数值、10 ms push 与「不给 ring 加 mutex」一字不动。口径见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5.1 / [ADR 0009](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。
 
 ### 4.4 线程约束清单
 
