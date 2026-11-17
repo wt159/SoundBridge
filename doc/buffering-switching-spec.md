@@ -210,6 +210,28 @@
 
 因此本轮**只登记不实现**：`underrunTicks` / `deviceWriteFailures` 的记账侧由 `DecoderInstrumentation` 覆盖，窗口判据在 `consumeAudioData()` 里由 `shouldFillSilence()` 的既有分支保护，落在代码评审可见范围。要闭这两条判据，得先立一个「可控供给替身 / 设备队列替身」的 effort，不在本规格的目的地内。
 
+### 7.1.1 时点注记（2026-11-17，只新增、不改上表任何单元格）
+
+上表的「未自动化」记录的是 `2b4a26c82` 时点的事实，已过期但不修改：改格会切断「哪一版规格对应哪一版代码」的线索。以下按时间顺序追加。
+
+三条判据已可自动化，接缝与判别式的决策记录在 [ADR 0010](../../docs/adr/0010-test-injection-seams-and-criteria.md)，来源是[地图：三条待验证播放行为判据的可测试化](https://github.com/wt159/SoundBridge/issues/184)。落点名（套件 / 用例 / 文件，不写行号）：
+
+| 判据 | 套件 | 用例 | 文件 |
+|---|---|---|---|
+| 欠流计数 / 静默窗口不计数 | `Playback Criteria` | `steady-state underrun is counted` | `sdk/test/unit/test_player_integration.cpp` |
+| EOS 不净空 | `Playback Criteria` | `EOS keeps the device queue` | 同上 |
+| 切换失败不净空 | `Playback Criteria` | `switch failure keeps the device queue` | 同上 |
+| 切换成功净空（对照） | `Playback Criteria` | `successful switch clears the device queue` | 同上 |
+
+四条用例经 `SB_TEST_INTERACTION_SUITES` 进 `sdk_interaction_tests`，不新增 ctest 目标、不动任何 `TIMEOUT`。
+
+两处口径更正，原句保留、仅在此记明实际语义：
+
+- `silenceFills` 只覆盖 SEEKING 窗口。上文第 209 行提到的「三类窗口」是记账侧的意图描述，不是计数器的实际覆盖范围——解码器看不到 `m_switching` / `shuttingDown`（`sdk/audio/decode/AudioStreamDecoder.cpp:346`）。
+- 队列 256 KB 上限来自应用侧 `kQueueThreshold`（`sdk/MusicPlayer.cpp:648`），SDL 侧不设限。
+
+一条范围声明：以上判据在 CI 的 dummy 驱动下成立（两个工作流都设 `SDL_AUDIODRIVER=dummy`），**真实设备行为仍只由人工冒烟覆盖**——§11 的「可测不等于已自动化」原句继续有效。
+
 ## 8. 不可推翻前提核对
 
 | 前提（来源） | 本规格处置 |
