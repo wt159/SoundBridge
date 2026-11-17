@@ -86,7 +86,9 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 旧任务软取消后已写进 ring 的 PCM **一律丢弃、不播完**（seek / 切歌 / stop 都清 ring 与设备队列）。切歌窗口不进首播判据，单独记「切换开销」、不设阈值（与 init 扫描耗时同构），稳态窗口从新曲首帧交付后重新起算。
 
-> **E4 部分解冻时点注记（2026-11-16，地图 #173）**：E4「prev/next 预缓冲只留元数据」的稳态部分不变；新增的解冻只允许**旧任务延迟退出**（abort 不 join、单槽退役、下一次控制事件回收），**不预解下一首**。所有权与峰值豁免见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5 / [`docs/adr/0009-switch-soft-cancel-and-peak-exemption.md`](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。**本节既有行一字不动**。
+> **E4 部分解冻时点注记（2026-11-16，地图 #173）**：E4「prev/next 预缓冲只留元数据」的稳态部分不变；新增的解冻只允许**旧任务延迟退出**（abort 不 join、单槽退役、消费拍在旧线程退出后回收），**不预解下一首**。所有权与峰值豁免见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5 / [`docs/adr/0009-switch-soft-cancel-and-peak-exemption.md`](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。**本节既有行一字不动**。
+
+> **旧任务退役时点注记（2026-11-16，地图 #173）**：§4.1 切歌行的「新任务 `start()` 之前销毁旧 ring」、§4.2 的「join 必须由发起新任务的同一线程在新任务启动前完成」、§4.3 表中 `AudioRingBuffer`「新任务 `start()` 之前引用计数归零」与 `AudioStreamDecoder`「join 由发起新任务的线程在启动前完成」、§4.4 的「join 在新任务启动前」，都是**定稿时点的同步 join 口径**。现行裁定改为软取消：旧任务只置取消位并移入单槽退役，**旧 ring 保活**；join 由退役线程退出后的消费拍（`isThreadFinished()` 为真才 join，消费拍上绝不等）、下一次切歌、`stop()` 或析构完成。不变的部分：旧任务在 EOS 汇总后停止写 ring、不持有新曲 ring、不预解下一首；状态迁移、判据数值、10 ms push 与「不给 ring 加 mutex」一字不动。口径见 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5.1 / [ADR 0009](../docs/adr/0009-switch-soft-cancel-and-peak-exemption.md)。
 
 ### 4.4 线程约束清单
 
@@ -251,6 +253,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 | 端到端 drift | 播放时钟与源时钟在长时播放下的累积偏差。**仍未判**：本票只登记口径，不给数值判据、不设阈值、不改判据 | 本规格只登记口径；判定与阈值属后续 effort（见 #55 Out of Scope / Further Notes） |
 
 - 与四个仪表的关系：启动开销对应 `initScanUs`；切换开销来自生产链日志、不来自 `StreamMetrics`；drift 在 `StreamMetrics` 里**没有**现成仪表，本票不新增仪表 / 观测点。
+
+> **切换开销口径时点注记（2026-11-16，地图 #173）**：上表「切换开销」行写的是「新任务 `start()` 之前销毁旧任务（stop+join 旧线程、旧 ring 引用计数归零、建新 ring / decoder）」的耗时。软取消落地后切歌路径不再 join，实测窗口改为「旧任务退役（只置取消位）→ 新 ring / decoder 建好 → 新任务 `start()` 返回」；指标名、单位、`Metrics::RecordTiming` 落点与「只记录、不进首播判据、不设阈值」全部不变。**本表既有行一字不动**。
 
 ### 12.3 稳态欠流判据的假定（本票再次写明）
 
