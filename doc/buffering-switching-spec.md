@@ -218,10 +218,10 @@
 
 | 判据 | 套件 | 用例 | 文件 |
 |---|---|---|---|
-| 欠流计数 / 静默窗口不计数 | `Playback Criteria` | `steady-state underrun is counted` | `sdk/test/unit/test_player_integration.cpp` |
-| EOS 不净空 | `Playback Criteria` | `EOS keeps the device queue` | 同上 |
-| 切换失败不净空 | `Playback Criteria` | `switch failure keeps the device queue` | 同上 |
-| 切换成功净空（对照） | `Playback Criteria` | `successful switch clears the device queue` | 同上 |
+| 欠流计数 / 静默窗口不计数 | `MusicPlayer Interactive Paths` | `steady-state underrun is counted` | `sdk/test/unit/test_player_integration.cpp` |
+| EOS 不净空 | `MusicPlayer Interactive Paths` | `EOS keeps the device queue` | 同上 |
+| 切换失败不净空 | `MusicPlayer Interactive Paths` | `switch failure keeps the device queue` | 同上 |
+| 切换成功净空（对照） | `MusicPlayer Interactive Paths` | `successful switch clears the device queue` | 同上 |
 
 四条用例经 `SB_TEST_INTERACTION_SUITES` 进 `sdk_interaction_tests`，不新增 ctest 目标、不动任何 `TIMEOUT`。
 
