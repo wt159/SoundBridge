@@ -49,7 +49,7 @@
 ### 2.3 超时与失败
 
 - 超时：**照常 `start()`**，不清队列、不报错；解码器仪表 `prefillTimeouts` 加一（per-decoder，随 `start()` 清零）。同一任务内不再等第二次，不临时降低门槛。
-- 等待期解码线程进入 `ERROR` / `IDLE`：立即退出等待，交给既有 `handleDecodeError` / `_play()` 失败分支；总等待仍 ≤ 300 ms。
+- 等待期解码线程进入 `ERROR` / `IDLE`：立即退出等待；`ERROR` 走既有 `handleDecodeError`（设备不必 `start`），`IDLE` 不设失败分支——放行起播，由既有 EOS 汇总与切换分支接管（极短素材 / 空源会走到这里）。总等待仍 ≤ 300 ms。
 - 网络源：`fetchHead()` 嗅探在提取器构造期完成，不在等待窗口；首包可能受 `rw_timeout=3 s` 支配，300 ms 到点放行（§2.5）。
 
 ### 2.4 豁免
