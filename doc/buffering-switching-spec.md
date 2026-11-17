@@ -214,7 +214,7 @@
 
 上表的「未自动化」记录的是 `2b4a26c82` 时点的事实，已过期但不修改：改格会切断「哪一版规格对应哪一版代码」的线索。以下按时间顺序追加。
 
-三条判据已可自动化，接缝与判别式的决策记录在 [ADR 0010](../../docs/adr/0010-test-injection-seams-and-criteria.md)，来源是[地图：三条待验证播放行为判据的可测试化](https://github.com/wt159/SoundBridge/issues/184)。落点名（套件 / 用例 / 文件，不写行号）：
+三条判据已可自动化，接缝与判别式的决策记录在 [ADR 0010](../docs/adr/0010-test-injection-seams-and-criteria.md)，来源是[地图：三条待验证播放行为判据的可测试化](https://github.com/wt159/SoundBridge/issues/184)。落点名（套件 / 用例 / 文件，不写行号）：
 
 | 判据 | 套件 | 用例 | 文件 |
 |---|---|---|---|
