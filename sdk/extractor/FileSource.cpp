@@ -1,12 +1,20 @@
 #include "FileSource.h"
 #include "LogWrapper.h"
 #include "Utf8Path.h"
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <memory>
+#include <thread>
 
 #define LOG_TAG "FileSource"
 
 using namespace sdk_utils;
+
+namespace {
+// 仅供测试（ADR 0010）：见 FileSource.h 的例外边界。默认 0，生产路径零开销。
+std::atomic<uint32_t> g_readDelayMs(0);
+} // namespace
 
 FileSource::FileSource(const char *filename)
 #ifdef _WIN32
@@ -72,6 +80,11 @@ FileSource::~FileSource()
 #endif
 }
 
+void FileSource::setReadDelayForTest(uint32_t ms)
+{
+    g_readDelayMs.store(ms, std::memory_order_release);
+}
+
 bool FileSource::isOpen() const
 {
 #ifdef _WIN32
@@ -101,6 +114,13 @@ ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
         if ((uint64_t)size > numAvailable) {
             size = numAvailable;
         }
+    }
+
+    // 仅供测试（ADR 0010）：放慢 payload 读取，制造稳态欠流。只对 >= 4096 B 的读生效，
+    // 头部与格式探测的 8~70 B 小读保持原速。
+    const uint32_t delayMs = g_readDelayMs.load(std::memory_order_acquire);
+    if (delayMs > 0 && size >= 4096) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
     }
 
 #ifdef _WIN32

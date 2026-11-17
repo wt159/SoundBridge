@@ -199,6 +199,62 @@ bool copyMediaFile(const std::string &source, const std::string &target)
         return false;
     return writeAllBytes(target, bytes);
 }
+
+// ---- 缓冲与会话切换规格（doc/buffering-switching-spec.md §7）的合成素材 ----------
+// 标准 44 字节 RIFF/WAVE 头 + PCM16 / 44.1 kHz / 双声道零数据。
+// 用合成静音而不是真实素材：EOS / 欠流判据要的是可控时长，零振幅不引入解码差异。
+std::vector<char> makeSilentWavBytes(int seconds)
+{
+    const uint32_t sampleRate    = 44100;
+    const uint16_t channels      = 2;
+    const uint16_t bitsPerSample = 16;
+    const uint32_t blockAlign    = channels * bitsPerSample / 8;
+    const uint32_t dataSize
+        = sampleRate * blockAlign * static_cast<uint32_t>(seconds < 1 ? 1 : seconds);
+    std::vector<char> bytes(44 + dataSize, 0);
+
+    auto putU16 = [&bytes](size_t offset, uint16_t value) {
+        bytes[offset]     = static_cast<char>(value & 0xFF);
+        bytes[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
+    };
+    auto putU32 = [&bytes](size_t offset, uint32_t value) {
+        for (int i = 0; i < 4; ++i) {
+            bytes[offset + i] = static_cast<char>((value >> (8 * i)) & 0xFF);
+        }
+    };
+
+    std::memcpy(&bytes[0], "RIFF", 4);
+    putU32(4, 36 + dataSize);
+    std::memcpy(&bytes[8], "WAVE", 4);
+    std::memcpy(&bytes[12], "fmt ", 4);
+    putU32(16, 16);
+    putU16(20, 1); // WAVE_FORMAT_PCM
+    putU16(22, channels);
+    putU32(24, sampleRate);
+    putU32(28, sampleRate * blockAlign);
+    putU16(32, static_cast<uint16_t>(blockAlign));
+    putU16(34, bitsPerSample);
+    std::memcpy(&bytes[36], "data", 4);
+    putU32(40, dataSize);
+    return bytes;
+}
+
+// ADR 0010 测试钩子的 RAII guard：析构归零，避免进程级开关泄漏给同一二进制里的后续用例。
+class ScopedReadDelay {
+public:
+    explicit ScopedReadDelay(uint32_t ms) { FileSource::setReadDelayForTest(ms); }
+    ~ScopedReadDelay() { FileSource::setReadDelayForTest(0); }
+    ScopedReadDelay(const ScopedReadDelay &)            = delete;
+    ScopedReadDelay &operator=(const ScopedReadDelay &) = delete;
+};
+
+// 设备队列先攒到足够大的基数，后续「净空 / 保留」的差额判据才有分辨力：
+// 起播瞬间队列可能只有一拍 4096 B，拿它当分母会被 20 ms 内的自然波动淹没。
+bool waitForQueuedBytes(MusicPlayer &player, size_t bytes, int timeoutMs)
+{
+    return waitFor([&player, bytes]() { return player.queuedBytesForTest() >= bytes; },
+                   timeoutMs, 10);
+}
 } // namespace
 
 TEST_SUITE("MusicPlayer State Transitions")
@@ -1257,6 +1313,180 @@ TEST_SUITE("MusicPlayer Interactive Paths")
                       "没有当前曲目时 stop() 不应该发状态变化回调");
         CHECK_MESSAGE(listener.index_change_count.load() == 0,
                       "没有当前曲目时 stop() 不应该发索引变化回调");
+    }
+
+    // ---- 缓冲与会话切换规格 §3 / §4 的设备队列与欠流判据 ----------------------
+    // 规格 §3.1 / §3.2：切换没有真正发生（索引越界）时必须保留正在播的 PCM。
+    // 注意：单曲列表的 next() 会取模回绕到自身（nextSync），那是「切换成功」，
+    // 不能用来构造失败分支；失败分支只能用越界的 setCurrentIndex。
+    TEST_CASE("switch failure keeps the device queue")
+    {
+        TempMediaDir temp("keepqueue");
+        if (!writeAllBytes(temp.file("only.wav"), makeSilentWavBytes(8))) {
+            skipCase("cannot synthesize silent wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        if (!waitForQueuedBytes(player, 64 * 1024, 3000)) {
+            skipCase("device queue never accumulated enough PCM");
+            return;
+        }
+
+        const size_t q0 = player.queuedBytesForTest();
+        player.setCurrentIndex(99); // 越界：setCurrentIndexSync 返回 false，切换不发生
+        // 给控制队列一个执行窗口：失败分支会走 endSegmentSwitch(false)，不清队列。
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const size_t q1 = player.queuedBytesForTest();
+
+        CHECK_MESSAGE(q1 > 0, "切换失败后设备队列被净空了（规格 §3.2 要求保留正在播的 PCM）");
+        CHECK_MESSAGE(q1 + 16384 >= q0,
+                      "切换失败后设备队列蒸发了 " << (q0 > q1 ? q0 - q1 : 0) << " B：q0=" << q0
+                                                  << " q1=" << q1);
+        player.stop();
+    }
+
+    // 规格 §3.1：用户发起的切换真的发生时才净空设备队列（对照用例）。
+    TEST_CASE("successful switch clears the device queue")
+    {
+        TempMediaDir temp("clearqueue");
+        if (!writeAllBytes(temp.file("first.wav"), makeSilentWavBytes(8))
+            || !writeAllBytes(temp.file("second.wav"), makeSilentWavBytes(8))) {
+            skipCase("cannot synthesize two-track playlist");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 2; }, 5000)) {
+            skipCase("two-track playlist did not load");
+            return;
+        }
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        // 基数取到接近 256 KB 的队列上限：q0/4 才有 48 KB 以上的余量，
+        // 不会和「净空后 50 ms 内新曲重新写入的 ≤20 KB」混淆。
+        if (!waitForQueuedBytes(player, 192 * 1024, 3000)) {
+            skipCase("device queue never accumulated enough PCM");
+            return;
+        }
+
+        const size_t q0                  = player.queuedBytesForTest();
+        const int indexChangesBeforeNext = listener.index_change_count.load();
+        player.next();
+        const bool switched = waitFor(
+            [&listener, indexChangesBeforeNext]() {
+                return listener.index_change_count.load() > indexChangesBeforeNext;
+            },
+            2000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const size_t q2 = player.queuedBytesForTest();
+
+        CHECK_MESSAGE(switched, "next() 在 2s 内没有完成切歌");
+        CHECK_MESSAGE(q2 < q0 / 4, "切换成功后设备队列没有净空：q0=" << q0 << " q2=" << q2);
+        player.stop();
+    }
+
+    // 规格 §3.1 / §7：EOS 自动跳轨不净空设备队列，让上一首的尾音自然播完。
+    // MusicPlayerState 没有独立的 EOS 态：单曲 EOS 会走 _stop()（净空），
+    // 所以只能观察「两曲列表自动跳轨」这一条不净空分支。
+    TEST_CASE("EOS keeps the device queue")
+    {
+        TempMediaDir temp("eosqueue");
+        if (!writeAllBytes(temp.file("first.wav"), makeSilentWavBytes(2))
+            || !writeAllBytes(temp.file("second.wav"), makeSilentWavBytes(2))) {
+            skipCase("cannot synthesize two-track playlist");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 2; }, 5000)) {
+            skipCase("two-track playlist did not load");
+            return;
+        }
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+
+        const int indexChangesBeforeEos = listener.index_change_count.load();
+        const bool advanced             = waitFor(
+            [&listener, indexChangesBeforeEos]() {
+                return listener.last_current_index.load() == 1
+                    && listener.index_change_count.load() > indexChangesBeforeEos;
+            },
+            8000);
+        // 立即读：尾音最多 256 KB（实测 ≈1.75 s @150 KB/s，见 ADR 0010），轮询间隔内不可能自然排空。
+        const size_t queued = player.queuedBytesForTest();
+        player.stop();
+
+        CHECK_MESSAGE(advanced, "2s 曲目在 8s 内没有走到 EOS 自动跳轨");
+        CHECK_MESSAGE(queued > 0,
+                      "EOS 自动跳轨把设备队列净空了（规格 §3.1 要求保留尾音）");
+    }
+
+    // 规格 §4 / §7：慢供给 + 快消费时，DECODING 且非静默窗口的 0 字节拍必须计数；
+    // silenceFills 的口径不动（只覆盖 SEEKING / switching / shuttingDown），欠流场景应为 0。
+    TEST_CASE("steady-state underrun is counted")
+    {
+        TempMediaDir temp("underrun");
+        if (!writeAllBytes(temp.file("only.wav"), makeSilentWavBytes(2))) {
+            skipCase("cannot synthesize silent wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+
+        // guard 声明在 player 之后：析构先归零延迟，再析构 player，stop 的 join 不被拖长。
+        ScopedReadDelay guard(500);
+        const auto started = std::chrono::steady_clock::now();
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        const StreamMetrics metrics = player.metricsForTest();
+        const int64_t elapsedMs      = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - started)
+                                           .count();
+        player.stop();
+        CHECK_MESSAGE(metrics.underrunTicks >= 3,
+                      "稳态欠流拍数没有累计到 3：" << metrics.underrunTicks);
+        // 一拍 10 ms 的物理上限，防「恒真」：计数不可能超过经过的消费拍数。
+        CHECK_MESSAGE(metrics.underrunTicks <= static_cast<size_t>(elapsedMs / 10),
+                      "欠流拍数 " << metrics.underrunTicks << " 超过经过时间 "
+                                  << elapsedMs << "ms / 10ms 的上限");
+        CHECK_MESSAGE(metrics.silenceFills == 0,
+                      "欠流场景不应产生静音填充，实际 " << metrics.silenceFills);
     }
 }
 
