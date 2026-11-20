@@ -1488,6 +1488,45 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         CHECK_MESSAGE(metrics.silenceFills == 0,
                       "欠流场景不应产生静音填充，实际 " << metrics.silenceFills);
     }
+
+    // 规格 §2.3 / §7.1：门槛 300 ms 到点必须放行起播，并记一次 prefillTimeouts。
+    // 场景与「steady-state underrun is counted」同源（500 ms 读延迟让 ring 在门槛窗口内为空），
+    // 但单独成条：欠流用例已经断言 silenceFills == 0，把门槛记账混进去会让一条红了两因难分。
+    TEST_CASE("prefill timeout degrades to playback instead of failing")
+    {
+        TempMediaDir temp("prefilltimeout");
+        if (!writeAllBytes(temp.file("only.wav"), makeSilentWavBytes(2))) {
+            skipCase("cannot synthesize silent wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+
+        // guard 声明在 player 之后：析构先归零延迟，再析构 player，stop 的 join 不被拖长。
+        ScopedReadDelay guard(500);
+        player.play();
+        // 首包要 500 ms 才到，门槛 300 ms 必然到点；PlayingState 在 start() 之后才置位，
+        // 而等待门槛在 start() 之前 ⇒ 观察到 PlayingState 即证明走的是「超时放行」分支。
+        const bool playing          = waitForState(player, MusicPlayerState::PlayingState);
+        // 必须在 stop() 之前读：stopCurrentTask() 会 decoder.reset()，之后只剩全零快照。
+        const StreamMetrics metrics = player.metricsForTest();
+        player.stop();
+
+        if (!playing) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        // 单任务上限为 1：m_prefillWaitedTask 保证同一任务只等一次门槛（§2.3）。
+        CHECK_MESSAGE(metrics.prefillTimeouts == 1,
+                      "门槛超时没有记一次账，实际 " << metrics.prefillTimeouts);
+    }
 }
 
 // issue #72 的 P0-3 / P2-11 / P2-12 在 issue 表格里指定落在
