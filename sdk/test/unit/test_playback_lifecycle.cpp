@@ -3,7 +3,9 @@
 #include <AudioCommon.hpp>
 #include <AudioRingBuffer.h>
 #include <AudioStreamDecoder.h>
+#include <ExtractorFactory.h>
 #include <ExtractorHelper.hpp>
+#include <FileSource.h>
 #include <MusicPlayList.h>
 #include <doctest/doctest.h>
 #include <algorithm>
@@ -12,6 +14,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -153,6 +156,27 @@ std::shared_ptr<sdk::MusicPlayList> makePlayList(RecordingPlayListCallback &call
     return playlist;
 }
 
+// 素材实测的单包最大字节数（判据里的 P）。与 test_streaming_budget.cpp 的
+// measurePacketProfile 同法：只量包形状、不解码，P 必须来自该素材，不写死常量。
+size_t maxPacketBytesOf(const std::string &path, const char *extension)
+{
+    FileSource source(path.c_str());
+    if (source.initCheck() != sdk_utils::OK) {
+        return 0;
+    }
+    std::shared_ptr<ExtractorHelper> extractor(
+        ExtractorFactory::createExtractor(&source, extension, true));
+    if (extractor == nullptr || extractor->initCheck() != sdk_utils::OK) {
+        return 0;
+    }
+    PacketCursor cursor(extractor.get());
+    AudioBuffer::AudioBufferPtr packet;
+    size_t maxBytes = 0;
+    while (cursor.nextPacket(packet)) {
+        maxBytes = std::max(maxBytes, packet->size());
+    }
+    return maxBytes;}
+
 } // namespace
 
 TEST_SUITE("PlaybackLifecycle")
@@ -279,6 +303,66 @@ TEST_SUITE("PlaybackLifecycle")
 
         playlist->stopCurrentTask();
         CHECK_MESSAGE(weakThirdRing.expired(), "stop 没有回收当前任务");
+    }
+
+    // 规格 §5.3 / §7.1：切换窗口（新任务 start() 起 → 旧任务 join 完成止）内，
+    // 同时在世的两个 decoder 各自的分配峰值都有界。上界写法对齐
+    // test_streaming_budget.cpp：ring + 2 × P + 64 KB（AVIO 余量）。
+    // peakHeldBytes 本身不含 ring 与 AVIO，所以这个上界带三重余量。
+    TEST_CASE("both decoders stay inside the held-bytes cap across a switch")
+    {
+        RealMediaFixture fixture;
+        if (!fixture.exists("music.wav")) {
+            return;
+        }
+
+        const std::string path        = fixture.mediaPath("music.wav");
+        const size_t maxPacketBytes   = maxPacketBytesOf(path, ".wav");
+        REQUIRE_MESSAGE(maxPacketBytes > 0, "无法从素材量出单包最大字节数");
+
+        RecordingPlayListCallback callback;
+        WorkQueue workQueue;
+        std::shared_ptr<sdk::MusicPlayList> playlist
+            = makePlayList(callback, workQueue, { path, path });
+        REQUIRE(playlist->getMusicCount() == 2);
+
+        REQUIRE(playlist->startCurrentTask());
+        // 持强引用：切歌后旧任务进退役槽，本用例要读它的仪表，不能让它被提前回收。
+        sdk::PlaybackTaskPtr oldTask = playlist->currentTask();
+        REQUIRE(oldTask != nullptr);
+        REQUIRE_MESSAGE(waitUntil([&oldTask]() { return oldTask->ring->availableRead() > 0; }, 5000),
+                        "旧任务启动后 ring 里没有 PCM");
+
+        // 切歌 = 软取消：旧任务保活、新任务已 start()，两个 decoder 在窗口内并存。
+        REQUIRE(playlist->setCurrentIndexSync(1));
+        sdk::PlaybackTaskPtr newTask = playlist->currentTask();
+        REQUIRE(newTask != nullptr);
+        CHECK_MESSAGE(newTask->decoder.get() != oldTask->decoder.get(), "切歌复用了上一首的 decoder");
+        REQUIRE_MESSAGE(waitUntil([&newTask]() { return newTask->ring->availableRead() > 0; }, 5000),
+                        "新任务启动后 ring 里没有 PCM");
+
+        // 窗口闭合 = 旧解码线程退出（§5.3）。线程退出后读数冻结，此时读到的才是最终峰值。
+        REQUIRE_MESSAGE(
+            waitUntil([&oldTask]() { return oldTask->decoder->isThreadFinished(); }, 5000),
+            "旧解码线程在 requestStop 之后没有退出");
+
+        const size_t upper = AudioRingBuffer::kDefaultCapacity + maxPacketBytes * 2 + 64 * 1024;
+        const StreamMetrics oldMetrics = oldTask->decoder->metrics();
+        const StreamMetrics newMetrics = newTask->decoder->metrics();
+        // 两条读数都必须非零：0 说明读的不是本次任务的记账（或账根本没记）。
+        CHECK_MESSAGE(oldMetrics.peakHeldBytes > 0, "退役 decoder 的峰值读数为 0，读数不是活的");
+        CHECK_MESSAGE(newMetrics.peakHeldBytes > 0, "新 decoder 的峰值读数为 0，读数不是活的");
+        CHECK_MESSAGE(oldMetrics.peakHeldBytes <= upper,
+                      "退役 decoder 的峰值 " << oldMetrics.peakHeldBytes << " 超过上界 " << upper
+                                             << "（P=" << maxPacketBytes << "）");
+        CHECK_MESSAGE(newMetrics.peakHeldBytes <= upper,
+                      "新 decoder 的峰值 " << newMetrics.peakHeldBytes << " 超过上界 " << upper
+                                           << "（P=" << maxPacketBytes << "）");
+        MESSAGE("switch window peak: P=" << maxPacketBytes << " upper=" << upper
+                                         << " old=" << oldMetrics.peakHeldBytes
+                                         << " new=" << newMetrics.peakHeldBytes);
+
+        playlist->stopCurrentTask();
     }
 
     TEST_CASE("stop drops the task and the next play starts a fresh one")
