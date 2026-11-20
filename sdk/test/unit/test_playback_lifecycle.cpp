@@ -333,16 +333,19 @@ TEST_SUITE("PlaybackLifecycle")
         // 持强引用：切歌后旧任务进退役槽，本用例要读它的仪表，不能让它被提前回收。
         sdk::PlaybackTaskPtr oldTask = playlist->currentTask();
         REQUIRE(oldTask != nullptr);
-        REQUIRE_MESSAGE(waitUntil([&oldTask]() { return oldTask->ring->availableRead() > 0; }, 5000),
-                        "旧任务启动后 ring 里没有 PCM");
+        REQUIRE_MESSAGE(
+            waitUntil([&oldTask]() { return oldTask->ring->availableRead() > 0; }, 5000),
+            "旧任务启动后 ring 里没有 PCM");
 
         // 切歌 = 软取消：旧任务保活、新任务已 start()，两个 decoder 在窗口内并存。
         REQUIRE(playlist->setCurrentIndexSync(1));
         sdk::PlaybackTaskPtr newTask = playlist->currentTask();
         REQUIRE(newTask != nullptr);
-        CHECK_MESSAGE(newTask->decoder.get() != oldTask->decoder.get(), "切歌复用了上一首的 decoder");
-        REQUIRE_MESSAGE(waitUntil([&newTask]() { return newTask->ring->availableRead() > 0; }, 5000),
-                        "新任务启动后 ring 里没有 PCM");
+        CHECK_MESSAGE(newTask->decoder.get() != oldTask->decoder.get(),
+                      "切歌复用了上一首的 decoder");
+        REQUIRE_MESSAGE(
+            waitUntil([&newTask]() { return newTask->ring->availableRead() > 0; }, 5000),
+            "新任务启动后 ring 里没有 PCM");
 
         // 窗口闭合 = 旧解码线程退出（§5.3）。线程退出后读数冻结，此时读到的才是最终峰值。
         REQUIRE_MESSAGE(
