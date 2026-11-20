@@ -56,6 +56,6 @@
 上面的决策正文不动。决策正文把窗口判据拆成「两个 decoder 各自 ≤ P」+「两个 `PlaybackTask` 并存、每个 ring 固定 262144 B」两半；落地核对后第一半的字面数值不成立：
 
 - `peakHeldBytes` 记的是解码器持有的 payload，稳态下同时约 4 包（本机实测 266240 B，`P = 65536 B`），所以「各自 ≤ P」在原供给形态下本来就量不到。
-- 自动化判据因此取 `AudioRingBuffer::kDefaultCapacity + 2 × P + 64 KB`（与 `sdk_streaming_budget_tests` 的稳态上界同式），它比字面口径宽；分辨力由「整片常驻」这一类回归保证（把 `WAVExtractor::heldPayloadBytes()` 临时改成返回 `m_dataSize` 时实测 1062068 B 越界）。用例见 `PlaybackLifecycle`「both decoders stay inside the held-bytes cap across a switch」。
+- 自动化判据因此取 `AudioRingBuffer::kDefaultCapacity + 2 × P + 64 KB`（与 `StreamingBudget` 套件（`sdk_streaming_tests`）的稳态上界同式），它比字面口径宽；分辨力由「整片常驻」这一类回归保证（把 `WAVExtractor::heldPayloadBytes()` 临时改成返回 `m_dataSize` 时实测 1062068 B 越界）。用例见 `PlaybackLifecycle`「both decoders stay inside the held-bytes cap across a switch」。
 - 差异只登记、不改本 ADR 的决策正文与规格 §5.3 既有行；规格侧登记在 `doc/buffering-switching-spec.md` §7.1.2，取值写法的理由见 [ADR 0010](0010-test-injection-seams-and-criteria.md) 的「补充（2026-11-20）」。
 - ring 口径那一半（窗口内 2 × 262144 B、窗口外回落）仍按 §5.3 公式手算，没有自动化用例。
