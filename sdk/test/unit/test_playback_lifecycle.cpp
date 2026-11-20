@@ -34,6 +34,8 @@ constexpr int kSampleRate      = 48000;
 constexpr int kChannels        = 1;
 constexpr int kBytesPerSample  = 2;
 constexpr uint64_t kBytesPerMs = (uint64_t)kSampleRate * kChannels * kBytesPerSample / 1000;
+// 峰值上界里的固定开销项：ffmpeg AVIO 缓冲余量，与 test_streaming_budget.cpp 同名同值。
+constexpr size_t kAvioHeadroomBytes = 64 * 1024;
 
 AudioSpec makeSpec(uint64_t durationMs)
 {
@@ -175,7 +177,8 @@ size_t maxPacketBytesOf(const std::string &path, const char *extension)
     while (cursor.nextPacket(packet)) {
         maxBytes = std::max(maxBytes, packet->size());
     }
-    return maxBytes;}
+    return maxBytes;
+}
 
 } // namespace
 
@@ -346,7 +349,8 @@ TEST_SUITE("PlaybackLifecycle")
             waitUntil([&oldTask]() { return oldTask->decoder->isThreadFinished(); }, 5000),
             "旧解码线程在 requestStop 之后没有退出");
 
-        const size_t upper = AudioRingBuffer::kDefaultCapacity + maxPacketBytes * 2 + 64 * 1024;
+        const size_t upper = AudioRingBuffer::kDefaultCapacity + maxPacketBytes * 2
+            + kAvioHeadroomBytes;
         const StreamMetrics oldMetrics = oldTask->decoder->metrics();
         const StreamMetrics newMetrics = newTask->decoder->metrics();
         // 两条读数都必须非零：0 说明读的不是本次任务的记账（或账根本没记）。

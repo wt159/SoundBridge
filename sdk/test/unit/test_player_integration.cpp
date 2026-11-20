@@ -1514,15 +1514,20 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         player.play();
         // 首包要 500 ms 才到，门槛 300 ms 必然到点；PlayingState 在 start() 之后才置位，
         // 而等待门槛在 start() 之前 ⇒ 观察到 PlayingState 即证明走的是「超时放行」分支。
-        const bool playing          = waitForState(player, MusicPlayerState::PlayingState);
+        // 上限取 10 s：链路预算 = 500 ms 读延迟 + 300 ms 门槛，约 12× 余量。
+        const bool playing = waitForState(player, MusicPlayerState::PlayingState, 10000);
         // 必须在 stop() 之前读：stopCurrentTask() 会 decoder.reset()，之后只剩全零快照。
         const StreamMetrics metrics = player.metricsForTest();
+        const MusicPlayerState stateAtRead = player.state();
         player.stop();
 
         if (!playing) {
             skipCase("no usable audio device: play never reached Playing");
             return;
         }
+        // 票面第二条：「超时后仍起播」的代理证据（PlayingState 在 m_audioDev->start() 之后置位）。
+        CHECK_MESSAGE(stateAtRead == MusicPlayerState::PlayingState,
+                      "门槛超时后没有进入 Playing（实际状态 " << static_cast<int>(stateAtRead) << "）");
         // 单任务上限为 1：m_prefillWaitedTask 保证同一任务只等一次门槛（§2.3）。
         CHECK_MESSAGE(metrics.prefillTimeouts == 1,
                       "门槛超时没有记一次账，实际 " << metrics.prefillTimeouts);
