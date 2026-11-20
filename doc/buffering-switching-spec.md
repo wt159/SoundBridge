@@ -247,6 +247,7 @@
 
 - `AudioDeviceStartFailed` 分支（`MusicPlayer.cpp` 的 `_play()` 内 `m_audioDev->start() != 0`）不可达：`AudioDevice::start()` 恒返回 0，只有将来让它返回真实结果时才可能触发。
 - §7 表格的「门槛超时降级」与「切换窗口峰值」两行，落点列写的 `sdk_playback_lifecycle_tests` 这个 ctest 目标都不存在；`PlaybackLifecycle` 实际跑在 `sdk_unit_tests` 里（分组真源 `sdk/test/CMakeLists.txt`），而「门槛超时降级」的落点已由本表改到 `MusicPlayer Interactive Paths`。
+- 同一张 §7 判据表的其余三行也指向不存在的目标：欠流计数 / 静默窗口不计数写 `sdk_streaming_budget_tests`、EOS 不净空写 `sdk_player_integration`，实际分别跑在 `sdk_streaming_tests` 与 `sdk_interaction_tests`（分组真源同上）；逐行清单见 [#173](https://github.com/wt159/SoundBridge/issues/173) 的落点核对 comment。既有行同样不改。
 
 切换窗口判据只覆盖「两个 decoder 各自的分配峰值」这一半；「窗口内两个 `PlaybackTask` 并存、每个 ring 固定 262144 B」与「窗口外回落到单任务口径」两半仍按 §5.3 公式手算，不在本时点内。
 

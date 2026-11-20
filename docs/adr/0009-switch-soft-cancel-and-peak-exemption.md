@@ -50,3 +50,12 @@
 - 退役槽由消费拍每拍调 `MusicPlayList::reapRetiredTaskIfFinished()`，只在 `AudioStreamDecoder::isThreadFinished()` 为真时才 join。旧解码线程已退出（本地文件路径下是毫秒级）⇒ 下一次消费拍（≤10 ms）就把退役槽收掉，实际 join 点**早于**「下一次切歌 / stop / 析构」；旧线程卡在网络读 ⇒ 该拍什么都不做，join 仍由下一次切歌 / stop 承担，「后果」第二条的代价不变。
 - 不这么做的代价：join 只挂在控制事件上时，稳态播放期间会恒有 2 个 `PlaybackTask` 并存，切换窗口永不结束，规格 §5.3「窗口外回落到 `262144 + P + 64KB`」不成立。
 - 判据随之从「下一次控制事件后过期」改为「退役线程退出后由消费拍回收」：旧 task 在新 task 启动后仍存活（`weak_ptr` 未过期）→ `isThreadFinished()` 为真 → `reapRetiredTaskIfFinished()` 后过期。见 `sdk/test/unit/test_playback_lifecycle.cpp` 的 `PlaybackLifecycle`「switching tracks retires the previous task and reaps it once its thread exits」。
+
+## 附注二（2026-11-20）：per-decoder 峰值的字面口径与实测不符
+
+上面的决策正文不动。决策正文把窗口判据拆成「两个 decoder 各自 ≤ P」+「两个 `PlaybackTask` 并存、每个 ring 固定 262144 B」两半；落地核对后第一半的字面数值不成立：
+
+- `peakHeldBytes` 记的是解码器持有的 payload，稳态下同时约 4 包（本机实测 266240 B，`P = 65536 B`），所以「各自 ≤ P」在原供给形态下本来就量不到。
+- 自动化判据因此取 `AudioRingBuffer::kDefaultCapacity + 2 × P + 64 KB`（与 `sdk_streaming_budget_tests` 的稳态上界同式），它比字面口径宽；分辨力由「整片常驻」这一类回归保证（把 `WAVExtractor::heldPayloadBytes()` 临时改成返回 `m_dataSize` 时实测 1062068 B 越界）。用例见 `PlaybackLifecycle`「both decoders stay inside the held-bytes cap across a switch」。
+- 差异只登记、不改本 ADR 的决策正文与规格 §5.3 既有行；规格侧登记在 `doc/buffering-switching-spec.md` §7.1.2，取值写法的理由见 [ADR 0010](0010-test-injection-seams-and-criteria.md) 的「补充（2026-11-20）」。
+- ring 口径那一半（窗口内 2 × 262144 B、窗口外回落）仍按 §5.3 公式手算，没有自动化用例。
