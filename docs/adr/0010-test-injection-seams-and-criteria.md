@@ -53,3 +53,40 @@
 - 解码线程被允许持有一个测试开关的读点。代价是纪律出现一处例外，靠本文件与 `FileSource.h` 的注释双重约束；收益是欠流判据从「不可自动化」变为可红可绿。
 - 判据只对 dummy 驱动的行为负责。真实设备（在飞块、硬件水位、`SDL_QueueAudio` 失败）仍只由人工冒烟覆盖——这一点在规格 §7.1 的「可测不等于已自动化」注记里明确保留。
 - `deviceWriteFailures` 在 dummy 驱动上不可构造（探针实测 200 × 4096 B 零失败），它不在本 effort 的三条判据内，将来要覆盖必须另找设备替身。
+
+## 补充（2026-11-20）：两条遗留判据的落点与证明力边界
+
+来源：[地图：首播超时降级与切换窗口峰值的判据落地](https://github.com/wt159/SoundBridge/issues/194)。规格落点 [`doc/buffering-switching-spec.md`](../../doc/buffering-switching-spec.md) §7.1.2。
+
+### 1. `PlayingState` 作为「设备已 start」代理的边界
+
+`_play()` 的顺序是 open → 等门槛 → `m_audioDev->start()` → 起消费定时器 → 置 `PlayingState`。判据用「观察到 `PlayingState`」代理「设备仍 start」，它能证明的只有一件事：**控制流穿过了 `start()` 调用点**。
+
+它证明不了的事必须明写：
+
+- `AudioDevice::start()` 恒返回 0，`_play()` 里的 `AudioDeviceStartFailed` 分支不可达；因此「设备真的开始消耗队列」没有任何自动化证据，dummy 驱动下尤其如此。
+- 设备侧的真实失败（硬件水位、飞块、`SDL_QueueAudio` 报错）仍只由人工冒烟覆盖。
+
+之所以不加 `isStartedForTest()`：代理证据的失败模式是「假绿」——分支不可达时观察不到红；而新增公开钩子会把这个不可达分支的语义钉进 API 面，成本高于收益。分支一旦变得可达（`start()` 返回真实结果），这条代理必须重开。
+
+### 2. 切换窗口 per-decoder 上界的取值写法
+
+窗口 = 新任务 `start()` 起 → 旧任务 join 完成止（规格 §5.3）。判据对窗口内并存的两个 decoder 各自断言：
+
+`peakHeldBytes ≤ AudioRingBuffer::kDefaultCapacity + 2 × P + 64 KB`
+
+- `P` 由素材实测（`PacketCursor::nextPacket()` 逐包取 `max(packet->size())`），不写死常量：wav 是 64 KB 定长切片，压缩格式随帧长变化。
+- 与 `test_streaming_budget.cpp` 的稳态上界同一写法。`peakHeldBytes` 本身不含 ring 与 AVIO（既有口径），公式里的这两项因此是余量而不是重复计算。
+- 这条上界比规格 §5.3 的字面口径（「各自 `peakHeldBytes ≤ P`」）宽，差异是有意的：实测解码器稳态会同时持约 4 包（本机 `peakHeldBytes = 266240 B`，`P = 65536 B`），字面口径本来就成立不了。取宽上界的目的仍是「断言有界、且能被打红」，分辨力由「整片常驻」这一类回归保证（实测 1062068 B）。§5.3 既有行不改，差异登记在规格 §7.1.2。
+- **旧** decoder 的读数在其线程退出后取：`metrics()` 是原子快照，线程退出后峰值冻结，提前读只会读到偏小的中间值。新 decoder 的线程仍在跑，读到的是当时的上界快照——对上界断言无害，但它是下界性质的证据，不是最终峰值。
+- 两条读数都附加 `> 0` 检查，避免「读到的不是本次任务的记账」被空快照蒙过。
+
+### 3. 为什么两条判据都不需要新接缝
+
+- 门槛侧：`FileSource::setReadDelayForTest()`（本 ADR 允许的唯一解码线程钩子）让首包晚于 300 ms 门槛；`MusicPlayer::metricsForTest()` 已能读到 `prefillTimeouts`。场景与 `steady-state underrun is counted` 同源，但单独成条——后者已断言 `silenceFills == 0`，混在一起会让一条红了两因难分。
+- 峰值侧：`AudioStreamDecoder::metrics()` 是 public，`MusicPlayList` 的同步控制入口足以构造「两个 task 并存」的窗口，不需要设备、也不需要消费拍。
+- 两条都遵守既有确定性约束：事件 + 上限、≥10× 余量、不断言绝对字节数。
+
+### 4. 内存上界类判据的「能红」形态
+
+上界由素材决定，「把上界调小」属于改断言、不是变异。可接受的替代形态是**变异被测读数**：把 `WAVExtractor::heldPayloadBytes()` 临时改成返回 `m_dataSize`（复刻整首常驻的旧供给形态），两条断言随即变红（实测 1062068 B > 458752 B）；还原后复绿。它证明的是「断言读的是真实记账路径、且有分辨力」，不是「上界选得对」——后者只由 §5.3 的公式与 P 的实测值保证。

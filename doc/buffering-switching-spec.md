@@ -232,6 +232,26 @@
 
 一条范围声明：以上判据在 CI 的 dummy 驱动下成立（两个工作流都设 `SDL_AUDIODRIVER=dummy`），**真实设备行为仍只由人工冒烟覆盖**——§11 的「可测不等于已自动化」原句继续有效。
 
+### 7.1.2 时点注记（2026-11-20，只新增、不改上表任何单元格）
+
+上表把「门槛超时降级」记为「接线无自动化入口」、把「切换窗口峰值」记为「按 §5.3 公式手算」，记录的是 `2b4a26c82` 时点的事实。这两条的自动化在[地图：首播超时降级与切换窗口峰值的判据落地](https://github.com/wt159/SoundBridge/issues/194)内完成，落点如下（套件 / 用例 / 文件，不写行号）：
+
+| 判据 | 套件 | 用例 | 文件 |
+|---|---|---|---|
+| 门槛超时降级 | `MusicPlayer Interactive Paths` | `prefill timeout degrades to playback instead of failing` | `sdk/test/unit/test_player_integration.cpp` |
+| 切换窗口峰值（per-decoder 一半） | `PlaybackLifecycle` | `both decoders stay inside the held-bytes cap across a switch` | `sdk/test/unit/test_playback_lifecycle.cpp` |
+
+两条用例都不新增接缝、不改生产代码：门槛侧复用 `FileSource::setReadDelayForTest()` 与既有 `metricsForTest()`，峰值侧复用 `AudioStreamDecoder::metrics()` 与强引用观察，判别式与证明力边界见 [ADR 0010](../docs/adr/0010-test-injection-seams-and-criteria.md) 的「补充（2026-11-20）」。两条分别经 `SB_TEST_INTERACTION_SUITES` 与默认过滤进 `sdk_interaction_tests` / `sdk_unit_tests`，不新增 ctest 目标、不动任何 `TIMEOUT`、BadInput 基线不动。
+
+两处既有事实只登记、不在本时点修：
+
+- `AudioDeviceStartFailed` 分支（`MusicPlayer.cpp` 的 `_play()` 内 `m_audioDev->start() != 0`）不可达：`AudioDevice::start()` 恒返回 0，只有将来让它返回真实结果时才可能触发。
+- §7 表格的「门槛超时降级」与「切换窗口峰值」两行，落点列写的 `sdk_playback_lifecycle_tests` 这个 ctest 目标都不存在；`PlaybackLifecycle` 实际跑在 `sdk_unit_tests` 里（分组真源 `sdk/test/CMakeLists.txt`），而「门槛超时降级」的落点已由本表改到 `MusicPlayer Interactive Paths`。
+
+切换窗口判据只覆盖「两个 decoder 各自的分配峰值」这一半；「窗口内两个 `PlaybackTask` 并存、每个 ring 固定 262144 B」与「窗口外回落到单任务口径」两半仍按 §5.3 公式手算，不在本时点内。
+
+口径差异只登记、不改 §5.3 既有行：§5.3 的「解码器口径：两个 decoder 并存时各自 `peakHeldBytes ≤ P`」写的是单包上界，实测量不到——解码器在稳态下会同时持有约 4 包（本机实测 `peakHeldBytes = 266240 B`，`P = 65536 B`）。本轮判据按 #194 的锁定约束取 `kDefaultCapacity + 2 × P + 64 KB`（与 `sdk_streaming_budget_tests` 的稳态上界同式），它比 §5.3 的字面口径宽；两者都以「断言峰值有界、并能被整片常驻的回归打红」为目的，§5.3 的字面数值留给后续复核。
+
 ## 8. 不可推翻前提核对
 
 | 前提（来源） | 本规格处置 |
@@ -282,6 +302,8 @@ P2 落地前必须完成 P1 的可观测性，否则无法判断软取消是否�
 | 边界守恒 | 10 ms push、`positionMs`、三态、公开面、14 目标、BadInput 基线 | §8 |
 
 **落点口径**：本表的「判据」是可测的契约表述，不等于都已有自动化用例。截至 `300a1d5c5`，有自动化落点的只有首播门槛两条（`PrefillGate` + `DecoderInstrumentation` 记账侧）与退役槽两端（`PlaybackLifecycle`）；欠流计数 / 静默窗口、EOS 不净空、窗口内外字节峰值、切换失败不净空四项仍需读设备队列或可控供给替身，状态与缺口见 §7.1。
+
+**落点口径时点更新（2026-11-20）**：上段的清单记录的是 `300a1d5c5` 时点。此后「欠流计数 / 静默窗口」「EOS 不净空」「切换失败不净空」三条由 §7.1.1 的用例接管，「门槛超时降级」与「切换窗口内 per-decoder 峰值」两条由 §7.1.2 的用例接管。上段列举的「窗口内外字节峰值」一项只落了一半：**per-decoder 的分配峰值有自动化用例，ring 口径的窗口内 2×ring 与窗口外回落仍按 §5.3 公式手算**；`deviceWriteFailures` 在 dummy 驱动下不可构造，属永久口径。
 
 ## 12. 明确否决的替代方案
 
