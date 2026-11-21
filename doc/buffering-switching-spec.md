@@ -276,6 +276,8 @@
 
 **静音分支的分支归属**：脚本条件收窄为「仅全零负载的 `write()` 失败」，素材用非零样本的 tone wav；静音填充块恒 4096 B 全零，因此失败只可能落在静音分支。`silenceFills >= 1` 只作旁证。
 
+**更正（2026-11-21，变异实测）**：上表 ring 口径行的能红变异点写成「删消费拍的 `reapRetiredTaskIfFinished()`」，实测不成立——该用例在 `MusicPlayList` 层自行调用 reap 模拟消费拍，删掉 `MusicPlayer` 消费拍里的那一行不会让它变红（`PlaybackLifecycle` 整组 6 例仍全绿）。实测成立的是「把 `reapRetiredTaskIfFinished()` 改成空实现 ⇒ 用例红」。消费拍调用点本身仍无自动化覆盖，登记为遗留。
+
 **`start()` 失败的边界**：判据只断言「错误码上报 + 未进 `PlayingState`」，不断言清理；失败后设备仍 open、解码任务仍 start，清理语义不在本规格范围内。
 
 **更正（2026-11-21，实跑核对）**：上段「失败后设备仍 open」不成立——`onMusicPlayListError()` 在上报前已经 `stop()` 并 `close()` 设备（`sdk/MusicPlayer.cpp` 的 `onMusicPlayListError`）；仍成立的是「解码任务未回收」。判据口径不变：只断言错误码与未进 `PlayingState`，不断言清理。
