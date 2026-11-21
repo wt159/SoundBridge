@@ -253,6 +253,35 @@
 
 口径差异只登记、不改 §5.3 既有行：§5.3 的「解码器口径：两个 decoder 并存时各自 `peakHeldBytes ≤ P`」写的是单包上界，实测量不到——解码器在稳态下会同时持有约 4 包（本机实测 `peakHeldBytes = 266240 B`，`P = 65536 B`）。本轮判据按 #194 的锁定约束取 `kDefaultCapacity + 2 × P + 64 KB`（与 `StreamingBudget` 套件（`sdk_streaming_tests`）的稳态上界同式），它比 §5.3 的字面口径宽；两者都以「断言峰值有界、并能被整片常驻的回归打红」为目的，§5.3 的字面数值留给后续复核。
 
+### 7.2 设备替身与注入面（2026-11-21 新增）
+
+本节只登记决策与落点，不修改 §7 表格与 §7.1.x 的任何既有行。来源：[地图：设备替身与设备层判据的可判定化](https://github.com/wt159/SoundBridge/issues/200)；架构决策见 [ADR 0011](../docs/adr/0011-device-double-and-injection-surface.md)，一手事实见 [`docs/research/device-double-evidence.md`](../docs/research/device-double-evidence.md)。
+
+**接缝形状**：抽 `IAudioDevice` 纯虚接口，覆盖 `AudioDevice` 的 11 个公开实例方法（`getDeviceList` / `getDeviceSpec` / `selectDevice` / `open` / `close` / `isOpen` / `start` / `stop` / `write` / `getQueuedBytes` / `clearQueue`）；静态测试钩子不进接口。`AudioDevice` 直接实现，生产路径**不加转发层**，每拍只多一次虚派发。
+
+**注入点**：遗留类 `MusicPlayer` 的实例级 `setAudioDeviceForTest(std::shared_ptr<IAudioDevice>)`，`play()` 前调用；设备已 open 时拒绝并记日志、保持原指针。`soundbridge::Player` 面零变更。
+
+**替身**：测试代码里的装饰器，内持 `shared_ptr<IAudioDevice>`（通常就是真实设备），默认全直通；脚本命中的调用返回 −1，`close()` 时清零。脚本只存在于测试代码，生产路径没有任何钩子读——虚派发不是钩子读，因此不新增 ADR 0010 意义上的消费拍例外。
+
+**`getDeviceSpec()` 是死值**：`m_devSpec` 在 `MusicPlayer::Impl` 构造时取一次并传给 `MusicPlayList`，注入发生在其后；替身的返回值不进入重采样判定、`deviceSpecSupportsResample()` 或位置换算。不得把它做成可配置项。
+
+**三条判据的落点与能红形态**（套件 / 用例 / 文件，不写行号）：
+
+| 判据 | 套件 | 用例 | 断言 | 能红变异点 |
+|---|---|---|---|---|
+| 写失败（正常分支） | `MusicPlayer Interactive Paths` | `a failed device write is counted once` | `deviceWriteFailures == 1`，注入后队列继续增长 | 删正常分支记账 / 改成每拍 +1 |
+| 写失败（静音分支） | 同上 | `a silence fill write failure is counted` | `deviceWriteFailures == 1` 且 `silenceFills >= 1` | 删静音分支记账 |
+| start 失败 | 同上 | `a device start failure is reported and playback does not start` | 上报 `AudioDeviceStartFailed`；`state() == StoppedState` | 去掉替身的 `start()` 脚本 |
+| ring 口径峰值 | `PlaybackLifecycle` | `retired slot is reclaimed after a switch` | 切歌后 500 ms 内 `retiredTaskForTest()` 过期，`currentTask()` 仍有效 | 删消费拍的 `reapRetiredTaskIfFinished()` |
+
+**静音分支的分支归属**：脚本条件收窄为「仅全零负载的 `write()` 失败」，素材用非零样本的 tone wav；静音填充块恒 4096 B 全零，因此失败只可能落在静音分支。`silenceFills >= 1` 只作旁证。
+
+**`start()` 失败的边界**：判据只断言「错误码上报 + 未进 `PlayingState`」，不断言清理；失败后设备仍 open、解码任务仍 start，清理语义不在本规格范围内。
+
+**静态 open 钩子的退役**：`AudioDevice::setForceOpenFailureForTest(bool)`（票 #110）在替身落地后删除，「open 失败 → `AudioDeviceOpenFailed` → 状态」判据改用替身脚本重写；删除与重写必须在同一个 PR 内完成。
+
+**不变项**：不新增 ctest 目标（14 个）、不动任何 `TIMEOUT`、BadInput 55 例 / 398 断言基线不动、公开 `soundbridge::Player` 面零变更。以上判据只在 CI 的 dummy 驱动下成立，真实设备行为仍只由人工冒烟覆盖。
+
 ## 8. 不可推翻前提核对
 
 | 前提（来源） | 本规格处置 |
@@ -305,6 +334,8 @@ P2 落地前必须完成 P1 的可观测性，否则无法判断软取消是否�
 **落点口径**：本表的「判据」是可测的契约表述，不等于都已有自动化用例。截至 `300a1d5c5`，有自动化落点的只有首播门槛两条（`PrefillGate` + `DecoderInstrumentation` 记账侧）与退役槽两端（`PlaybackLifecycle`）；欠流计数 / 静默窗口、EOS 不净空、窗口内外字节峰值、切换失败不净空四项仍需读设备队列或可控供给替身，状态与缺口见 §7.1。
 
 **落点口径时点更新（2026-11-20）**：上段的清单记录的是 `300a1d5c5` 时点。此后「欠流计数 / 静默窗口」「EOS 不净空」「切换失败不净空」三条由 §7.1.1 的用例接管，「门槛超时降级」与「切换窗口内 per-decoder 峰值」两条由 §7.1.2 的用例接管。上段列举的「窗口内外字节峰值」一项只落了一半：**per-decoder 的分配峰值有自动化用例，ring 口径的窗口内 2×ring 与窗口外回落仍按 §5.3 公式手算**；`deviceWriteFailures` 在 dummy 驱动下不可构造，属永久口径。
+
+**落点口径时点更新（2026-11-21）**：上段记录的是 2026-11-20 时点，其「`deviceWriteFailures` 在 dummy 驱动下不可构造，属永久口径」与「ring 口径仍按 §5.3 公式手算」两句已过期。§7.2 把两者与原本不可达的 `AudioDeviceStartFailed` 一并定为可判定：写失败与 start 失败经设备替身脚本注入，ring 口径经退役槽 `weak_ptr` 出口观察；判据落点、能红形态与边界见 §7.2，接缝决策见 [ADR 0011](../docs/adr/0011-device-double-and-injection-surface.md)。上段原句保留不动。
 
 ## 12. 明确否决的替代方案
 
