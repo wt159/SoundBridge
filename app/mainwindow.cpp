@@ -37,8 +37,7 @@ PlaybackMode sanitizePlaybackMode(int rawMode)
     return PlaybackMode::Sequential;
 }
 
-class MusicItemDelegate : public QStyledItemDelegate {
-public:
+class MusicItemDelegate : public QStyledItemDelegate {public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -72,6 +71,18 @@ public:
         painter->restore();
     }
 };
+
+// 收藏集合的落盘形态：QStringList。QSet 的迭代序不稳定，先排序再写，避免每次写盘
+// 都产生一份"看起来变了"的值（规格 §6.1）。
+QStringList favoritesToList(const QSet<QString> &favorites)
+{
+    QStringList list;
+    for (const QString &id : favorites) {
+        list.push_back(id);
+    }
+    list.sort();
+    return list;
+}
 }
 
 QString MainWindow::playbackModeText(PlaybackMode mode) const
@@ -116,6 +127,20 @@ MainWindow::MainWindow(QWidget *parent)
 
     /* Initialize media player */
     mediaPlayerInit();
+
+    /* 浮层（ADR 0015）：与触发按钮同窗口，Qt::Popup 自带点外部关闭。 */
+    mVolumePopup   = new VolumePopup(mPushButton[6]);
+    mPlaylistPopup = new PlaylistPopup(mPushButton[5]);
+
+    /* 音量写盘去抖（规格 §6.1）：滑杆拖动每像素一次 valueChanged，不能逐次写盘。 */
+    mVolumeSaveTimer = new QTimer(this);
+    mVolumeSaveTimer->setSingleShot(true);
+    mVolumeSaveTimer->setInterval(400);
+    connect(mVolumeSaveTimer, SIGNAL(timeout()), this, SLOT(persistVolumeState()));
+
+    connect(mVolumePopup, SIGNAL(volumeChanged(int)), this, SLOT(volumeSliderChanged(int)));
+    connect(mVolumePopup, SIGNAL(mutedChanged(bool)), this, SLOT(muteToggled(bool)));
+    connect(mPlaylistPopup, SIGNAL(trackActivated(int)), this, SLOT(panelTrackActivated(int)));
 
     restoreWindowState();
 
@@ -221,18 +246,6 @@ void MainWindow::musicLayout()
             "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}");
     }
 
-    /* List mask overlay */
-    mListMask = new QWidget(mListWidget->viewport());
-    mListMask->setMinimumSize(310, 50);
-    mListMask->setMinimumHeight(50);
-    mListMask->setObjectName("mListMask");
-    mListMask->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    mListMask->hide();
-    const int maskInset  = 1;
-    const int maskHeight = 0;
-    mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
-                           mListWidget->viewport()->width() - maskInset * 2, maskHeight);
-
     /* Set object names */
     mPushButton[0]->setObjectName("btn_previous");
     mPushButton[1]->setObjectName("btn_play");
@@ -242,17 +255,17 @@ void MainWindow::musicLayout()
     mPushButton[5]->setObjectName("btn_menu");
     mPushButton[6]->setObjectName("btn_volume");
 
-    /* Set button state；占位控件按 doc/app-ui-spec.md §8：禁用、提示、不 checkable */
+    /* Set button state（doc/app-ui-spec.md §8.4–§8.6）：收藏 checkable、菜单可点性由列表驱动、
+       音量不做 checkable（静音由浮层里的 btn_mute 表达）。 */
     mPushButton[1]->setCheckable(true);
+    mPushButton[3]->setCheckable(true);
     mPushButton[3]->setEnabled(false);
-    mPushButton[3]->setToolTip("Not implemented");
-    mPushButton[3]->setAccessibleDescription("Not implemented");
-    mPushButton[5]->setEnabled(false);
-    mPushButton[5]->setToolTip("Not implemented");
-    mPushButton[5]->setAccessibleDescription("Not implemented");
-    mPushButton[6]->setEnabled(false);
-    mPushButton[6]->setToolTip("Not implemented");
-    mPushButton[6]->setAccessibleDescription("Not implemented");
+    mPushButton[3]->setToolTip("Favorite");
+    mPushButton[3]->setAccessibleDescription("Favorite");
+    mPushButton[5]->setToolTip("Playlist");
+    mPushButton[5]->setAccessibleDescription("Playlist");
+    mPushButton[6]->setToolTip("Volume: 100%");
+    mPushButton[6]->setAccessibleDescription("Volume: 100%");
 
     /* H0 layout */
     /* 两栏只锁宽度；高度交给布局计算，否则 480 的死值会盖掉最小窗口下的实际需求。 */
@@ -446,10 +459,6 @@ void MainWindow::musicLayout()
     mHWidget[3]->setLayout(mHBoxLayout[3]);
 
     QTimer::singleShot(0, this, [this]() {
-        const int maskInset  = 1;
-        const int maskHeight = 0;
-        mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
-                               mListWidget->viewport()->width() - maskInset * 2, maskHeight);
         mListWidget->doItemsLayout();
         mListWidget->viewport()->update();
     });
@@ -480,6 +489,33 @@ void MainWindow::restoreWindowState()
     mController->setPlaybackMode(playbackMode);
     updatePlaybackModeButton(playbackMode);
 
+    /* 音量 / 静音（规格 §6.1）：越界钳制并回写修正值，与 playback/mode 的既有先例一致。 */
+    const int savedVolume = settings.value("playback/volume", 100).toInt();
+    int volume            = savedVolume;
+    if (volume < 0) {
+        volume = 0;
+    }
+    if (volume > 100) {
+        volume = 100;
+    }
+    if (volume != savedVolume) {
+        settings.setValue("playback/volume", volume);
+    }
+    const bool muted = settings.value("playback/muted", false).toBool();
+    mController->setVolume(volume);
+    mController->setMuted(muted);
+    updateVolumeUi();
+
+    /* 收藏集合（规格 §6.1 / §8.4）：空串丢弃。悬挂条目保留，不做启动期 GC。 */
+    mFavorites.clear();
+    const QStringList favoriteIds = settings.value("library/favorites").toStringList();
+    for (const QString &id : favoriteIds) {
+        if (!id.isEmpty()) {
+            mFavorites.insert(id);
+        }
+    }
+    updateFavoriteButton();
+
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
     } else {
@@ -502,6 +538,53 @@ void MainWindow::persistWindowState()
     settings.setValue("window/maximized", isMaximized());
     settings.setValue("playback/auto_skip_on_error", mController->autoSkipOnError());
     settings.setValue("playback/mode", static_cast<int>(mController->playbackMode()));
+    settings.setValue("playback/volume", mController->volume());
+    settings.setValue("playback/muted", mController->muted());
+    settings.setValue("library/favorites", favoritesToList(mFavorites));
+    if (settings.status() != QSettings::NoError) {
+        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
+                  static_cast<int>(settings.status()));
+    }
+}
+
+void MainWindow::persistVolumeState()
+{
+    QSettings settings;
+    settings.setValue("playback/volume", mController->volume());
+    settings.setValue("playback/muted", mController->muted());
+    if (settings.status() != QSettings::NoError) {
+        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
+                  static_cast<int>(settings.status()));
+    }
+}
+
+void MainWindow::updateVolumeUi()
+{
+    const int volume = mController->volume();
+    const bool muted = mController->muted();
+    const QString tip = muted ? QStringLiteral("Volume: muted")
+                              : QStringLiteral("Volume: %1%").arg(volume);
+    if (mPushButton[6] != nullptr) {
+        mPushButton[6]->setToolTip(tip);
+        mPushButton[6]->setAccessibleDescription(tip);
+    }
+    if (mVolumePopup != nullptr) {
+        mVolumePopup->syncFromState(volume, muted);
+    }
+}
+
+void MainWindow::updateFavoriteButton()
+{
+    if (mPushButton[3] == nullptr) {
+        return;
+    }
+    const bool hasTrack  = !mCurrentTrackId.isEmpty();
+    const bool favorited = hasTrack && mFavorites.contains(mCurrentTrackId);
+    mPushButton[3]->setEnabled(hasTrack);
+    mPushButton[3]->setChecked(favorited);
+    const QString tip = favorited ? QStringLiteral("Favorited") : QStringLiteral("Favorite");
+    mPushButton[3]->setToolTip(tip);
+    mPushButton[3]->setAccessibleDescription(tip);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -527,7 +610,22 @@ void MainWindow::btn_previous_clicked()
 
 void MainWindow::btn_favorite_clicked()
 {
-    // TODO:
+    if (mCurrentTrackId.isEmpty()) {
+        return;
+    }
+    if (mFavorites.contains(mCurrentTrackId)) {
+        mFavorites.remove(mCurrentTrackId);
+    } else {
+        mFavorites.insert(mCurrentTrackId);
+    }
+    // 收藏低频，且用户预期"点了就存住"，不走去抖（规格 §6.1）。
+    QSettings settings;
+    settings.setValue("library/favorites", favoritesToList(mFavorites));
+    if (settings.status() != QSettings::NoError) {
+        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
+                  static_cast<int>(settings.status()));
+    }
+    updateFavoriteButton();
 }
 
 void MainWindow::btn_playMode_clicked()
@@ -555,12 +653,56 @@ void MainWindow::btn_playMode_clicked()
 
 void MainWindow::btn_playList_clicked()
 {
-    // TODO:
+    const PlayerViewState &viewState = mController->viewState();
+    LogPrintf(LogLevel::Debug, kTag, "btn_playList_clicked count=%d visible=%d",
+              viewState.playlist.size(), mPlaylistPopup->isVisible() ? 1 : 0);
+    if (viewState.playlist.isEmpty()) {
+        return;
+    }
+    if (mPlaylistPopup->isVisible()) {
+        mPlaylistPopup->hide();
+        return;
+    }
+    mPlaylistPopup->setTracks(viewState.playlist, viewState.currentTrackIndex);
+    mPlaylistPopup->popup();
+    LogPrintf(LogLevel::Debug, kTag, "panel popup visible=%d size=%dx%d pos=%d,%d",
+              mPlaylistPopup->isVisible() ? 1 : 0, mPlaylistPopup->width(),
+              mPlaylistPopup->height(), mPlaylistPopup->x(), mPlaylistPopup->y());
 }
 
 void MainWindow::btn_volume_clicked()
 {
-    // TODO:
+    LogPrintf(LogLevel::Debug, kTag, "btn_volume_clicked visible=%d",
+              mVolumePopup->isVisible() ? 1 : 0);
+    if (mVolumePopup->isVisible()) {
+        mVolumePopup->hide();
+        return;
+    }
+    updateVolumeUi();
+    mVolumePopup->popup();
+    LogPrintf(LogLevel::Debug, kTag, "volume popup visible=%d size=%dx%d pos=%d,%d",
+              mVolumePopup->isVisible() ? 1 : 0, mVolumePopup->width(), mVolumePopup->height(),
+              mVolumePopup->x(), mVolumePopup->y());
+}
+
+void MainWindow::volumeSliderChanged(int volume)
+{
+    mController->setVolume(volume);
+    updateVolumeUi();
+    mVolumeSaveTimer->start();
+}
+
+void MainWindow::muteToggled(bool muted)
+{
+    mController->setMuted(muted);
+    updateVolumeUi();
+    // 静音是离散事件，直接写，不等去抖。
+    persistVolumeState();
+}
+
+void MainWindow::panelTrackActivated(int index)
+{
+    mController->selectTrack(index);
 }
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
@@ -577,15 +719,6 @@ void MainWindow::listWidgetCliked(QListWidgetItem *item)
               clickedIndex, mController->currentTrackIndex(), selectedCount,
               item ? item->isSelected() : -1, item ? item->data(kRolePlaying).toBool() : -1);
     mController->selectTrack(clickedIndex);
-}
-
-void MainWindow::resizeEvent(QResizeEvent *event)
-{
-    Q_UNUSED(event);
-    const int maskInset  = 1;
-    const int maskHeight = 0;
-    mListMask->setGeometry(maskInset, mListWidget->viewport()->height() - maskInset,
-                           mListWidget->viewport()->width() - maskInset * 2, maskHeight);
 }
 
 void MainWindow::durationSliderReleased()
@@ -665,6 +798,23 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
     }
     mNowPlayingSubtitle->setText(viewState.subtitle);
 
+    /* 收藏态（§8.4）：键来自 TrackInfo::id；切曲瞬间允许一帧残留，下一次渲染校正。 */
+    mCurrentTrackId.clear();
+    if (index >= 0 && index < viewState.trackIds.size()) {
+        mCurrentTrackId = viewState.trackIds.at(index);
+    }
+    updateFavoriteButton();
+    if (mRenderedTrackIndex != index) {
+        // 身份键链路的现场读数（SDK deriveMusicId → TrackInfo::id → viewState.trackIds）。
+        LogPrintf(LogLevel::Debug, kTag, "track key=%s index=%d",
+                  mCurrentTrackId.toUtf8().constData(), index);
+    }
+
+    /* 列表为空时面板没有内容可显示，按钮直接禁用（§8.6）。 */
+    if (mPushButton[5] != nullptr) {
+        mPushButton[5]->setEnabled(!viewState.playlist.isEmpty());
+    }
+
     const bool playlistChanged = (mRenderedPlaylist != viewState.playlist);
     const bool trackChanged    = (mRenderedTrackIndex != index);
     if (playlistChanged) {
@@ -710,6 +860,15 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
         mListWidget->viewport()->update();
     } else if (trackChanged) {
         mListWidget->viewport()->update();
+    }
+
+    /* 面板可见时跟随（§8.6）：重建走全量、仅换曲走高亮 + 居中。 */
+    if (mPlaylistPopup != nullptr && mPlaylistPopup->isVisible()) {
+        if (playlistChanged) {
+            mPlaylistPopup->setTracks(viewState.playlist, index);
+        } else if (trackChanged) {
+            mPlaylistPopup->updateCurrentIndex(index);
+        }
     }
 
     if (viewState.playlist.isEmpty() || index < 0 || index >= mListWidget->count()) {

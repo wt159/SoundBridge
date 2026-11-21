@@ -2,11 +2,6 @@ QWidget {
 background: "#25242a"
 }
 
-QWidget#mListMask {
-border-image: url(:/images/mask.png);
-background-color: transparent;
-}
-
 QListWidget#mListWidget {
 color:white;
 font-size: 15px;
@@ -117,3 +112,75 @@ border-image:url(:/images/sub-page.png);
 
 
 
+/* 浮层（ADR 0015 / 规格 §8.7）：Qt::Popup 自绘容器，无窗口装饰。 */
+QWidget#mVolumePopup, QWidget#mPlaylistPopup {
+background-color: #1e1d23;
+border: 1px solid rgba(255,255,255,40);
+}
+
+QListWidget#mPanelList {
+background: transparent;
+border: none;
+color: white;
+font-size: 13px;
+}
+
+QListWidget#mPanelList::item {
+padding: 2px 6px;
+}
+
+QListWidget#mPanelList::item:hover {
+background: rgba(255,255,255,12);
+}
+
+QListWidget#mPanelList QScrollBar:vertical {
+background: transparent;
+width: 6px;
+margin: 2px 2px 2px 0;
+}
+
+QListWidget#mPanelList QScrollBar::handle:vertical {
+background: rgba(255,255,255,60);
+border-radius: 3px;
+min-height: 24px;
+}
+
+QListWidget#mPanelList QScrollBar::add-line:vertical,
+QListWidget#mPanelList QScrollBar::sub-line:vertical {
+height: 0px;
+}
+
+QListWidget#mPanelList QScrollBar::add-page:vertical,
+QListWidget#mPanelList QScrollBar::sub-page:vertical {
+background: transparent;
+}
+
+QSlider#mVolumeSlider::groove:horizontal {
+height: 4px;
+background: rgba(255,255,255,40);
+border-radius: 2px;
+}
+
+QSlider#mVolumeSlider::sub-page:horizontal {
+background: #5edcf3;
+border-radius: 2px;
+}
+
+QSlider#mVolumeSlider::handle:horizontal {
+width: 10px;
+margin: -4px 0;
+border-radius: 5px;
+background: #5edcf3;
+}
+
+QPushButton#btn_mute {
+color: rgba(255,255,255,180);
+background: transparent;
+border: 1px solid rgba(255,255,255,60);
+border-radius: 2px;
+}
+
+QPushButton#btn_mute:checked {
+color: #5edcf3;
+border-color: #5edcf3;
+}

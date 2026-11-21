@@ -13,6 +13,8 @@ struct PlayerViewState {
     qulonglong durationMs = 0;
     qulonglong positionMs = 0;
     QStringList playlist;
+    // 与 playlist 同序的派生身份键（ADR 0014），来自 TrackInfo::id，可为空串。
+    QStringList trackIds;
     QString title = "—";
     QString artist;
     QString album;
@@ -40,6 +42,10 @@ public:
     soundbridge::PlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+    void setVolume(int percent);
+    int volume() const;
+    void setMuted(bool muted);
+    bool muted() const;
     int trackCount() const;
     int currentTrackIndex() const;
     const PlayerViewState &viewState() const;

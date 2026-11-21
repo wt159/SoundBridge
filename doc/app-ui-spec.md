@@ -507,7 +507,7 @@
 | `UI-A9` | 面板可点性 | 读渲染路径：`btn_menu->setEnabled(!playlist.isEmpty())` |
 | `UI-A10` | 浮层机制 | 读 `app/popuppanel.cpp`：`Qt::Popup`、Esc 分支、关闭后 `anchor->setFocus()` |
 | `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`：混合分隔符 / `..` / 相对路径 / URL 四类用例全绿 |
-| `UI-A12` | 增益数学 | `UnitTests -ts=PcmGain`：半幅、零增益、渐变端点、格式直通四类用例全绿 |
+| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（半幅 / 零增益 / 渐变端点 / 格式直通）与 `-ts=MusicPlayerVolume`（默认 100、越界钳制、静音不改取值）全绿 |
 
 ### 9.3 B 类冒烟清单
 

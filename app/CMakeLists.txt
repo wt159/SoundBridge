@@ -18,6 +18,8 @@ set(APP_SOURCES
     mainwindow.h
     playercontroller.cpp
     playercontroller.h
+    popuppanel.cpp
+    popuppanel.h
     res.qrc
 )
 

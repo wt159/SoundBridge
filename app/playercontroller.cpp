@@ -150,6 +150,26 @@ bool PlayerController::autoSkipOnError() const
     return m_autoSkipOnError;
 }
 
+void PlayerController::setVolume(int percent)
+{
+    m_player->setVolume(percent);
+}
+
+int PlayerController::volume() const
+{
+    return m_player->volume();
+}
+
+void PlayerController::setMuted(bool muted)
+{
+    m_player->setMuted(muted);
+}
+
+bool PlayerController::muted() const
+{
+    return m_player->muted();
+}
+
 int PlayerController::trackCount() const
 {
     return m_player->trackCount();
@@ -207,10 +227,13 @@ void PlayerController::onPositionChanged(uint64_t positionMs)
 void PlayerController::onPlaylistChanged(const std::list<soundbridge::TrackInfo> &tracks)
 {
     QStringList names;
+    QStringList ids;
     for (const auto &track : tracks) {
         names.push_back(QString::fromUtf8(track.name.c_str()));
+        ids.push_back(QString::fromUtf8(track.id.c_str()));
     }
     m_viewState.playlist = names;
+    m_viewState.trackIds = ids;
     publishViewState();
 }
 
