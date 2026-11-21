@@ -82,14 +82,16 @@ std::basic_string<CharT> normalizeSegments(const std::basic_string<CharT> &path,
         }
         if (segment.size() == 2 && segment[0] == static_cast<CharT>('.')
             && segment[1] == static_cast<CharT>('.')) {
-            if (!normalized.empty()
-                && !(normalized.back().size() == 2
-                     && normalized.back()[0] == static_cast<CharT>('.')
-                     && normalized.back()[1] == static_cast<CharT>('.'))) {
+            const bool backIsParent = !normalized.empty() && normalized.back().size() == 2
+                                   && normalized.back()[0] == static_cast<CharT>('.')
+                                   && normalized.back()[1] == static_cast<CharT>('.');
+            if (!normalized.empty() && !backIsParent) {
                 normalized.pop_back();
-            } else {
+            } else if (prefix.empty()) {
+                // 相对路径（兜底）：`..` 保留。实际调用前都已绝对化，这里只是兜底。
                 normalized.push_back(segment);
             }
+            // 绝对路径且已在根：`..` 越根丢弃，与 lexically_normal 一致。
             continue;
         }
         normalized.push_back(segment);
@@ -145,8 +147,17 @@ std::string deriveMusicId(const std::string &path)
             wide = std::wstring(cwdBuffer) + L"/" + wide;
         }
     }
-    std::wstring normalized = normalizeSegments(
-        wide, [](wchar_t ch) { return ch == L'/' || ch == L'\\'; }, leadingPrefix(wide));
+    // 盘符必须并进前缀：留在段里的话，越根的 `..` 会把 `c:` 当成可回退的目录弹掉，
+    // `C:/a/../../b` 会归一成 `b`（先前的用例只测到不越根的路径，掩盖了这个缺口）。
+    std::wstring prefix;
+    std::wstring body = wide;
+    if (wide.size() >= 3 && wide[1] == L':' && isSeparator(wide[2])) {
+        prefix = wide.substr(0, 2);
+        body   = wide.substr(2);
+    }
+    prefix += leadingPrefix(body);
+    std::wstring normalized
+        = normalizeSegments(body, [](wchar_t ch) { return ch == L'/' || ch == L'\\'; }, prefix);
     for (wchar_t &ch : normalized) {
         ch = static_cast<wchar_t>(std::towlower(ch));
     }

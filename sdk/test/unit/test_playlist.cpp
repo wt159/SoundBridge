@@ -429,6 +429,8 @@ TEST_SUITE("MusicId")
         CHECK(deriveMusicId("/a/b/../c") == "/a/c");
         CHECK(deriveMusicId("/a/./b") == "/a/b");
         CHECK(deriveMusicId("/a/b/../..") == "/");
+        // 越根：`..` 在根上丢弃，不留下 `/..`（与 std::filesystem 的 lexically_normal 一致）。
+        CHECK(deriveMusicId("/a/../../b") == "/b");
     }
 
     TEST_CASE("duplicate separators collapse")
@@ -455,6 +457,10 @@ TEST_SUITE("MusicId")
     TEST_CASE("drive letter survives normalization")
     {
         CHECK(deriveMusicId("C:/a/b.wav") == "c:/a/b.wav");
+        // 越根同样丢弃：盘符根之后没有可回退的段。
+        CHECK(deriveMusicId("C:/a/../../b") == "c:/b");
+        // UNC 前缀（两个分隔符）保留，段内 `..` 照常折叠。
+        CHECK(deriveMusicId(R"(\\server\share\a\..\b)") == "//server/share/b");
     }
 #endif
 }
