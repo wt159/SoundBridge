@@ -2,32 +2,28 @@ QWidget {
 background: "#25242a"
 }
 
-QWidget#listMask {
+QWidget#mListMask {
 border-image: url(:/images/mask.png);
 background-color: transparent;
 }
 
-QListWidget#listWidget {
+QListWidget#mListWidget {
 color:white;
 font-size: 15px;
 border:none;
 }
 
-QListWidgetlistWidget:item:active {
-background: transparent;
-}
-
-QListWidget#listWidget:item {
+QListWidget#mListWidget::item {
 background: transparent;
 height:60;
 }
 
-QListWidget#listWidget:item:selected {
+QListWidget#mListWidget::item:selected {
 color:#5edcf3;
 background: transparent;
 }
 
-QListWidget#listWidget:item:hover {
+QListWidget#mListWidget::item:hover {
 background: transparent;
 color:#5edcf3;
 border:none;
@@ -105,11 +101,11 @@ QPushButton#btn_volume:hover {
 border-image:url(:/images/btn_volume2.png);
 }
 
-QSlider#durationSlider:handle:horizontal {
+QSlider#mDurationSlider::handle:horizontal {
 border-image:url(:/images/handle.png);
 }
 
-QSlider#durationSlider:sub-page:horizontal {
+QSlider#mDurationSlider::sub-page:horizontal {
 border-image:url(:/images/sub-page.png);
 }
 

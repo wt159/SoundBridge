@@ -161,6 +161,10 @@ void MainWindow::musicLayout()
         mLabel[i] = new QLabel();
     mNowPlayingTitle    = new QLabel();
     mNowPlayingSubtitle = new QLabel();
+    mNowPlayingTitle->setObjectName("mNowPlayingTitle");
+    mNowPlayingSubtitle->setObjectName("mNowPlayingSubtitle");
+    mLabel[2]->setObjectName("mPositionLabel");
+    mLabel[3]->setObjectName("mDurationLabel");
     mAutoSkipCheck      = new QCheckBox("Auto skip on error");
     mAutoSkipCheck->setObjectName("mAutoSkipCheck");
 
@@ -238,9 +242,17 @@ void MainWindow::musicLayout()
     mPushButton[5]->setObjectName("btn_menu");
     mPushButton[6]->setObjectName("btn_volume");
 
-    /* Set button state */
+    /* Set button state；占位控件按 doc/app-ui-spec.md §8：禁用、提示、不 checkable */
     mPushButton[1]->setCheckable(true);
-    mPushButton[3]->setCheckable(true);
+    mPushButton[3]->setEnabled(false);
+    mPushButton[3]->setToolTip("Not implemented");
+    mPushButton[3]->setAccessibleDescription("Not implemented");
+    mPushButton[5]->setEnabled(false);
+    mPushButton[5]->setToolTip("Not implemented");
+    mPushButton[5]->setAccessibleDescription("Not implemented");
+    mPushButton[6]->setEnabled(false);
+    mPushButton[6]->setToolTip("Not implemented");
+    mPushButton[6]->setAccessibleDescription("Not implemented");
 
     /* H0 layout */
     mVWidget[0]->setMinimumSize(310, 480);
