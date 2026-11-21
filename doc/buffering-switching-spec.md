@@ -288,6 +288,8 @@
 
 **实现状态（2026-11-21）**：本节登记的 `IAudioDevice` 接口、`MusicPlayer::setAudioDeviceForTest()`、`MusicPlayList::retiredTaskForTest()` 与表内四条用例**均未实现**；代码落地见 §10 末段。
 
+**状态更新（2026-11-21，落地后）**：上段「均未实现」已过期——接口与注入点由 [#209](https://github.com/wt159/SoundBridge/issues/209)（merge `8398da9ad`）、四条用例由 [#210](https://github.com/wt159/SoundBridge/issues/210)（merge `0f2e0ed89`）落地。仍无自动化覆盖的是 `MusicPlayer` 消费拍里调用 `reapRetiredTaskIfFinished()` 的那一行，见本节「更正（2026-11-21，变异实测）」。
+
 ## 8. 不可推翻前提核对
 
 | 前提（来源） | 本规格处置 |
@@ -327,6 +329,8 @@
 P2 落地前必须完成 P1 的可观测性，否则无法判断软取消是否把欠流推高。
 
 **§7.2 的代码落地另计（2026-11-21）**：§7.2 的接口抽取、装饰器替身、注入点与四条判据不属上表 P1 / P2，按地图 [#200](https://github.com/wt159/SoundBridge/issues/200) 的界外约定另开执行票（E1 接口与替身、E2 判据落地），两票尚未创建。
+
+**状态更新（2026-11-21，落地后）**：上段「两票尚未创建」已过期——E1 = [#209](https://github.com/wt159/SoundBridge/issues/209)（merge `8398da9ad`）、E2 = [#210](https://github.com/wt159/SoundBridge/issues/210)（merge `0f2e0ed89`），两票均已关闭。
 
 ## 11. 验收矩阵
 
