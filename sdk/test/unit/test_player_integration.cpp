@@ -1588,6 +1588,62 @@ TEST_SUITE("MusicPlayer Interactive Paths")
                       "start 失败后状态不是 StoppedState，实际 " << static_cast<int>(stateAtRead));
         CHECK(deviceDouble->startCalls() == 1);
     }
+
+    // C5：消费拍里的退役槽回收（规格 §5.1 / §5.3、§7.2「更正（2026-11-21，变异实测）」）。
+    // 与 PlaybackLifecycle 的 `retired slot is reclaimed after a switch` 分工：
+    // 那条在 MusicPlayList 层自己调 reap，覆盖软取消 + 单槽语义；这条不调 reap，
+    // 切歌之后也不再发任何控制事件——退役槽只能由 10 ms 消费拍回收。
+    // 删掉 consumeAudioData() 首段的 reap 那一行，本用例必须红。
+    TEST_CASE("the consumer tick reclaims the retired task after a switch")
+    {
+        TempMediaDir temp("tickreap");
+        if (!writeAllBytes(temp.file("first.wav"), makeSilentWavBytes(20))
+            || !writeAllBytes(temp.file("second.wav"), makeSilentWavBytes(20))) {
+            skipCase("cannot synthesize wav fixtures");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 2; }, 5000)) {
+            skipCase("two-track playlist did not load");
+            return;
+        }
+
+        auto innerDevice  = std::make_shared<AudioDevice>();
+        auto deviceDouble = std::make_shared<AudioDeviceDouble>(innerDevice);
+        REQUIRE(player.setAudioDeviceForTest(deviceDouble));
+
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        // 位置推进 = 解码线程已进稳态：这时切歌才有活任务可退役。
+        if (!waitFor([&listener]() { return listener.last_position.load() > 200; }, 5000)) {
+            skipCase("playback position never advanced");
+            return;
+        }
+
+        player.next();
+        // selectTrack() 里退役发生在 putMusicPlayListCurBuf 之前：索引回调到达即证明
+        // 旧任务已在退役槽、且此后没有任何控制事件会替消费拍回收它。
+        const bool switched
+            = waitFor([&listener]() { return listener.last_current_index.load() == 1; }, 3000);
+        // 500 ms = 50 个消费拍，wav 的线程退出是毫秒级；不调 reap，不靠 sleep 猜时序。
+        const bool reclaimed
+            = switched && waitFor([&player]() { return player.retiredTaskExpiredForTest(); }, 500);
+        const MusicPlayerState stateAtRead = player.state();
+        player.stop();
+
+        CHECK_MESSAGE(switched, "next() 没有切到第二首（索引回调未到）");
+        CHECK_MESSAGE(reclaimed,
+                      "500 ms 内退役槽没有腾空：消费拍没有调用 reapRetiredTaskIfFinished()");
+        CHECK_MESSAGE(stateAtRead == MusicPlayerState::PlayingState,
+                      "回收退役槽打断了正在播的新任务");
+    }
 }
 
 // issue #72 的 P0-3 / P2-11 / P2-12 在 issue 表格里指定落在

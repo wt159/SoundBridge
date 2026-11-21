@@ -42,6 +42,7 @@ public:
     bool autoSkipOnError() const;
     size_t queuedBytesForTest() const;
     StreamMetrics metricsForTest() const;
+    bool retiredTaskExpiredForTest() const;
     bool setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device);
 
 protected:
@@ -327,6 +328,14 @@ StreamMetrics MusicPlayer::Impl::metricsForTest() const
         return StreamMetrics {};
     }
     return task->decoder->metrics();
+}
+
+bool MusicPlayer::Impl::retiredTaskExpiredForTest() const
+{
+    if (m_musicList == nullptr) {
+        return true;
+    }
+    return m_musicList->retiredTaskForTest().expired();
 }
 
 bool MusicPlayer::Impl::setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device)
@@ -1099,6 +1108,11 @@ size_t MusicPlayer::queuedBytesForTest() const
 StreamMetrics MusicPlayer::metricsForTest() const
 {
     return m_impl->metricsForTest();
+}
+
+bool MusicPlayer::retiredTaskExpiredForTest() const
+{
+    return m_impl->retiredTaskExpiredForTest();
 }
 
 bool MusicPlayer::setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device)

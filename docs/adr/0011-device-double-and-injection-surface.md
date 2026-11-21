@@ -56,3 +56,11 @@ ADR 0010 曾否决「设备后端替身」，理由是该 effort 的目的地不
 - `deviceWriteFailures` / `AudioDeviceStartFailed` 从「永久口径 / 不可达」变为可判定，但**只在 dummy 驱动下成立**；真实设备（硬件水位、飞块、`SDL_QueueAudio` 报错）仍不可自动化。
 - 删除静态 open 钩子后，`ForceAudioDeviceOpenFailure` 这类 RAII 复位辅助随之消失；测试改为持有替身、由析构复位，不再依赖进程级状态。
 - ring 口径峰值仍不等于「窗口内 2×ring 的字节峰值」本身：判据观察的是**窗口是否关闭**（退役槽过期），不是逐字节累加。证明力边界写在此处，避免后来者把它当成字节级断言。
+
+## 补记（2026-11-21，消费拍回收点的覆盖）
+
+上文判据表把 ring 口径行的能红变异点写成「删 `reapRetiredTaskIfFinished()` 必红」。变异实测表明这句只在「把该函数改成空实现」时成立：C4 在 `MusicPlayList` 层自行调用 reap 模拟消费拍，删掉 `MusicPlayer::Impl::consumeAudioData()` 里那一行不会让它变红（规格 §7.2「更正（2026-11-21，变异实测）」）。
+
+补齐方式：`MusicPlayer::retiredTaskExpiredForTest()`——`const`、直通 `Impl`，读 `MusicPlayList::retiredTaskForTest()` 的 `weak_ptr` 是否过期；与 `queuedBytesForTest()` / `metricsForTest()` 同属 ADR 0010 的「读数出口」，只读、不构成第二条回收路径、不进 `soundbridge::Player`。用例 `the consumer tick reclaims the retired task after a switch`（`MusicPlayer Interactive Paths`）在切歌确认后不再发任何控制事件，退役槽只能由 10 ms 消费拍回收；删那一行即红（[#214](https://github.com/wt159/SoundBridge/issues/214)）。
+
+不暴露 `MusicPlayList*`：那会让用例绕过 `MusicPlayer` 直接驱动 `setCurrentIndexSync` / `stopCurrentTask`，把 `m_curMusicProperties` 与任务状态撕成两半。
