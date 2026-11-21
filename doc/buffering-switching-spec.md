@@ -290,6 +290,8 @@
 
 **状态更新（2026-11-21，落地后）**：上段「均未实现」已过期——接口与注入点由 [#209](https://github.com/wt159/SoundBridge/issues/209)（merge `8398da9ad`）、四条用例由 [#210](https://github.com/wt159/SoundBridge/issues/210)（merge `0f2e0ed89`）落地。仍无自动化覆盖的是 `MusicPlayer` 消费拍里调用 `reapRetiredTaskIfFinished()` 的那一行，见本节「更正（2026-11-21，变异实测）」。
 
+**覆盖补记（2026-11-21）**：上段与本节「更正」里的「消费拍调用点仍无自动化覆盖」同日关闭——新增只读出口 `MusicPlayer::retiredTaskExpiredForTest()` 与用例 `the consumer tick reclaims the retired task after a switch`（`MusicPlayer Interactive Paths`，[#214](https://github.com/wt159/SoundBridge/issues/214)）：切歌后不再发任何控制事件、不调 reap，500 ms 内退役槽必须过期；删 `consumeAudioData()` 首段的 `reapRetiredTaskIfFinished()` 即红（实测）。表内判据数值与既有 C4 不动——C4 仍覆盖软取消与单槽语义，本条只补消费拍调用点。
+
 ## 8. 不可推翻前提核对
 
 | 前提（来源） | 本规格处置 |
