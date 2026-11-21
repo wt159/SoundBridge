@@ -442,6 +442,8 @@
 | `UI-V2` / `UI-P6`（最小尺寸） | **不满足**：960×540 下裁切 | 已知缺口，票 [#228](https://github.com/wt159/SoundBridge/issues/228)（界外） |
 | B 类 | 可人工执行 | 按 §9.3 冒烟 |
 
+**落地更新（2026-11-21，PR [#229](https://github.com/wt159/SoundBridge/pull/229) 合并后）**：上表的 `UI-A1` / `UI-A2` / `UI-H1` / `UI-H3` 已由 `8d936c8c5` 补齐并通过机器核对；`UI-V2` / `UI-P6` 仍不满足，缺口见 [#228](https://github.com/wt159/SoundBridge/issues/228)。上表保留时点原样，不改。
+
 ## 10. 界外
 
 - SDK 公开契约与 `PlayerViewState` 结构调整（含删除 `artist` / `album` 死字段）。
@@ -459,3 +461,4 @@
 
 - 2026-11-21：定稿。地图 [#216](https://github.com/wt159/SoundBridge/issues/216) 收口；规格与 ADR 0012 同时落地。既有 SDK 规格零改动，`player-state-contract.md` 只加一行纯新增指针。
 - 2026-11-21（落地核对）：收窄 `UI-V2` 的通过条件为「默认 1200×720 无裁切」，把 960×540 的布局重排登记为已知缺口（[#228](https://github.com/wt159/SoundBridge/issues/228)）；冒烟步骤 11 同步改为记录现状。
+- 2026-11-21（执行落地）：锚点、样式表、占位控件由 PR [#229](https://github.com/wt159/SoundBridge/pull/229) 落地；§9.6 追加落地更新，`UI-V2` / `UI-P6` 仍为 #228。
