@@ -412,8 +412,8 @@
 | 5 | 拖动进度条到中点并松手 | 拖动中标签不动；松手后 seek | `UI-S6`、`UI-S7` |
 | 6 | 连点下一首 3 次 | 曲目 +3，最终 `Playing` | `UI-T4` |
 | 7 | 点模式按钮 5 次 | 提示文案按序循环 | `UI-T5` |
-| 8 | 勾选 autoSkip 关，播坏文件 | 弹窗字段齐全，subtitle ` - STOPPED` | `UI-E2` |
-| 9 | 勾选 autoSkip 开，播坏文件 | 无弹窗，` - SKIPPED`，日志含 `trace=` | `UI-E1` |
+| 8 | 取消勾选 autoSkip（关闭），播坏文件 | 弹窗字段齐全，subtitle ` - STOPPED` | `UI-E2` |
+| 9 | 勾选 autoSkip（开启），播坏文件 | 无弹窗，` - SKIPPED`，日志含 `trace=` | `UI-E1` |
 | 10 | 关闭重开 | 窗口/模式/autoSkip 保持 | `UI-P2`、`UI-T6` |
 | 11 | 缩到 960×540 | 无重叠/裁切 | `UI-V2`、`UI-P6` |
 | 12 | 点三个占位控件 | 无反应、无弹窗 | `UI-H2` |
