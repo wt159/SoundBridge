@@ -414,6 +414,12 @@ PlaybackTaskPtr MusicPlayList::currentTask() const
     return m_currentTask;
 }
 
+std::weak_ptr<PlaybackTask> MusicPlayList::retiredTaskForTest() const
+{
+    std::lock_guard<std::mutex> lock(m_taskMutex);
+    return std::weak_ptr<PlaybackTask>(m_retiredTask);
+}
+
 bool MusicPlayList::startCurrentTask()
 {
     MusicPropertiesPtr current = m_selectMusicProperties;

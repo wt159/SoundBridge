@@ -2,6 +2,7 @@
 #include "AudioBuffer.h"
 #include "AudioDevice.h"
 #include "FileSearch.h"
+#include "IAudioDevice.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "MusicPlayList.h"
@@ -12,6 +13,7 @@
 #include <list>
 #include <mutex>
 #include <sstream>
+#include <utility>
 
 namespace sdk {
 
@@ -40,6 +42,7 @@ public:
     bool autoSkipOnError() const;
     size_t queuedBytesForTest() const;
     StreamMetrics metricsForTest() const;
+    bool setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device);
 
 protected:
     void _addMusic(const std::string &musicPath);
@@ -87,7 +90,7 @@ private:
     void handleDecodeError(const MusicPropertiesPtr &cur);
 
 private:
-    std::shared_ptr<AudioDevice> m_audioDev;
+    std::shared_ptr<IAudioDevice> m_audioDev;
     AudioSpec m_devSpec;
     std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
@@ -320,6 +323,20 @@ StreamMetrics MusicPlayer::Impl::metricsForTest() const
         return StreamMetrics {};
     }
     return task->decoder->metrics();
+}
+
+bool MusicPlayer::Impl::setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device)
+{
+    if (device == nullptr) {
+        LOG_ERROR(LOG_TAG, "reject null audio device");
+        return false;
+    }
+    if (m_audioDev != nullptr && m_audioDev->isOpen()) {
+        LOG_ERROR(LOG_TAG, "audio device is already open, reject test device");
+        return false;
+    }
+    m_audioDev = std::move(device);
+    return true;
 }
 
 void MusicPlayer::Impl::_addMusic(const std::string &musicPath) { }
@@ -1077,5 +1094,10 @@ size_t MusicPlayer::queuedBytesForTest() const
 StreamMetrics MusicPlayer::metricsForTest() const
 {
     return m_impl->metricsForTest();
+}
+
+bool MusicPlayer::setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device)
+{
+    return m_impl->setAudioDeviceForTest(std::move(device));
 }
 }

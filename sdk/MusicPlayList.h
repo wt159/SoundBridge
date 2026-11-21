@@ -154,6 +154,9 @@ public:
     // 当前播放任务（ring + decoder + 曲目号）。没有任务时返回空：停止状态、切歌窗口、
     // 以及扫描阶段都属于这一类。调用方拿到的是快照，持有期间任务不会被销毁。
     PlaybackTaskPtr currentTask() const;
+    // 仅供测试（ADR 0011）：退役槽的弱引用快照。不延长任务生命周期，任务销毁后自动过期；
+    // 用于观察「切换窗口是否关闭」，不暴露可操作句柄。
+    std::weak_ptr<PlaybackTask> retiredTaskForTest() const;
     // 为「当前曲目」准备播放任务。已经有一个活着的任务（暂停后恢复）就复用；
     // 没有 / 已结束 / 已失败则把旧任务移入退役槽（只置取消位，不 join），再建新 ring
     // 与新 decoder（规格 §5.1）。

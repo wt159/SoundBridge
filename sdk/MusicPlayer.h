@@ -18,6 +18,8 @@
 #include <memory>
 #include <string>
 
+class IAudioDevice;
+
 namespace sdk {
 
 enum class MusicPlayerState {
@@ -78,6 +80,9 @@ public:
     size_t queuedBytesForTest() const;
     // 仅供测试（ADR 0010）：当前播放任务的解码器仪表快照；无任务时返回零值。
     StreamMetrics metricsForTest() const;
+    // 仅供测试（ADR 0011）：在 play() 前替换音频设备。设备已 open 时拒绝并返回 false，
+    // 保持原指针（同进程只允许一个输出设备，替换已 open 的设备会让它无人 close）。
+    bool setAudioDeviceForTest(std::shared_ptr<IAudioDevice> device);
 
 private:
     class Impl;
