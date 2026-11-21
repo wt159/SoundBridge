@@ -441,6 +441,7 @@
 - **生命周期**：跨曲目、跨 `stop`/`play`、跨设备重开（LIVE 重连）保持。增益是会话级设置，不是曲目级状态。
 - **交互**：点 `btn_volume` 打开 `mVolumePopup`（不切换静音）；滑杆 `0..100`、单步 1、横向；拖动即改（不等松手）；`btn_mute` 切换静音。
 - **可见**：`btn_volume` 提示 `Volume: <n>%`，静音时 `Volume: muted`；`mVolumeSlider` 值等于 `volume`；`btn_mute` 的 `checked` 等于静音态，文本 `MUTE`。
+- **采样格式**：按设备格式 `m_devSpec.format` 分派，S16 / S32 / FLT32 / U8 / S8 都按各自位宽缩放；其它格式（S24、`*BE` 变体等）**直通不改**并记一次 Warning——宁可音量失效，也不把字节解释错。ADR [0013](../docs/adr/0013-software-volume-gain.md)。
 - **不做**：多输出设备选择、系统音量、设备级音量（SDL2 无此能力，见 ADR 0013）、>100 放大。
 
 ### 8.6 播放列表面板
@@ -472,7 +473,7 @@
 | `UI-F3` | 切到未收藏曲目再切回 | `checked` 依次为 `false` → `true` | B |
 | `UI-F4` | 无当前曲目 / id 为空 | `btn_favorite` 禁用且 `unchecked`，点击不写入集合 | A（代码核对） |
 | `UI-VOL1` | `setVolume(-5)` / `setVolume(150)` / 构造后默认值 | `0` / `100` / `100` | A（单测） |
-| `UI-VOL2` | 增益数学 | S16 半幅样本减半、增益 0 输出全零、块内线性渐变端点正确、非 S16 格式不被误改 | A（单测） |
+| `UI-VOL2` | 增益数学 | S16 半幅样本减半、增益 0 输出全零、块内线性渐变端点正确、S32 / FLT32 各按自身满幅缩放（FLT32 钳到 `[-1, 1]`）、不支持的格式（如 S24）字节原样不动且返回 `false` | A（单测） |
 | `UI-VOL3` | 拖滑杆到 60，关闭重开 | 提示 `Volume: 60%`；重启后滑杆仍 60 且输出音量一致 | B |
 | `UI-VOL4` | 点 `btn_mute` 再取消 | 依次无声 / 有声；`volume` 值全程不变 | B |
 | `UI-M1` | 空列表 / 非空列表 | `btn_menu` 依次 `enabled == false` / `true` | A（代码核对） |
@@ -601,3 +602,4 @@
 - 2026-11-21（收口后审计）：补测客户端 `1100×720` 推翻 §6.2「小于 `1200×720` 必裁切」的外推，追加更正；`UI-V8` 的「高度 0」与 `setMinimumHeight(50)` 矛盾，追加更正二；§9.6 注明三处时点文字与落地更新的关系。
 - 2026-11-21（[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）：重排最小尺寸布局，`960×540` 恢复为可兑现承诺；§6.2 / §7 / §9.3 / §9.6 各追加时点注记，既有表格单元格与正文未改。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 转正）：收藏 / 音量 / 播放列表面板三控件转正。§1.1 增「本地偏好」第四条真相源；§1.3 增 5 个锚点并注明 `mListMask` 作废；§1.4 增控件文案；§6.1 增 3 个键并把命名区扩为 `window` / `playback` / `library`；§7 增 `UI-V9` / `UI-V10` 与更正四；§8 增 §8.4–§8.8；§9 增 `F` / `M` / `VOL` 三个编号区、6 条 A 类核对与 5 步冒烟；§10 注明三条界外被覆盖。ADR [0013](../docs/adr/0013-software-volume-gain.md) / [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md) / [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 同批落地。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
