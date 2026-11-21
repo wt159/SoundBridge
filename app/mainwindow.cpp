@@ -37,7 +37,8 @@ PlaybackMode sanitizePlaybackMode(int rawMode)
     return PlaybackMode::Sequential;
 }
 
-class MusicItemDelegate : public QStyledItemDelegate {public:
+class MusicItemDelegate : public QStyledItemDelegate {
+public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -82,6 +83,16 @@ QStringList favoritesToList(const QSet<QString> &favorites)
     }
     list.sort();
     return list;
+}
+
+// 三个写盘点共用（规格 §6.1）：QSettings 写失败是静默的，只在 status() 上体现。
+// 记 Warning 而非 Error——设置没存住不影响本次会话的播放。
+void warnIfSettingsWriteFailed(const QSettings &settings)
+{
+    if (settings.status() != QSettings::NoError) {
+        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
+                  static_cast<int>(settings.status()));
+    }
 }
 }
 
@@ -489,16 +500,14 @@ void MainWindow::restoreWindowState()
     mController->setPlaybackMode(playbackMode);
     updatePlaybackModeButton(playbackMode);
 
-    /* 音量 / 静音（规格 §6.1）：越界钳制并回写修正值，与 playback/mode 的既有先例一致。 */
-    const int savedVolume = settings.value("playback/volume", 100).toInt();
-    int volume            = savedVolume;
-    if (volume < 0) {
-        volume = 0;
-    }
-    if (volume > 100) {
-        volume = 100;
-    }
-    if (volume != savedVolume) {
+    /* 音量 / 静音（规格 §6.1）：越界钳制并回写修正值，与 playback/mode 的既有先例一致；
+       类型错误的脏值按默认值 100 处理，而不是被 toInt() 悄悄读成 0。 */
+    bool volumeOk          = false;
+    const int storedVolume = settings.value("playback/volume", 100).toInt(&volumeOk);
+    // 取值范围的真源在 SDK（Player::setVolume 自己按端点钳制），app 侧这次钳制只负责
+    // 修复被外部改坏的存量值，并把修正后的值回写——与 playback/mode 的既有先例一致。
+    const int volume = qBound(0, volumeOk ? storedVolume : 100, 100);
+    if (volume != storedVolume) {
         settings.setValue("playback/volume", volume);
     }
     const bool muted = settings.value("playback/muted", false).toBool();
@@ -541,10 +550,7 @@ void MainWindow::persistWindowState()
     settings.setValue("playback/volume", mController->volume());
     settings.setValue("playback/muted", mController->muted());
     settings.setValue("library/favorites", favoritesToList(mFavorites));
-    if (settings.status() != QSettings::NoError) {
-        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
-                  static_cast<int>(settings.status()));
-    }
+    warnIfSettingsWriteFailed(settings);
 }
 
 void MainWindow::persistVolumeState()
@@ -552,10 +558,7 @@ void MainWindow::persistVolumeState()
     QSettings settings;
     settings.setValue("playback/volume", mController->volume());
     settings.setValue("playback/muted", mController->muted());
-    if (settings.status() != QSettings::NoError) {
-        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
-                  static_cast<int>(settings.status()));
-    }
+    warnIfSettingsWriteFailed(settings);
 }
 
 void MainWindow::updateVolumeUi()
@@ -621,10 +624,7 @@ void MainWindow::btn_favorite_clicked()
     // 收藏低频，且用户预期"点了就存住"，不走去抖（规格 §6.1）。
     QSettings settings;
     settings.setValue("library/favorites", favoritesToList(mFavorites));
-    if (settings.status() != QSettings::NoError) {
-        LogPrintf(LogLevel::Warning, kTag, "settings write failed status=%d",
-                  static_cast<int>(settings.status()));
-    }
+    warnIfSettingsWriteFailed(settings);
     updateFavoriteButton();
 }
 
@@ -806,8 +806,11 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
     updateFavoriteButton();
     if (mRenderedTrackIndex != index) {
         // 身份键链路的现场读数（SDK deriveMusicId → TrackInfo::id → viewState.trackIds）。
-        LogPrintf(LogLevel::Debug, kTag, "track key=%s index=%d",
-                  mCurrentTrackId.toUtf8().constData(), index);
+        // 空键显式写 `(none)`：首帧（列表尚未到达）与「派生失败」是两件事，别混在同一个
+        // `track key= index=` 的空格后面。
+        const QByteArray key
+            = mCurrentTrackId.isEmpty() ? QByteArrayLiteral("(none)") : mCurrentTrackId.toUtf8();
+        LogPrintf(LogLevel::Debug, kTag, "track key=%s index=%d", key.constData(), index);
     }
 
     /* 列表为空时面板没有内容可显示，按钮直接禁用（§8.6）。 */

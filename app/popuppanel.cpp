@@ -7,6 +7,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScreen>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -148,16 +149,32 @@ VolumePopup::VolumePopup(QWidget *anchor)
     m_muteButton->setFont(muteFont);
     layout->addWidget(m_muteButton);
 
-    connect(m_slider, &QSlider::valueChanged, this, [this](int value) {
-        if (m_muteButton->isChecked()) {
-            // 拖动滑杆 = 用户要听，顺带解除静音（规格 §8.5 的裁定）。
-            m_muteButton->setChecked(false);
-        }
-        emit volumeChanged(value);
-    });
-    connect(m_muteButton, &QPushButton::toggled, this, [this](bool checked) {
-        emit mutedChanged(checked);
-    });
+    connect(m_slider, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
+    connect(m_muteButton, SIGNAL(toggled(bool)), this, SLOT(muteButtonToggled(bool)));
+}
+
+void VolumePopup::sliderValueChanged(int value)
+{
+    // 先让外部把新取值落到播放器与界面状态，再解除静音。反过来（先解除静音）
+    // 会走一次 syncFromState，把滑杆打回解除静音前的旧音量，拖动时可见回弹。
+    emit volumeChanged(value);
+    if (m_muteButton->isChecked()) {
+        m_muteButton->setChecked(false);
+    }
+}
+
+void VolumePopup::muteButtonToggled(bool checked)
+{
+    emit mutedChanged(checked);
+}
+
+void VolumePopup::showEvent(QShowEvent *event)
+{
+    PopupPanel::showEvent(event);
+    // 打开时把焦点交给滑杆：Esc 之外，键盘左右键也能直接调音量（规格 §8.7）。
+    if (m_slider != nullptr) {
+        m_slider->setFocus(Qt::PopupFocusReason);
+    }
 }
 
 void VolumePopup::syncFromState(int volume, bool muted)
@@ -190,14 +207,27 @@ PlaylistPopup::PlaylistPopup(QWidget *anchor)
     m_list->setTextElideMode(Qt::ElideRight);
     layout->addWidget(m_list);
 
-    connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-        if (item == nullptr) {
-            return;
-        }
-        const int index = m_list->row(item);
-        hide();
-        emit trackActivated(index);
-    });
+    connect(m_list, SIGNAL(itemClicked(QListWidgetItem *)), this,
+            SLOT(listItemClicked(QListWidgetItem *)));
+}
+
+void PlaylistPopup::listItemClicked(QListWidgetItem *item)
+{
+    if (item == nullptr) {
+        return;
+    }
+    const int index = m_list->row(item);
+    hide();
+    emit trackActivated(index);
+}
+
+void PlaylistPopup::showEvent(QShowEvent *event)
+{
+    PopupPanel::showEvent(event);
+    // 焦点进列表，方向键可直接换行（规格 §8.7）；Esc 由 QListWidget 上抛给底座。
+    if (m_list != nullptr) {
+        m_list->setFocus(Qt::PopupFocusReason);
+    }
 }
 
 void PlaylistPopup::setTracks(const QStringList &names, int currentIndex)

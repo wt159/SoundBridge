@@ -4,6 +4,7 @@
 #include <QWidget>
 
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QSlider;
 
@@ -51,6 +52,13 @@ signals:
     void volumeChanged(int volume);
     void mutedChanged(bool muted);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
+private slots:
+    void sliderValueChanged(int value);
+    void muteButtonToggled(bool checked);
+
 private:
     QSlider *m_slider;
     QPushButton *m_muteButton;
@@ -68,6 +76,12 @@ public:
 
 signals:
     void trackActivated(int index);
+
+protected:
+    void showEvent(QShowEvent *event) override;
+
+private slots:
+    void listItemClicked(QListWidgetItem *item);
 
 private:
     QListWidget *m_list;
