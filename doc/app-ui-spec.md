@@ -437,6 +437,14 @@
 - 日志：`<exe>/log/soundbridge_*.log`，错误场景必须贴出含 `trace=` 的行。
 - 截图不入库；附在票或 PR 评论里，命名 `ui-<判据编号>-<日期>.png`。
 
+**取证注记（2026-11-21，[#228](https://github.com/wt159/SoundBridge/issues/228)）**：本节的截图与尺寸复核有两类已实证的陷阱，按下面顺序执行。
+
+1. **陈旧位图**：`shot` 走 `PrintWindow`，窗口不在交互桌面或刚 `resize` 时会返回 `resize` 之前的画面（本轮曾据此把已修好的版本判为「仍裁切」）。截图前先 `RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME)` 并等约 0.8 s。
+2. **串窗**：窗口定位用 `--pid <pid>`，不要用 `--window SoundBridge`；残留进程会让标题匹配命中旧窗口。
+3. **判定依据**：判「是否裁切」优先信进程内几何（`centralWidget()->size()`、各容器 `minimumSizeHint()`、控件 `mapTo`），截图只作辅证。
+4. **尺寸口径**：`setMinimumSize(w, h)` 在 Qt/Windows 上按**客户区**解释，外框比声明值大一圈（`960×540` → 外框 `976×579`，DPI 96）；用 `MoveWindow` 设外框时会先被撑到该最小值。
+5. **附件通道**：`gh` 无二进制附件上传能力。截图按 `ui-<判据编号>-<日期>.png` 命名后随交付给 owner，票内附可复现命令与几何数字；确需上图时走网页端手工上传。
+
 ### 9.5 自动化边界
 
 - 首版**无自动化 UI 测试**，不新增 ctest 目标、不改 CI。
