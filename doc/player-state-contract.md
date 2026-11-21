@@ -13,6 +13,7 @@
 把 `soundbridge::Player` / `PlayerCallbacks` 的对外承诺钉成可判定的契约：状态取值、回调线程与顺序、控制命令的可见语义、查询与事件的真相源、错误与状态的先后、标称时长为 0 时 seek 的表达。走到这里，实现用例的人不需要再做任何决定。
 
 - **只含 sdk 公开契约**。`app/` 只作事实来源与验收场景；不重设计 UI、不重构 `PlayerViewState`。
+- **app 层界面契约另有规格**：[`doc/app-ui-spec.md`](app-ui-spec.md)（2026-11-21 定稿）。本行是纯新增指针，不改变上一条裁定；两份规格的边界见该文件 §1。
 - 错误码体系沿用 [ADR 0001](../docs/adr/0001-error-code-expresses-cause.md)；本规格只裁上报范围与先后，**不新增错误码、不改 `onError` 签名**。
 - API 文档 / 时序图 / CLI 接入示例、代码与用例实现都不在图内。
 - 沿用 [本地文件边解边播规格](streaming-playback-spec.md) §4.1 / §4.4 / §6 的**不可推翻前提**：状态基准是 `MusicPlayerState`、`PlayerState` 与 `StreamDecoderState` 只作投影 / 诊断、不新增状态机；控制事件在 WorkQueue 单线程串行；`m_abortDecode` 是唯一取消信号；错误码只表达原因。
