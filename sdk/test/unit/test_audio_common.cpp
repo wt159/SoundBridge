@@ -185,6 +185,29 @@ TEST_SUITE("PcmGain")
         }
     }
 
+    TEST_CASE("S32 and FLT32 scale by their own full scale")
+    {
+        // 支持的格式不止 S16（ADR 0013 的格式分派表）：S32 / FLT32 必须各按自身位宽缩放，
+        // 被误当成 S16 解释的后果是样本数算成两倍、字节读串。
+        int32_t wide[2] = {1000000, -1000000};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(wide), sizeof(wide), AudioFormatS32,
+                                   0.5f, 0.5f));
+        CHECK(wide[0] == 500000);
+        CHECK(wide[1] == -500000);
+
+        float floats[2] = {0.8f, -0.8f};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(floats), sizeof(floats),
+                                   AudioFormatFLT32, 0.5f, 0.5f));
+        CHECK(floats[0] == doctest::Approx(0.4f));
+        CHECK(floats[1] == doctest::Approx(-0.4f));
+
+        // 浮点按 [-1, 1] 钳制：0.9 × 2.0 不许溢出到 >1。
+        float loud[1] = {0.9f};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(loud), sizeof(loud), AudioFormatFLT32,
+                                   2.0f, 2.0f));
+        CHECK(loud[0] == doctest::Approx(1.0f));
+    }
+
     TEST_CASE("ramp moves monotonically to the target gain")
     {
         int16_t samples[5] = {1000, 1000, 1000, 1000, 1000};

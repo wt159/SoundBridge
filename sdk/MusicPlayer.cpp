@@ -120,6 +120,8 @@ private:
     std::atomic<bool> m_muted;
     // 消费线程独占：上一块实际使用的增益，用作下一块线性渐变的起点（消 zipper）。
     float m_appliedGain;
+    // 格式不支持的告警只发一次，否则每 10 ms 一条会刷屏（ADR 0013）。
+    bool m_gainFormatWarned;
     std::atomic<int> m_skipFailures;
     std::atomic<bool> m_switching;
     // 首播门槛「同一任务内只等一次」的身份标记（规格 §2.3）：暂停后恢复、重复 play()
@@ -157,6 +159,7 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_volumePercent(100)
     , m_muted(false)
     , m_appliedGain(1.0f)
+    , m_gainFormatWarned(false)
     , m_skipFailures(0)
     , m_switching(false)
     , m_shuttingDown(false)
@@ -766,6 +769,11 @@ void MusicPlayer::Impl::consumeAudioData()
                 = applyGainRamp(buf.data(), got, m_devSpec.format, m_appliedGain, targetGain);
             if (applied) {
                 m_appliedGain = targetGain;
+            } else if (!m_gainFormatWarned) {
+                // 违背约格式：宁可音量失效，也不把字节解释错。
+                m_gainFormatWarned = true;
+                LOG_WARNING(LOG_TAG, "volume gain skipped: unsupported device format %d",
+                            static_cast<int>(m_devSpec.format));
             }
         }
         if (m_audioDev->write(buf.data(), got) < 0) {

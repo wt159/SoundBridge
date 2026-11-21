@@ -7,6 +7,36 @@
 
 namespace sdk {
 
+namespace detail {
+
+// 整数样本的增益渐变：按 gain 缩放、四舍五入、钳到类型端点。
+//
+// `offset` 是编码零点（U8 为 128，其余为 0）——缩放必须围绕零点做，
+// 否则「静音」会变成半个直流偏置而不是无声。
+template <typename Sample>
+inline void applyGainRampInteger(char *data, size_t bytes, float fromGain, float toGain,
+                                 double offset, double low, double high)
+{
+    Sample *samples    = reinterpret_cast<Sample *>(data);
+    const size_t count = bytes / sizeof(Sample);
+    float gain         = fromGain;
+    const float step
+        = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1) : 0.0f;
+    for (size_t i = 0; i < count; ++i) {
+        double value
+            = offset + (static_cast<double>(samples[i]) - offset) * static_cast<double>(gain);
+        if (value > high) {
+            value = high;
+        } else if (value < low) {
+            value = low;
+        }
+        samples[i] = static_cast<Sample>(std::floor(value + 0.5));
+        gain += step;
+    }
+}
+
+} // namespace detail
+
 // 软件增益（ADR 0013）：对一段**交错** PCM 施加线性渐变的缩放。
 //
 // fromGain → toGain 在整段内线性过渡，用来消除块边界上的增益阶跃：消费拍每块
@@ -26,59 +56,33 @@ inline bool applyGainRamp(char *data, size_t bytes, AudioFormat format, float fr
     }
 
     switch (format) {
-    case AudioFormatS16: {
+    case AudioFormatS16:
         // 只处理本机字节序的变体；*BE 变体在数据层就要求换序，这里不做（见 default）。
-        int16_t *samples    = reinterpret_cast<int16_t *>(data);
-        const size_t count  = bytes / sizeof(int16_t);
-        float gain          = fromGain;
-        const float step    = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1)
-                                          : 0.0f;
-        for (size_t i = 0; i < count; ++i) {
-            const double scaled = static_cast<double>(samples[i]) * static_cast<double>(gain);
-            double clamped      = std::floor(scaled + 0.5);
-            if (clamped > 32767.0) {
-                clamped = 32767.0;
-            }
-            if (clamped < -32768.0) {
-                clamped = -32768.0;
-            }
-            samples[i] = static_cast<int16_t>(clamped);
-            gain += step;
-        }
+        detail::applyGainRampInteger<int16_t>(data, bytes, fromGain, toGain, 0.0, -32768.0,
+                                              32767.0);
         return true;
-    }
-    case AudioFormatS32: {
-        int32_t *samples   = reinterpret_cast<int32_t *>(data);
-        const size_t count = bytes / sizeof(int32_t);
-        float gain         = fromGain;
-        const float step   = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1)
-                                         : 0.0f;
-        for (size_t i = 0; i < count; ++i) {
-            const double scaled = static_cast<double>(samples[i]) * static_cast<double>(gain);
-            double clamped      = std::floor(scaled + 0.5);
-            if (clamped > 2147483647.0) {
-                clamped = 2147483647.0;
-            }
-            if (clamped < -2147483648.0) {
-                clamped = -2147483648.0;
-            }
-            samples[i] = static_cast<int32_t>(clamped);
-            gain += step;
-        }
+    case AudioFormatS32:
+        detail::applyGainRampInteger<int32_t>(data, bytes, fromGain, toGain, 0.0,
+                                              -2147483648.0, 2147483647.0);
         return true;
-    }
+    case AudioFormatS8:
+        detail::applyGainRampInteger<int8_t>(data, bytes, fromGain, toGain, 0.0, -128.0, 127.0);
+        return true;
+    case AudioFormatU8:
+        detail::applyGainRampInteger<uint8_t>(data, bytes, fromGain, toGain, 128.0, 0.0, 255.0);
+        return true;
     case AudioFormatFLT32: {
+        // 浮点不走整数路径：四舍五入会吃掉 LSB 精度，钳制到 [-1, 1] 即可。
         float *samples     = reinterpret_cast<float *>(data);
         const size_t count = bytes / sizeof(float);
         float gain         = fromGain;
-        const float step   = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1)
-                                         : 0.0f;
+        const float step
+            = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1) : 0.0f;
         for (size_t i = 0; i < count; ++i) {
             float value = samples[i] * gain;
             if (value > 1.0f) {
                 value = 1.0f;
-            }
-            if (value < -1.0f) {
+            } else if (value < -1.0f) {
                 value = -1.0f;
             }
             samples[i] = value;
@@ -86,49 +90,9 @@ inline bool applyGainRamp(char *data, size_t bytes, AudioFormat format, float fr
         }
         return true;
     }
-    case AudioFormatU8: {
-        // 无符号 8 位以 128 为零点：缩放必须围绕零点做，否则静音会变成半个直流偏置。
-        uint8_t *samples   = reinterpret_cast<uint8_t *>(data);
-        const size_t count = bytes;
-        float gain         = fromGain;
-        const float step   = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1)
-                                         : 0.0f;
-        for (size_t i = 0; i < count; ++i) {
-            double value = 128.0 + (static_cast<double>(samples[i]) - 128.0)
-                                       * static_cast<double>(gain);
-            if (value > 255.0) {
-                value = 255.0;
-            }
-            if (value < 0.0) {
-                value = 0.0;
-            }
-            samples[i] = static_cast<uint8_t>(std::floor(value + 0.5));
-            gain += step;
-        }
-        return true;
-    }
-    case AudioFormatS8: {
-        int8_t *samples    = reinterpret_cast<int8_t *>(data);
-        const size_t count = bytes;
-        float gain         = fromGain;
-        const float step   = (count > 1) ? (toGain - fromGain) / static_cast<float>(count - 1)
-                                         : 0.0f;
-        for (size_t i = 0; i < count; ++i) {
-            double value = static_cast<double>(samples[i]) * static_cast<double>(gain);
-            if (value > 127.0) {
-                value = 127.0;
-            }
-            if (value < -128.0) {
-                value = -128.0;
-            }
-            samples[i] = static_cast<int8_t>(std::floor(value + 0.5));
-            gain += step;
-        }
-        return true;
-    }
     default:
         // 16/24 位无符号、24 位有符号、double 与大小端变体都不在增益路径上：
-        // 直通不改，由 setVolume 的调用方（app）看到「音量没生效」而不是听到噪声。
+        // 直通不改，由调用方记一次 Warning —— 看到「音量没生效」而不是听到噪声。
         return false;
     }
 }
