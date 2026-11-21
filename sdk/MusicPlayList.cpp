@@ -5,18 +5,164 @@
 #include "LogWrapper.h"
 #include "Metrics.h"
 #include "UrlSource.h"
+#include "Utf8Path.h"
 #include "type_name.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cwctype>
 #include <random>
 #include <sstream>
+#include <vector>
+
+#ifdef _WIN32
+#include <direct.h>
+// windows.h（经 Utf8Path.h 进来）把 ERROR 定义成宏（0），会打断本文件里
+// StreamDecoderState::ERROR 的枚举名。与 sdk/test/mocks/HttpMocks.hpp 同一处理：
+// push 后 undef，本 TU 内不再需要这个宏。
+#pragma push_macro("ERROR")
+#undef ERROR
+#else
+#include <unistd.h>
+#endif
 
 namespace sdk {
 
 #define LOG_TAG "MusicPlayList"
 
 using namespace sdk_utils;
+
+namespace {
+
+inline bool looksLikeHttpUrl(const std::string &path)
+{
+    return path.compare(0, 7, "http://") == 0 || path.compare(0, 8, "https://") == 0;
+}
+
+inline bool isSeparator(wchar_t ch)
+{
+    return ch == L'/' || ch == L'\\';
+}
+
+inline bool isSeparator(char ch)
+{
+    return ch == '/'
+#ifdef _WIN32
+        || ch == '\\'
+#endif
+        ;
+}
+
+// 归一化的公共尾段：按分隔符切分 → 消 `.` / `..` → 用 `/` 重连。
+// 前缀（前导分隔符 / UNC 双分隔符）由调用方保留在 `prefix` 里。
+template <typename CharT, typename SepFn>
+std::basic_string<CharT> normalizeSegments(const std::basic_string<CharT> &path, SepFn isSep,
+                                           const std::basic_string<CharT> &prefix)
+{
+    std::vector<std::basic_string<CharT>> segments;
+    std::basic_string<CharT> current;
+    for (CharT ch : path) {
+        if (isSep(ch)) {
+            if (!current.empty()) {
+                segments.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        segments.push_back(current);
+    }
+
+    std::vector<std::basic_string<CharT>> normalized;
+    for (const std::basic_string<CharT> &segment : segments) {
+        if (segment.size() == 1 && segment[0] == static_cast<CharT>('.')) {
+            continue;
+        }
+        if (segment.size() == 2 && segment[0] == static_cast<CharT>('.')
+            && segment[1] == static_cast<CharT>('.')) {
+            if (!normalized.empty()
+                && !(normalized.back().size() == 2
+                     && normalized.back()[0] == static_cast<CharT>('.')
+                     && normalized.back()[1] == static_cast<CharT>('.'))) {
+                normalized.pop_back();
+            } else {
+                normalized.push_back(segment);
+            }
+            continue;
+        }
+        normalized.push_back(segment);
+    }
+
+    std::basic_string<CharT> joined = prefix;
+    for (size_t i = 0; i < normalized.size(); ++i) {
+        if (i != 0) {
+            joined.push_back(static_cast<CharT>('/'));
+        }
+        joined += normalized[i];
+    }
+    return joined;
+}
+
+template <typename CharT>
+std::basic_string<CharT> leadingPrefix(const std::basic_string<CharT> &path)
+{
+    if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
+        // UNC（`\\server\share`）与 POSIX 的双斜杠前缀都按两个分隔符保留。
+        return std::basic_string<CharT>(2, static_cast<CharT>('/'));
+    }
+    if (!path.empty() && isSeparator(path[0])) {
+        return std::basic_string<CharT>(1, static_cast<CharT>('/'));
+    }
+    return std::basic_string<CharT>();
+}
+
+} // namespace
+
+std::string deriveMusicId(const std::string &path)
+{
+    if (path.empty()) {
+        return std::string();
+    }
+    if (looksLikeHttpUrl(path)) {
+        // 网络 URL 的"同一资源"由 URL 本身定义，任何归一化都可能改变语义（大小写敏感的
+        // path 段、query 顺序），因此原样返回。
+        return path;
+    }
+
+#ifdef _WIN32
+    // Windows 上必须走宽字符：路径可能含非 ASCII，窄字符小写折叠会破坏字节。
+    std::wstring wide = sdk_utils::toWideString(path.c_str());
+    if (wide.empty()) {
+        return path;
+    }
+    const bool absolute = (wide.size() >= 3 && wide[1] == L':' && isSeparator(wide[2]))
+                       || (!wide.empty() && isSeparator(wide[0]));
+    if (!absolute) {
+        wchar_t cwdBuffer[4096];
+        if (_wgetcwd(cwdBuffer, static_cast<int>(sizeof(cwdBuffer) / sizeof(wchar_t))) != nullptr) {
+            wide = std::wstring(cwdBuffer) + L"/" + wide;
+        }
+    }
+    std::wstring normalized = normalizeSegments(
+        wide, [](wchar_t ch) { return ch == L'/' || ch == L'\\'; }, leadingPrefix(wide));
+    for (wchar_t &ch : normalized) {
+        ch = static_cast<wchar_t>(std::towlower(ch));
+    }
+    return sdk_utils::toUtf8String(boost::filesystem::path(normalized));
+#else
+    std::string narrow = path;
+    if (narrow[0] != '/') {
+        char cwdBuffer[4096];
+        if (getcwd(cwdBuffer, sizeof(cwdBuffer)) != nullptr) {
+            narrow = std::string(cwdBuffer) + "/" + narrow;
+        }
+    }
+    // POSIX 区分大小写，不做折叠。
+    return normalizeSegments(narrow, [](char ch) { return ch == '/'; }, leadingPrefix(narrow));
+#endif
+}
 
 MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, AudioSpec &devSpec)
     : m_callback(callback)
@@ -254,6 +400,9 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     SignalProperties &signalProperties   = musicProperties->signalProperties;
     ProcessProperties &processProperties = musicProperties->processProperties;
     fileProperties.fullPath              = musicPath;
+    // 身份键的唯一产生点（ADR 0014）：addMusic / addMusicWithNotify / URL 直通三条入口
+    // 都经过 _addMusic，归一化只算这一次，下游（MusicIndex → TrackInfo::id）原样传递。
+    fileProperties.musicId               = deriveMusicId(musicPath);
     fileProperties.parseFileName();
     LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
     LOG_INFO(LOG_TAG, "extensionName : %s", fileProperties.extensionName.data());

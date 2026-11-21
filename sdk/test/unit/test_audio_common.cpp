@@ -1,6 +1,7 @@
 #include <AudioCommon.hpp>
 #include <AudioDecode.h>
 #include <AudioResample.h>
+#include <PcmGain.hpp>
 #include <doctest/doctest.h>
 #include <fstream>
 #include <vector>
@@ -137,5 +138,70 @@ TEST_SUITE("Decode")
         CHECK(callback.lastSpec.sampleRate > 0);
         CHECK(callback.lastSpec.numChannel > 0);
         CHECK(callback.lastSpec.bytesPerSample > 0);
+    }
+}
+
+TEST_SUITE("PcmGain")
+{
+    // 软件增益（ADR 0013）的纯函数部分：不需要声卡，也不碰线程。
+    TEST_CASE("S16 half gain halves every sample")
+    {
+        int16_t samples[4] = {1000, -1000, 32767, -32768};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              0.5f, 0.5f));
+        CHECK(samples[0] == 500);
+        CHECK(samples[1] == -500);
+        CHECK(samples[2] == 16384);
+        CHECK(samples[3] == -16384);
+    }
+
+    TEST_CASE("zero gain produces silence")
+    {
+        int16_t samples[8];
+        for (int16_t &sample : samples) {
+            sample = 12345;
+        }
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              0.0f, 0.0f));
+        for (const int16_t sample : samples) {
+            CHECK(sample == 0);
+        }
+    }
+
+    TEST_CASE("unsigned 8-bit scales around its midpoint")
+    {
+        uint8_t samples[3] = {128, 255, 0};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatU8,
+                              1.0f, 1.0f));
+        CHECK(samples[0] == 128);
+        CHECK(samples[1] == 255);
+        CHECK(samples[2] == 0);
+
+        // 零增益必须落到零点 128，而不是 0——否则静音会带一个直流偏置。
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatU8,
+                              0.0f, 0.0f));
+        for (const uint8_t sample : samples) {
+            CHECK(sample == 128);
+        }
+    }
+
+    TEST_CASE("ramp moves monotonically to the target gain")
+    {
+        int16_t samples[5] = {1000, 1000, 1000, 1000, 1000};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              1.0f, 0.0f));
+        CHECK(samples[0] == 1000);
+        CHECK(samples[4] == 0);
+        CHECK(samples[0] > samples[2]);
+        CHECK(samples[2] > samples[4]);
+    }
+
+    TEST_CASE("unsupported format is left untouched")
+    {
+        char bytes[6] = {1, 2, 3, 4, 5, 6};
+        CHECK_FALSE(sdk::applyGainRamp(bytes, sizeof(bytes), AudioFormatS24, 0.0f, 0.0f));
+        for (int i = 0; i < 6; ++i) {
+            CHECK(bytes[i] == static_cast<char>(i + 1));
+        }
     }
 }

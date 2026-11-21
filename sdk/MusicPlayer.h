@@ -31,6 +31,8 @@ enum class MusicPlayerState {
 struct MusicIndex {
     int index;
     std::string name;
+    // 派生身份键（ADR 0014）：与 soundbridge::TrackInfo::id 同源，允许为空。
+    std::string id;
 };
 
 class MusicPlayerListener {
@@ -75,6 +77,12 @@ public:
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+
+    // 音量（软件增益，ADR 0013）：0–100，100 = 原样输出；静音与取值正交。
+    void setVolume(int percent);
+    int volume() const;
+    void setMuted(bool muted);
+    bool muted() const;
 
     // 仅供测试（ADR 0010）：设备队列当前深度（字节）。不进入 soundbridge::Player 的对外契约。
     size_t queuedBytesForTest() const;

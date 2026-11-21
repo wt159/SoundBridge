@@ -409,3 +409,52 @@ TEST_SUITE("MusicPlayList")
         REQUIRE(playlist->getMusicCount() == 1);
     }
 }
+
+TEST_SUITE("MusicId")
+{
+    // 派生身份键（ADR 0014）：纯字符串处理，不碰文件系统。
+    TEST_CASE("empty path yields empty id")
+    {
+        CHECK(deriveMusicId("").empty());
+    }
+
+    TEST_CASE("http url keeps its original form")
+    {
+        const std::string url = "http://example.com/a/../b?token=1";
+        CHECK(deriveMusicId(url) == url);
+    }
+
+    TEST_CASE("dot segments collapse lexically")
+    {
+        CHECK(deriveMusicId("/a/b/../c") == "/a/c");
+        CHECK(deriveMusicId("/a/./b") == "/a/b");
+        CHECK(deriveMusicId("/a/b/../..") == "/");
+    }
+
+    TEST_CASE("duplicate separators collapse")
+    {
+        CHECK(deriveMusicId("/a//b") == "/a/b");
+    }
+
+    TEST_CASE("relative path becomes absolute")
+    {
+        const std::string relative = "music/track.wav";
+        const std::string id       = deriveMusicId(relative);
+        CHECK(id.size() > relative.size());
+        CHECK(id.find(relative) != std::string::npos);
+    }
+
+#ifdef _WIN32
+    TEST_CASE("mixed separators and case fold to one identity")
+    {
+        // 同一进程内同一物理文件曾出现 `/` 与 `\` 两种写法（#237 实证）。
+        CHECK(deriveMusicId("D:/work/SoundBridge/music/music.wav")
+              == deriveMusicId(R"(d:\work\soundbridge\music\music.wav)"));
+    }
+
+    TEST_CASE("drive letter survives normalization")
+    {
+        CHECK(deriveMusicId("C:/a/b.wav") == "c:/a/b.wav");
+    }
+#endif
+}

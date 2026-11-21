@@ -22,8 +22,16 @@
 
 namespace sdk {
 
+// 派生曲目身份键（ADR 0014）：绝对化 → 词法归一（消 `.` 与 `..`）→ 分隔符统一 `/`
+// → Windows 下按宽字符折叠大小写。`http(s)://` 原样返回、不做归一化。
+// 只做词法处理，不碰文件系统（不解析符号链接、不要求路径存在），因此文件删除后
+// 同一路径的键不变。**不保证列表内唯一**：`addMusic` 无去重。
+std::string deriveMusicId(const std::string &path);
+
 struct FileProperties {
     std::string fullPath;
+    // fullPath 的归一化形式，入列时由 deriveMusicId() 计算（唯一 choke point）。
+    std::string musicId;
     std::string fileName;
     std::string extensionName;
     std::string fileDir;
