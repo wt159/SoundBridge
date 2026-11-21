@@ -385,7 +385,9 @@
 
 **更正四（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 落地）**：`UI-V8` 作废——`mListMask` 是死对象（构造时几何高度被 `setMinimumHeight(50)` 钳制、`hide()` 后从未 `show()`、无任何消费方），随三控件转正一并删除，`mListMask` 也不再是锚点（§1.3 该行同步作废）。删除理由与替代物见 ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md)：列表底部不再需要遮罩，浮层自行管理边界。上表 `UI-V8` 单元格保留时点原文。
 
-## 8. 占位控件
+## 8. 占位控件与转正控件
+
+> **读法（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：本节原题「占位控件」。三个占位控件转正后，§8.1–§8.3 只对**将来**新增的占位控件有效（`UI-H1..H3` 已退役，保留时点原文），§8.4–§8.8 是转正后的可见语义与判据。当前占位清单为空。
 
 ### 8.1 定义与规则
 
@@ -503,12 +505,12 @@
 | `UI-A4` | 模式循环顺序 | 读 `btn_playMode_clicked()` 的 switch，与 §4.4 一致 |
 | `UI-A5` | 键名 | 读 `restoreWindowState()` / `persistWindowState()`，与 §6.1 一致 |
 | `UI-A6` | 错误文案 | 读 `errorReason()`，六个字符串两两不同且与 §5.2 一致 |
-| `UI-A7` | 收藏键 | 读 `mainwindow.cpp` 的收藏分支：键名 `library/favorites`，空 id 不写 |
-| `UI-A8` | 音量键与钳制 | 读 `restoreWindowState()` / `persistWindowState()`：`playback/volume` 钳制 `0..100`，`playback/muted` 为布尔 |
+| `UI-A7` | 收藏键 | 读 `mainwindow.cpp` 的收藏分支：键名 `library/favorites`；写入侧空 id 早退不写、读取侧丢弃空串；悬挂条目保留不做启动期 GC |
+| `UI-A8` | 音量键与钳制 | 读 `restoreWindowState()` / `persistWindowState()`：`playback/volume` 钳制 `0..100` 且钳制后回写修正值，类型错误按默认 `100`；`playback/muted` 为布尔 |
 | `UI-A9` | 面板可点性 | 读渲染路径：`btn_menu->setEnabled(!playlist.isEmpty())` |
 | `UI-A10` | 浮层机制 | 读 `app/popuppanel.cpp`：`Qt::Popup`、Esc 分支、关闭后 `anchor->setFocus()` |
-| `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`：混合分隔符 / `..`（含越根）/ UNC / 相对路径 / URL 五类用例全绿 |
-| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（半幅 / 零增益 / 渐变端点 / S32 与 FLT32 逐格式 / 未识别格式直通）与 `-ts=MusicPlayerVolume`（默认 100、越界钳制、静音不改取值）全绿 |
+| `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`（7 例全绿）：空路径 / URL 原样 / 点段折叠（含越根）/ 重复分隔符 / 相对路径绝对化 / 混合分隔符与大小写折叠 / 盘符与 UNC 前缀 |
+| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（6 例全绿，S16 半幅 / 零增益 / U8 绕中点 / S32 与 FLT32 逐格式 / 渐变端点 / 未识别格式直通）与 `-ts=MusicPlayerVolume`（2 例全绿，默认 100 与越界钳制 / 静音不改取值） |
 
 ### 9.3 B 类冒烟清单
 
@@ -603,3 +605,4 @@
 - 2026-11-21（[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）：重排最小尺寸布局，`960×540` 恢复为可兑现承诺；§6.2 / §7 / §9.3 / §9.6 各追加时点注记，既有表格单元格与正文未改。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 转正）：收藏 / 音量 / 播放列表面板三控件转正。§1.1 增「本地偏好」第四条真相源；§1.3 增 5 个锚点并注明 `mListMask` 作废；§1.4 增控件文案；§6.1 增 3 个键并把命名区扩为 `window` / `playback` / `library`；§7 增 `UI-V9` / `UI-V10` 与更正四；§8 增 §8.4–§8.8；§9 增 `F` / `M` / `VOL` 三个编号区、6 条 A 类核对与 5 步冒烟；§10 注明三条界外被覆盖。ADR [0013](../docs/adr/0013-software-volume-gain.md) / [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md) / [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 同批落地。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 收口后审计）：§8 标题改为「占位控件与转正控件」并加读法导语——原标题覆盖不了 §8.4–§8.8。`UI-A7` 补「读取侧丢空串 / 悬挂条目保留」、`UI-A8` 补「钳制后回写修正值 / 类型错误取默认 100」、`UI-A11` / `UI-A12` 由类别枚举改为「套件 + 例数 + 逐例要点」：原写法是局部枚举，会被读成完整清单（#242 / #243 的裁定里有、核对清单里看不见的条目据此补齐）。
