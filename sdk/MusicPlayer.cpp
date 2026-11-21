@@ -91,6 +91,10 @@ private:
 
 private:
     std::shared_ptr<IAudioDevice> m_audioDev;
+    // 仅供测试（ADR 0011）：被 setAudioDeviceForTest 替换掉的真实设备。必须保留它——
+    // AudioDevice 的析构会无条件 SDL_Quit()，一旦被换下的设备当场销毁，替身的内层设备
+    // 再 open 就会拿到「Audio subsystem is not initialized」。
+    std::shared_ptr<IAudioDevice> m_replacedAudioDev;
     AudioSpec m_devSpec;
     std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
@@ -335,7 +339,8 @@ bool MusicPlayer::Impl::setAudioDeviceForTest(std::shared_ptr<IAudioDevice> devi
         LOG_ERROR(LOG_TAG, "audio device is already open, reject test device");
         return false;
     }
-    m_audioDev = std::move(device);
+    m_replacedAudioDev = m_audioDev;
+    m_audioDev         = std::move(device);
     return true;
 }
 

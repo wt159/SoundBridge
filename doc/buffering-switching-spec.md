@@ -278,6 +278,8 @@
 
 **`start()` 失败的边界**：判据只断言「错误码上报 + 未进 `PlayingState`」，不断言清理；失败后设备仍 open、解码任务仍 start，清理语义不在本规格范围内。
 
+**更正（2026-11-21，实跑核对）**：上段「失败后设备仍 open」不成立——`onMusicPlayListError()` 在上报前已经 `stop()` 并 `close()` 设备（`sdk/MusicPlayer.cpp` 的 `onMusicPlayListError`）；仍成立的是「解码任务未回收」。判据口径不变：只断言错误码与未进 `PlayingState`，不断言清理。
+
 **静态 open 钩子的退役**：`AudioDevice::setForceOpenFailureForTest(bool)`（票 #110）在替身落地后删除，「open 失败 → `AudioDeviceOpenFailed` → 状态」判据改用替身脚本重写；删除与重写必须在同一个 PR 内完成。
 
 **不变项**：不新增 ctest 目标（14 个）、不动任何 `TIMEOUT`、BadInput 55 例 / 398 断言基线不动、公开 `soundbridge::Player` 面零变更。以上判据只在 CI 的 dummy 驱动下成立，真实设备行为仍只由人工冒烟覆盖。
