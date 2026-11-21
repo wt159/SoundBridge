@@ -5,7 +5,8 @@
 #define SOUNDBRIDGE_VERSION_PATCH  0
 
 // ABI version: increment only when binary compatibility is broken
-#define SOUNDBRIDGE_ABI_VERSION    1
+// 2（2026-11-21，地图 #235）：TrackInfo 追加 std::string id；Player 追加音量四方法。
+#define SOUNDBRIDGE_ABI_VERSION    2
 
 #define SOUNDBRIDGE_VERSION_STRING "1.0.0"
 

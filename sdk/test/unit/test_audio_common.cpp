@@ -1,6 +1,7 @@
 #include <AudioCommon.hpp>
 #include <AudioDecode.h>
 #include <AudioResample.h>
+#include <PcmGain.hpp>
 #include <doctest/doctest.h>
 #include <fstream>
 #include <vector>
@@ -137,5 +138,93 @@ TEST_SUITE("Decode")
         CHECK(callback.lastSpec.sampleRate > 0);
         CHECK(callback.lastSpec.numChannel > 0);
         CHECK(callback.lastSpec.bytesPerSample > 0);
+    }
+}
+
+TEST_SUITE("PcmGain")
+{
+    // 软件增益（ADR 0013）的纯函数部分：不需要声卡，也不碰线程。
+    TEST_CASE("S16 half gain halves every sample")
+    {
+        int16_t samples[4] = {1000, -1000, 32767, -32768};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              0.5f, 0.5f));
+        CHECK(samples[0] == 500);
+        CHECK(samples[1] == -500);
+        CHECK(samples[2] == 16384);
+        CHECK(samples[3] == -16384);
+    }
+
+    TEST_CASE("zero gain produces silence")
+    {
+        int16_t samples[8];
+        for (int16_t &sample : samples) {
+            sample = 12345;
+        }
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              0.0f, 0.0f));
+        for (const int16_t sample : samples) {
+            CHECK(sample == 0);
+        }
+    }
+
+    TEST_CASE("unsigned 8-bit scales around its midpoint")
+    {
+        uint8_t samples[3] = {128, 255, 0};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatU8,
+                              1.0f, 1.0f));
+        CHECK(samples[0] == 128);
+        CHECK(samples[1] == 255);
+        CHECK(samples[2] == 0);
+
+        // 零增益必须落到零点 128，而不是 0——否则静音会带一个直流偏置。
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatU8,
+                              0.0f, 0.0f));
+        for (const uint8_t sample : samples) {
+            CHECK(sample == 128);
+        }
+    }
+
+    TEST_CASE("S32 and FLT32 scale by their own full scale")
+    {
+        // 支持的格式不止 S16（ADR 0013 的格式分派表）：S32 / FLT32 必须各按自身位宽缩放，
+        // 被误当成 S16 解释的后果是样本数算成两倍、字节读串。
+        int32_t wide[2] = {1000000, -1000000};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(wide), sizeof(wide), AudioFormatS32,
+                                   0.5f, 0.5f));
+        CHECK(wide[0] == 500000);
+        CHECK(wide[1] == -500000);
+
+        float floats[2] = {0.8f, -0.8f};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(floats), sizeof(floats),
+                                   AudioFormatFLT32, 0.5f, 0.5f));
+        CHECK(floats[0] == doctest::Approx(0.4f));
+        CHECK(floats[1] == doctest::Approx(-0.4f));
+
+        // 浮点按 [-1, 1] 钳制：0.9 × 2.0 不许溢出到 >1。
+        float loud[1] = {0.9f};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(loud), sizeof(loud), AudioFormatFLT32,
+                                   2.0f, 2.0f));
+        CHECK(loud[0] == doctest::Approx(1.0f));
+    }
+
+    TEST_CASE("ramp moves monotonically to the target gain")
+    {
+        int16_t samples[5] = {1000, 1000, 1000, 1000, 1000};
+        REQUIRE(sdk::applyGainRamp(reinterpret_cast<char *>(samples), sizeof(samples), AudioFormatS16,
+                              1.0f, 0.0f));
+        CHECK(samples[0] == 1000);
+        CHECK(samples[4] == 0);
+        CHECK(samples[0] > samples[2]);
+        CHECK(samples[2] > samples[4]);
+    }
+
+    TEST_CASE("unsupported format is left untouched")
+    {
+        char bytes[6] = {1, 2, 3, 4, 5, 6};
+        CHECK_FALSE(sdk::applyGainRamp(bytes, sizeof(bytes), AudioFormatS24, 0.0f, 0.0f));
+        for (int i = 0; i < 6; ++i) {
+            CHECK(bytes[i] == static_cast<char>(i + 1));
+        }
     }
 }

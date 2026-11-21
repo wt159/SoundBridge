@@ -185,3 +185,42 @@ TEST_SUITE("PublicPlayer")
         CHECK(player.position() == 0);
     }
 }
+
+TEST_SUITE("MusicPlayerVolume")
+{
+    // 音量语义（ADR 0013 / 规格 §8.5）：钳制与「静音不改取值」都是纯状态，不用起播。
+    TEST_CASE("volume defaults to 100 and clamps out-of-range values")
+    {
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        sdk::MusicPlayer player(&listener, logDir);
+
+        CHECK(player.volume() == 100);
+        CHECK_FALSE(player.muted());
+
+        player.setVolume(-5);
+        CHECK(player.volume() == 0);
+
+        player.setVolume(150);
+        CHECK(player.volume() == 100);
+
+        player.setVolume(37);
+        CHECK(player.volume() == 37);
+    }
+
+    TEST_CASE("muting keeps the volume value")
+    {
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        sdk::MusicPlayer player(&listener, logDir);
+
+        player.setVolume(42);
+        player.setMuted(true);
+        CHECK(player.muted());
+        CHECK(player.volume() == 42);
+
+        player.setMuted(false);
+        CHECK_FALSE(player.muted());
+        CHECK(player.volume() == 42);
+    }
+}

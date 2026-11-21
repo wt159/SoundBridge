@@ -75,6 +75,7 @@ public:
                 TrackInfo info;
                 info.index = item.index;
                 info.name  = item.name;
+                info.id    = item.id;
                 tracks.push_back(info);
             }
         }
@@ -224,6 +225,14 @@ public:
 
     bool autoSkipOnError() const { return m_player->autoSkipOnError(); }
 
+    void setVolume(int percent) { m_player->setVolume(percent); }
+
+    int volume() const { return m_player->volume(); }
+
+    void setMuted(bool muted) { m_player->setMuted(muted); }
+
+    bool muted() const { return m_player->muted(); }
+
 private:
     PlayerCallbacksAdapter m_adapter;
     std::shared_ptr<sdk::MusicPlayer> m_player;
@@ -320,6 +329,26 @@ void Player::setAutoSkipOnError(bool enabled)
 bool Player::autoSkipOnError() const
 {
     return m_impl->autoSkipOnError();
+}
+
+void Player::setVolume(int percent)
+{
+    m_impl->setVolume(percent);
+}
+
+int Player::volume() const
+{
+    return m_impl->volume();
+}
+
+void Player::setMuted(bool muted)
+{
+    m_impl->setMuted(muted);
+}
+
+bool Player::muted() const
+{
+    return m_impl->muted();
 }
 
 } // namespace soundbridge

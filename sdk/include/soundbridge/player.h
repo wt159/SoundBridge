@@ -15,6 +15,11 @@ enum class PlaybackMode { Sequential, Loop, Random, SingleOnce, SingleLoop };
 struct TrackInfo {
     int index;
     std::string name;
+    // 派生身份键：由 fullPath 归一化而来（绝对化 + 词法归一 + 分隔符统一 '/' +
+    // Windows 大小写折叠），跨扫描稳定，用于收藏等跨会话标注（ADR 0014）。
+    // 允许为空：没有路径的来源（将来的流式条目）为空。**不保证列表内唯一**——
+    // addMusic 无去重，同一路径入列两次会得到两条同 id 记录，不得当唯一键做索引。
+    std::string id;
 };
 
 struct PlayerConfig {
@@ -74,6 +79,16 @@ public:
     PlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+
+    // 音量（软件增益，ADR 0013）：0–100 整数，100 = 增益 1.0 原样输出，
+    // 0 = 输出全零 PCM；越界按端点钳制，不报错。不支持 >100（不做软件放大）。
+    // 静音是与取值正交的独立布尔：静音不改 volume()，取消静音回到原值。
+    // 生效有排队延迟——稳态设备队列约 256 KiB，改动在已排队 PCM 播完后才可听
+    // （≈1.5 s 量级），不承诺毫秒级上限。跨曲目 / stop-play / 设备重开保持。
+    void setVolume(int percent);
+    int volume() const;
+    void setMuted(bool muted);
+    bool muted() const;
 
 private:
     class Impl;

@@ -5,6 +5,7 @@
 - 事实基线：`master @ b0543e3ce` + 2026-11-21 实跑截图（1200×720，SDL dummy 设备）
 - 关系：SDK 公开契约仍以 [`player-state-contract.md`](player-state-contract.md) 为准；本文只覆盖 `app/`。既有 SDK 规格的既有行一字不动，只在该文件 §1 加一行纯新增指针。
 - 术语：**界面状态**（`PlayerViewState` 的值）、**可见状态**（截图/控件属性可观察到的结果）、**判据锚点**（被本文锁定的 `objectName`）、**占位控件**（已存在但功能未实现的控件）。
+- 增补（2026-11-21）：三控件转正来自地图 [占位控件转正](https://github.com/wt159/SoundBridge/issues/235) 下的决策票 [#238](https://github.com/wt159/SoundBridge/issues/238) / [#239](https://github.com/wt159/SoundBridge/issues/239) / [#240](https://github.com/wt159/SoundBridge/issues/240) / [#241](https://github.com/wt159/SoundBridge/issues/241) / [#242](https://github.com/wt159/SoundBridge/issues/242) / [#243](https://github.com/wt159/SoundBridge/issues/243) / [#244](https://github.com/wt159/SoundBridge/issues/244) 与研究 [#236](https://github.com/wt159/SoundBridge/issues/236) / [#237](https://github.com/wt159/SoundBridge/issues/237)。
 
 ## 1. 边界、真相源与锚点
 
@@ -15,6 +16,9 @@
 | 播放器事实 | 状态、当前曲目、时长、位置、错误码、播放列表 | `soundbridge::Player` 经 `PlayerCallbacks` 发出 | `PlayerController` | 否；以 SDK 规格为准 |
 | UI 缓存 | `PlayerViewState` 的全部字段 | 仅 `PlayerController` 的回调实现 | `MainWindow` | 只锁**可见结果**，不锁字段结构 |
 | 控件外观 | 按钮勾选、文本、列表行、滑块位置 | 仅 `MainWindow::renderPlayerViewState()` | 人 | 是；见 §2–§8 |
+| 本地偏好 | 音量、静音、收藏集合 | `MainWindow`（经 `QSettings` 读写） | `MainWindow` | 是；见 §6.1 与 §8.4–§8.6 |
+
+**注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：标题的「三层」指播放器侧的真相源链；本地偏好是并列的第四条，**不在这条链上**——它不进 `PlayerViewState`，也不由回调驱动（裁定见 ADR [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md)）。因此不变量 2 对它不适用：界面写本地偏好是允许的，写播放状态仍然禁止。
 
 三条不变量：
 
@@ -49,6 +53,13 @@
 | `mNowPlayingSubtitle` | `QLabel` | **待补** | 状态/错误副标题 |
 | `mPositionLabel` | `QLabel` | **待补** | 已播放时间 |
 | `mDurationLabel` | `QLabel` | **待补** | 总时长 |
+| `mVolumePopup` | `QWidget`（`Qt::Popup`） | 新增 | 音量浮层容器 |
+| `mVolumeSlider` | `QSlider` | 新增 | 音量 0–100 |
+| `btn_mute` | `QPushButton`（checkable） | 新增 | 静音开关 |
+| `mPlaylistPopup` | `QWidget`（`Qt::Popup`） | 新增 | 播放列表面板容器 |
+| `mPanelList` | `QListWidget` | 新增 | 面板内的只读列表视图 |
+
+**注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`btn_favorite` / `btn_menu` / `btn_volume` 三行的「角色」列保留时点原文（占位），现行角色以 §8.4–§8.6 为准；`mListMask` 行随死代码删除作废，见 §7 更正四。
 
 「待补」由图外执行票补齐；补齐前，依赖这四个锚点的判据标「未满足」。
 
@@ -57,6 +68,7 @@
 - 界面文案锁定为**英文**：`IDLE`、`NOW PLAYING`、错误文案（§5.2）、`Auto skip on error`、模式名（§4.4）、`Not implemented`。
 - 不引入 `tr()` 与语言资源；中文只出现在日志与代码注释。
 - 文案大小写与连字符按本文逐字取；改字视为破坏契约。
+- **解锁控件文案（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`Volume: <n>%`（`<n>` 为 0–100 的十进制、无前导零）、`Volume: muted`、`MUTE`（`btn_mute` 文本）、`Favorite` / `Favorited`（`btn_favorite` 提示）、`Playlist`（`btn_menu` 提示）。`Not implemented` 不再是任何控件的提示文案。
 
 ### 1.5 新增控件流程
 
@@ -292,9 +304,19 @@
 | `window/maximized` | `bool` | `false` | true/false | `false` | 构造期 | 关闭时 |
 | `playback/auto_skip_on_error` | `bool` | `true` | true/false | `true` | 构造期 | 关闭时 |
 | `playback/mode` | `int` | `Sequential` | 五个枚举值 | `Sequential`（并回写修正值） | 构造期 | 关闭时 |
+| `playback/volume` | `int` | `100` | `0..100` | 钳制到端点（并回写修正值） | 构造期 | 变更后去抖 400 ms，另在关闭时兜底 |
+| `playback/muted` | `bool` | `false` | true/false | `false` | 构造期 | 变更即写，另在关闭时兜底 |
+| `library/favorites` | `QStringList` | 空 | 任意字符串，空串丢弃 | 丢弃非法项 | 构造期 | 变更即写 |
 
 - 新增键必须登记在本表，且留在 `playback/*` 或 `window/*` 命名区。
 - 写入时机唯一：`closeEvent`；不在运行期零散写入（模式回写修正值除外）。
+
+**注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：上两条是被本注记部分取代的时点文字，保留原文。现行口径：
+
+1. **命名区扩为三个**：`window/*`（窗口几何）、`playback/*`（播放参数，含音量与静音）、`library/*`（曲库级本地状态，当前只有收藏集合）。收藏不是播放参数——它不随播放变化，且将来可能脱离播放器单独浏览，所以不进 `playback/*`。`app/AGENTS.md` 的「持久化项集中在 `playback/*`」同步改成这三个区。
+2. **写入时机分三档**：窗口几何 / 最大化 / 模式 / autoSkip 仍只在 `closeEvent` 写；音量与静音在变更后**去抖 400 ms** 写一次（滑杆拖动每像素一次 `valueChanged`，逐次写会把 `QSettings` 变成同步 IO）；收藏在**每次 toggle 后立即写**（低频、且用户预期「点了就存住」）。四类值都在 `closeEvent` 兜底写一次。
+3. **去抖窗口内的崩溃会丢最后一次音量调整**，这是刻意接受的代价；不引入额外的落盘线程或原子写。
+4. **不引入 schema 版本键**：收藏仍是 `QStringList`，形态变化时再加 `schema/version`。`QSettings::status()` 只检查并写 Warning 日志，不向用户弹窗（写入失败属环境问题，不是播放错误）。
 
 ### 6.2 窗口
 
@@ -350,6 +372,8 @@
 | `UI-V6` | 样式表选择器只能指向 §1.3 的锚点；子控件必须用 `::handle` / `::sub-page`（双冒号）；不得存在语法拼写错误的选择器 | A（代码核对） |
 | `UI-V7` | qrc 中每个 `<file>` 在磁盘存在 | A（文件核对） |
 | `UI-V8` | `mListMask` 高度 0、隐藏、对鼠标透明；不要求可见 | A（代码核对） |
+| `UI-V9` | 两个浮层打开时不遮挡触发按钮所在行、不越出屏幕可用区域；空间不足时翻转到按钮下方 | 截图 + 960×540 复跑 |
+| `UI-V10` | 浮层关闭后键盘焦点回到触发按钮；浮层为 `Qt::Popup`，点外部与 Esc 都可关闭 | A（代码核对）+ B |
 
 现状偏差（2026-11-21）：`style.qss` 的 `#listWidget` / `#listMask` / `#durationSlider` 与锚点不匹配；`QListWidgetlistWidget:item:active` 缺分隔符；`:handle` / `:sub-page` 用了单冒号。均属 `UI-V6` 不满足，由执行票修正（方向：以锚点为准改选择器/删死规则，不改锚点）。
 
@@ -359,7 +383,11 @@
 
 **更正三（2026-11-21，[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）**：`UI-V2` 的通过条件恢复为原文口径——最小尺寸 `960×540` 下无重叠、无裁切，且列表出现滚动条。此前「收窄为默认 `1200×720` 无裁切」只覆盖缺口期，随本票落地作废；`UI-V2` 的判定列（「缩到 960×540 截图」）也因此重新可用。上表单元格不改。
 
-## 8. 占位控件
+**更正四（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 落地）**：`UI-V8` 作废——`mListMask` 是死对象（构造时几何高度被 `setMinimumHeight(50)` 钳制、`hide()` 后从未 `show()`、无任何消费方），随三控件转正一并删除，`mListMask` 也不再是锚点（§1.3 该行同步作废）。删除理由与替代物见 ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md)：列表底部不再需要遮罩，浮层自行管理边界。上表 `UI-V8` 单元格保留时点原文。
+
+## 8. 占位控件与转正控件
+
+> **读法（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：本节原题「占位控件」。三个占位控件转正后，§8.1–§8.3 只对**将来**新增的占位控件有效（`UI-H1..H3` 已退役，保留时点原文），§8.4–§8.8 是转正后的可见语义与判据。当前占位清单为空。
 
 ### 8.1 定义与规则
 
@@ -383,6 +411,8 @@
 
 功能实现（收藏存储、播放列表面板、音量接口）属界外（§10）；将来实现时先改本节与锚点表。
 
+**转正（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：上段「属界外」与 §8.2 的「现状」段均为时点文字，保留原文。三个控件已按本节准入流程转正：先扩 §1.3 锚点表（新增 5 个锚点），再改写 §10 的三条界外（见 §10 注记），最后由 §8.4–§8.8 给出可见语义与判据。§8.1 的五条规则对**将来**新增的占位控件继续有效；当前占位清单为空。
+
 ### 8.3 判据
 
 | 编号 | 输入/前置 | 期望 | 类 |
@@ -391,11 +421,77 @@
 | `UI-H2` | 点击三个占位控件 | 无信号、无状态变化、无弹窗 | B |
 | `UI-H3` | 锚点集合 | 未登记控件不得出现（与 §1.3 比对） | A |
 
+**注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`UI-H1` 的「三者均禁用」在三控件转正后不成立，`UI-H2` 的「点击无反应」同理。三条判据**退役**，替代判据见 §8.8；上表保留时点原文，不再执行。
+
+### 8.4 收藏
+
+- **键**：`TrackInfo::id`（`trackIds[currentTrackIndex]`），派生自 `fullPath` 的归一化形式（ADR [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md)）。收藏集合是**本地偏好**，不进 `PlayerViewState`、不回调下发。
+- **归属**：app 持有。SDK 只提供稳定键，不提供收藏状态。
+- **toggle**：点击在「当前曲目 id ∈ 集合」上取反；图标与 `checked` 立即变化，不等任何回调。
+- **可见**：`checkable == true`；`checked` → `btn_favorite_yes.png`，`!checked` → `btn_favorite_no.png`（qss `#btn_favorite:checked` 分支已就绪）；提示文案 `Favorite` / `Favorited`。
+- **切曲**：`checked` 由新曲目的 id 决定；允许一帧内残留旧值，下一次渲染纠正（同 §2.1 口径）。
+- **不可收藏**：当前曲目 id 为空（无当前曲目、或来源无路径）→ `enabled == false`、`checked == false`、提示 `Favorite`。
+- **悬挂条目**：文件被删/改名后 id 失效，条目**保留不清理**；同路径文件重新出现即恢复收藏态。不做启动期 GC。
+- **不做**：收藏夹列表、按收藏筛选、收藏排序、列表行上的收藏标记。
+- **持久化**：`library/favorites`，toggle 后立即写（§6.1）。
+
+### 8.5 音量
+
+- **取值范围**：整数 `0..100`。`0` = 输出全零 PCM；`100` = 增益 1.0，字节原样输出。**不支持 >100**（不做软件放大，因而不需要削波策略）。越界按端点钳制，不报错。
+- **静音**：独立布尔，与取值正交。静音**不改** `volume` 值；取消静音恢复到原值。拖动 `mVolumeSlider` 视为「要听」，自动解除静音。
+- **生效时机**：SDK 在下一次消费拍起按新值输出；稳态设备队列深度约 256 KiB，因此**改动在已排队 PCM 播完后才可听（≈1.5 s 量级）**。本文**不承诺**毫秒级上限，判据只写「最终一致」（见 §8.8）。规格依据 ADR [0013](../docs/adr/0013-software-volume-gain.md)。
+- **生命周期**：跨曲目、跨 `stop`/`play`、跨设备重开（LIVE 重连）保持。增益是会话级设置，不是曲目级状态。
+- **交互**：点 `btn_volume` 打开 `mVolumePopup`（不切换静音）；滑杆 `0..100`、单步 1、横向；拖动即改（不等松手）；`btn_mute` 切换静音。
+- **可见**：`btn_volume` 提示 `Volume: <n>%`，静音时 `Volume: muted`；`mVolumeSlider` 值等于 `volume`；`btn_mute` 的 `checked` 等于静音态，文本 `MUTE`。
+- **采样格式**：按设备格式 `m_devSpec.format` 分派，S16 / S32 / FLT32 / U8 / S8 都按各自位宽缩放；其它格式（S24、`*BE` 变体等）**直通不改**并记一次 Warning——宁可音量失效，也不把字节解释错。ADR [0013](../docs/adr/0013-software-volume-gain.md)。
+- **不做**：多输出设备选择、系统音量、设备级音量（SDL2 无此能力，见 ADR 0013）、>100 放大。
+
+### 8.6 播放列表面板
+
+- **打开**：点 `btn_menu`。播放列表为空时 `btn_menu` 为 `enabled == false`（提示仍为 `Playlist`），因此**不存在空面板**。
+- **内容**：与主列表同源（`viewState.playlist`），条目文本 = `TrackInfo.name` 原样（同 §3.1）；播放中的行用青色前景（`#5edcf3`）+ 加粗标识。不显示序号、时长、收藏标记、失败标记。
+- **点击语义**：点任意行 = `selectTrack(row)`（与 §3.3 一致，含"点当前行 = 从头重播"），随后面板关闭。
+- **跟随**：面板可见期间 `onTrackChanged` 更新高亮并滚动到居中；主列表的选中态仍由既有渲染路径负责，面板**不反向写**主列表。
+- **规模**：打开时全量填充（千曲量级可接受，约数十毫秒）；`setUniformItemSizes(true)`。
+- **不做**：增删、重排、清空、搜索、拖放、多选。列表增删需要 SDK 新增公开接口并联动播放状态机、失败集合与随机模式，属界外（§10）。
+
+### 8.7 浮层底座
+
+两个浮层共用 `PopupPanel`（ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md)）：
+
+- **机制**：自绘 `QWidget` + `Qt::Popup`；无窗口装饰、不进任务栏。点外部关闭由 popup grab 提供，Esc 显式处理。
+- **定位**：水平居中于触发按钮；垂直在按钮上方 8 px。上方可用空间小于浮层高度时翻转到按钮下方；左右钳制到 `QScreen::availableGeometry()`。
+- **尺寸**：音量浮层 `200×56`；面板 `300×260`（可用高度不足时可压到 `120`，列表出滚动条）。
+- **关闭**：Esc / 点外部 / 再次点同一按钮 / 面板内点条目。
+- **焦点**：打开时浮层取焦点（Esc 与键盘操作需要）；关闭后 `setFocus()` 回到触发按钮。
+- **不做**：动画、阴影、圆角之外的装饰、多显示器边界的特殊处理。
+
+### 8.8 判据
+
+| 编号 | 输入/前置 | 期望 | 类 |
+|---|---|---|---|
+| `UI-F1` | `btn_favorite` | `isCheckable() == true`；qss 存在 `:checked` 与默认两条图标分支 | A |
+| `UI-F2` | 收藏当前曲目后关闭重开 | 图标为已收藏态；集合键 `library/favorites` 含该曲目 id | B |
+| `UI-F3` | 切到未收藏曲目再切回 | `checked` 依次为 `false` → `true` | B |
+| `UI-F4` | 无当前曲目 / id 为空 | `btn_favorite` 禁用且 `unchecked`，点击不写入集合 | A（代码核对） |
+| `UI-VOL1` | `setVolume(-5)` / `setVolume(150)` / 构造后默认值 | `0` / `100` / `100` | A（单测） |
+| `UI-VOL2` | 增益数学 | S16 半幅样本减半、增益 0 输出全零、块内线性渐变端点正确、S32 / FLT32 各按自身满幅缩放（FLT32 钳到 `[-1, 1]`）、不支持的格式（如 S24）字节原样不动且返回 `false` | A（单测） |
+| `UI-VOL3` | 拖滑杆到 60，关闭重开 | 提示 `Volume: 60%`；重启后滑杆仍 60 且输出音量一致 | B |
+| `UI-VOL4` | 点 `btn_mute` 再取消 | 依次无声 / 有声；`volume` 值全程不变 | B |
+| `UI-M1` | 空列表 / 非空列表 | `btn_menu` 依次 `enabled == false` / `true` | A（代码核对） |
+| `UI-M2` | 打开面板 | 条目数与主列表一致；当前播放行为青色加粗 | B |
+| `UI-M3` | 点面板第 3 行 | 播放第 3 首、面板关闭、主列表选中同步 | B |
+| `UI-M4` | 面板打开时按下一首 | 高亮跟随到新行并居中 | B |
+| `UI-M5` | 两个浮层 | `windowFlags() & Qt::Popup`；有 Esc 分支；关闭后焦点回触发按钮 | A（代码核对） |
+
+音量「最终一致」的取证口径：改值后等待 **2 s** 再判断有无声音变化（覆盖 §8.5 的 ≈1.5 s 上界），不写「≤N 毫秒」这类依赖采样撞窗口的断言。
+
 ## 9. 判据与验收
 
 ### 9.1 编号与两类判据
 
 - 编号：`UI-<区>-<序号>`；区 = `S`（状态）/ `L`（列表）/ `T`（传输）/ `E`（错误）/ `P`（持久化）/ `V`（视觉）/ `H`（占位）。
+- **新增区（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`F`（收藏）、`M`（播放列表面板）、`VOL`（音量）。`VOL` 是三字母区，编号写作 `UI-VOL1` 不带连字符，以免与视觉区的 `UI-V1` 混淆。`H` 区自本日起无在册判据（占位清单为空），编号保留不复用。
 - **A 类**：可脚本核对（锚点、选择器、资源、常量、键名）；当前不新增自动化测试，核对方式是 `grep` + 人工读代码，证据贴票。
 - **B 类**：手工冒烟；按步骤操作，截图/日志取证。
 
@@ -409,6 +505,12 @@
 | `UI-A4` | 模式循环顺序 | 读 `btn_playMode_clicked()` 的 switch，与 §4.4 一致 |
 | `UI-A5` | 键名 | 读 `restoreWindowState()` / `persistWindowState()`，与 §6.1 一致 |
 | `UI-A6` | 错误文案 | 读 `errorReason()`，六个字符串两两不同且与 §5.2 一致 |
+| `UI-A7` | 收藏键 | 读 `mainwindow.cpp` 的收藏分支：键名 `library/favorites`；写入侧空 id 早退不写、读取侧丢弃空串；悬挂条目保留不做启动期 GC |
+| `UI-A8` | 音量键与钳制 | 读 `restoreWindowState()` / `persistWindowState()`：`playback/volume` 钳制 `0..100` 且钳制后回写修正值，类型错误按默认 `100`；`playback/muted` 为布尔 |
+| `UI-A9` | 面板可点性 | 读渲染路径：`btn_menu->setEnabled(!playlist.isEmpty())` |
+| `UI-A10` | 浮层机制 | 读 `app/popuppanel.cpp`：`Qt::Popup`、Esc 分支、关闭后 `anchor->setFocus()` |
+| `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`（7 例全绿）：空路径 / URL 原样 / 点段折叠（含越根）/ 重复分隔符 / 相对路径绝对化 / 混合分隔符与大小写折叠 / 盘符与 UNC 前缀 |
+| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（6 例全绿，S16 半幅 / 零增益 / U8 绕中点 / S32 与 FLT32 逐格式 / 渐变端点 / 未识别格式直通）与 `-ts=MusicPlayerVolume`（2 例全绿，默认 100 与越界钳制 / 静音不改取值） |
 
 ### 9.3 B 类冒烟清单
 
@@ -428,6 +530,13 @@
 | 10 | 关闭重开 | 窗口/模式/autoSkip 保持 | `UI-P2`、`UI-T6` |
 | 11 | 缩到 960×540，再回到 1200×720 | 960×540 记录裁切现状（已知缺口 #228，不计入通过）；1200×720 无裁切 | `UI-V2`、`UI-P6` |
 | 12 | 点三个占位控件 | 无反应、无弹窗 | `UI-H2` |
+| 13 | 收藏当前曲目，切到别的曲目再切回 | 收藏态按曲目切换，图标随之变化 | `UI-F2`、`UI-F3` |
+| 14 | 点音量按钮，拖滑杆到 0，再回到 60 | 先无声、后有声（每次改值后等 2 s 再判） | `UI-VOL3` |
+| 15 | 静音后再取消静音 | 无声 → 有声；提示文案在 `Volume: muted` 与 `Volume: 60%` 之间切换 | `UI-VOL4` |
+| 16 | 点播放列表按钮，点面板第 3 行 | 播放第 3 首，面板关闭，主列表选中同步 | `UI-M2`、`UI-M3` |
+| 17 | 面板打开时按下一首 | 高亮跟随到新行并居中 | `UI-M4` |
+
+**注记（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：步骤 12 随 `UI-H1` / `UI-H2` 退役作废，三控件改由步骤 13–17 覆盖；本表行保留时点原文。
 
 **注记（2026-11-21，[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）**：步骤 11 的期望「`960×540` 记录裁切现状（已知缺口 #228，不计入通过）」在缺口关闭后改为「`960×540` 与 `1200×720` 两档均无裁切」。行内文字保留时点原样，实际执行按本注记。
 
@@ -466,6 +575,8 @@
 
 **落地更新（2026-11-21，[#228](https://github.com/wt159/SoundBridge/issues/228)）**：上表的 `UI-V2` / `UI-P6`（最小尺寸）由「不满足」转为**满足**——`960×540` 与 `1200×720` 两档实测无裁切、无重叠，`960×540` 下列表出现滚动条（`UI-V2` 的滚动条要求）。上表保留时点原样，不改。
 
+**落地更新（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`UI-H1` / `UI-H2` / `UI-H3` 退役（§8.3 注记），`UI-V8` 作废（§7 更正四）。新增的 `UI-F*` / `UI-VOL*` / `UI-M*` 共 13 条判据中，A 类 6 条（`UI-F1` / `UI-F4` / `UI-VOL1` / `UI-VOL2` / `UI-M1` / `UI-M5`）由 §9.2 的机器核对与 `MusicId` / `PcmGain` 两个单测套件承担，B 类 7 条进 §9.3 冒烟步骤 13–17。三控件的代码实现走图外执行票，与本规格同批交付。
+
 ## 10. 界外
 
 - SDK 公开契约与 `PlayerViewState` 结构调整（含删除 `artist` / `album` 死字段）。
@@ -479,6 +590,12 @@
 - 空状态引导文案、首次使用引导、关于对话框。
 - 打包、安装器、便携版路径策略。
 
+**注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：上列条目保留时点原文，其中三条已被本图显式覆盖——
+
+1. **「收藏功能」「播放列表面板」「音量控制」**已转正，范围见 §8.4–§8.6。仍未纳入的部分：收藏夹列表/筛选/排序、面板的增删重排、**设备音量接口**（SDL2 无设备级音量，ADR [0013](../docs/adr/0013-software-volume-gain.md) 裁决不做）。
+2. **「SDK 公开契约」被覆盖一次**：`TrackInfo` 新增派生键 `id`（ADR [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md)），`Player` 新增 `setVolume` / `volume` / `setMuted` / `muted` 四个方法（ADR [0013](../docs/adr/0013-software-volume-gain.md)），`SOUNDBRIDGE_ABI_VERSION` 1 → 2。此覆盖是**定向的**：除这两处外，「不在本图内改动 SDK 公开契约」仍然有效。
+3. 其余条目（打开文件/目录、拖放、曲库扫描、搜索、元数据、封面、视觉重设计、快捷键、多语言、自动化 UI 测试、空状态、打包）一律不动。
+
 ## 11. 变更记录
 
 - 2026-11-21：定稿。地图 [#216](https://github.com/wt159/SoundBridge/issues/216) 收口；规格与 ADR 0012 同时落地。既有 SDK 规格零改动，`player-state-contract.md` 只加一行纯新增指针。
@@ -486,3 +603,6 @@
 - 2026-11-21（执行落地）：锚点、样式表、占位控件由 PR [#229](https://github.com/wt159/SoundBridge/pull/229) 落地；§9.6 追加落地更新，`UI-V2` / `UI-P6` 仍为 #228。
 - 2026-11-21（收口后审计）：补测客户端 `1100×720` 推翻 §6.2「小于 `1200×720` 必裁切」的外推，追加更正；`UI-V8` 的「高度 0」与 `setMinimumHeight(50)` 矛盾，追加更正二；§9.6 注明三处时点文字与落地更新的关系。
 - 2026-11-21（[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）：重排最小尺寸布局，`960×540` 恢复为可兑现承诺；§6.2 / §7 / §9.3 / §9.6 各追加时点注记，既有表格单元格与正文未改。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 转正）：收藏 / 音量 / 播放列表面板三控件转正。§1.1 增「本地偏好」第四条真相源；§1.3 增 5 个锚点并注明 `mListMask` 作废；§1.4 增控件文案；§6.1 增 3 个键并把命名区扩为 `window` / `playback` / `library`；§7 增 `UI-V9` / `UI-V10` 与更正四；§8 增 §8.4–§8.8；§9 增 `F` / `M` / `VOL` 三个编号区、6 条 A 类核对与 5 步冒烟；§10 注明三条界外被覆盖。ADR [0013](../docs/adr/0013-software-volume-gain.md) / [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md) / [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 同批落地。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 收口后审计）：§8 标题改为「占位控件与转正控件」并加读法导语——原标题覆盖不了 §8.4–§8.8。`UI-A7` 补「读取侧丢空串 / 悬挂条目保留」、`UI-A8` 补「钳制后回写修正值 / 类型错误取默认 100」、`UI-A11` / `UI-A12` 由类别枚举改为「套件 + 例数 + 逐例要点」：原写法是局部枚举，会被读成完整清单（#242 / #243 的裁定里有、核对清单里看不见的条目据此补齐）。

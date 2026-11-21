@@ -10,6 +10,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 #include "playercontroller.h"
+#include "popuppanel.h"
 #include "soundbridge/sdk.h"
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -20,6 +21,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QListWidget>
 #include <QMainWindow>
 #include <QPushButton>
+#include <QSet>
 #include <QSlider>
 #include <QSpacerItem>
 #include <QTimer>
@@ -80,8 +82,16 @@ private:
     QLabel *mNowPlayingSubtitle;
     QCheckBox *mAutoSkipCheck;
 
-    /* Mask for list overlay. */
-    QWidget *mListMask;
+    /* 浮层（ADR 0015）。mListMask 已删除。 */
+    VolumePopup *mVolumePopup;
+    PlaylistPopup *mPlaylistPopup;
+
+    /* 收藏（本地偏好，ADR 0014）。 */
+    QSet<QString> mFavorites;
+    QString mCurrentTrackId;
+
+    /* 音量写盘去抖（规格 §6.1）。 */
+    QTimer *mVolumeSaveTimer;
 
     std::string mAppDir;
     std::string mLogDir;
@@ -90,8 +100,6 @@ protected:
     /* Build the music UI layout. */
     void musicLayout();
 
-    /* Handle window resize. */
-    void resizeEvent(QResizeEvent *event);
     void closeEvent(QCloseEvent *event);
 
     /* Scan local songs. */
@@ -104,6 +112,9 @@ protected:
     void persistWindowState();
     void updatePlaybackModeButton(PlaybackMode mode);
     QString playbackModeText(PlaybackMode mode) const;
+    /* 音量与收藏的可见状态回填（规格 §8.4 / §8.5）。 */
+    void updateFavoriteButton();
+    void updateVolumeUi();
 
 protected:
 private slots:
@@ -136,6 +147,18 @@ private slots:
 
     /* Auto skip checkbox toggled. */
     void autoSkipToggled(bool checked);
+
+    /* 音量写盘（去抖计时器与 closeEvent 都走它，故须为槽）。 */
+    void persistVolumeState();
+
+    /* 音量滑杆变化（拖动即改）。 */
+    void volumeSliderChanged(int volume);
+
+    /* 静音开关切换。 */
+    void muteToggled(bool muted);
+
+    /* 面板内条目被点击（= selectTrack + 关闭面板）。 */
+    void panelTrackActivated(int index);
 
     void renderPlayerViewState(PlayerViewState viewState);
     void handlePlayerError(int code, const QString &detail, int trackIndex, const QString &path,

@@ -6,6 +6,7 @@
 #include "LogApi.h"
 #include "LogWrapper.h"
 #include "MusicPlayList.h"
+#include "PcmGain.hpp"
 #include "PrefillGate.h"
 #include "WorkQueue.hpp"
 #include <chrono>
@@ -40,6 +41,11 @@ public:
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
     bool autoSkipOnError() const;
+    // 音量（软件增益，ADR 0013）：0–100，100 = 原样输出；静音与取值正交。
+    void setVolume(int percent);
+    int volume() const;
+    void setMuted(bool muted);
+    bool muted() const;
     size_t queuedBytesForTest() const;
     StreamMetrics metricsForTest() const;
     bool retiredTaskExpiredForTest() const;
@@ -79,6 +85,8 @@ private:
     void stopConsumerThread();
     void consumeAudioData();
     bool shouldFillSilence();
+    // 当前生效增益：静音优先于取值。只读两个原子量，可在任意线程调用。
+    float effectiveGain() const;
     // 首播门槛（规格 doc/buffering-switching-spec.md §2）：设备 start 前等 ring
     // 攒够 prefillMs；超时记仪表后照常起播。sourceSpec 是设备 spec 不可用时的回退来源。
     size_t prefillTargetBytes(const AudioSpec &sourceSpec) const;
@@ -107,6 +115,13 @@ private:
     std::string m_traceId;
     std::atomic<uint64_t> m_traceSeq;
     std::atomic<bool> m_autoSkipOnError;
+    // 音量（ADR 0013）：控制线程写、消费者线程读，只用 relaxed——单值、无跨变量次序要求。
+    std::atomic<int> m_volumePercent;
+    std::atomic<bool> m_muted;
+    // 消费线程独占：上一块实际使用的增益，用作下一块线性渐变的起点（消 zipper）。
+    float m_appliedGain;
+    // 格式不支持的告警只发一次，否则每 10 ms 一条会刷屏（ADR 0013）。
+    bool m_gainFormatWarned;
     std::atomic<int> m_skipFailures;
     std::atomic<bool> m_switching;
     // 首播门槛「同一任务内只等一次」的身份标记（规格 §2.3）：暂停后恢复、重复 play()
@@ -141,6 +156,10 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_pendingAdd(0)
     , m_traceSeq(0)
     , m_autoSkipOnError(true)
+    , m_volumePercent(100)
+    , m_muted(false)
+    , m_appliedGain(1.0f)
+    , m_gainFormatWarned(false)
     , m_skipFailures(0)
     , m_switching(false)
     , m_shuttingDown(false)
@@ -310,6 +329,42 @@ void MusicPlayer::Impl::setAutoSkipOnError(bool enabled)
 bool MusicPlayer::Impl::autoSkipOnError() const
 {
     return m_autoSkipOnError.load();
+}
+
+void MusicPlayer::Impl::setVolume(int percent)
+{
+    // 越界钳制到端点而不是报错：音量是连续调节量，调用方（滑杆）不会刻意越界，
+    // 真越界多半是持久化里的脏值，钳制比让整条命令失败更合适（规格 §8.5）。
+    if (percent < 0) {
+        percent = 0;
+    }
+    if (percent > 100) {
+        percent = 100;
+    }
+    m_volumePercent.store(percent, std::memory_order_relaxed);
+}
+
+int MusicPlayer::Impl::volume() const
+{
+    return m_volumePercent.load(std::memory_order_relaxed);
+}
+
+void MusicPlayer::Impl::setMuted(bool muted)
+{
+    m_muted.store(muted, std::memory_order_relaxed);
+}
+
+bool MusicPlayer::Impl::muted() const
+{
+    return m_muted.load(std::memory_order_relaxed);
+}
+
+float MusicPlayer::Impl::effectiveGain() const
+{
+    if (m_muted.load(std::memory_order_relaxed)) {
+        return 0.0f;
+    }
+    return static_cast<float>(m_volumePercent.load(std::memory_order_relaxed)) / 100.0f;
 }
 
 size_t MusicPlayer::Impl::queuedBytesForTest() const
@@ -706,6 +761,21 @@ void MusicPlayer::Impl::consumeAudioData()
     size_t got = ring->read(buf.data(), kChunkSize);
 
     if (got > 0) {
+        // 软件增益（ADR 0013）：只在这一段做，覆盖全部设备写入点；默认 100% + 未静音时
+        // 整段跳过，既有判据看到的字节与顺序完全不变。
+        const float targetGain = effectiveGain();
+        if (targetGain != 1.0f || m_appliedGain != 1.0f) {
+            const bool applied
+                = applyGainRamp(buf.data(), got, m_devSpec.format, m_appliedGain, targetGain);
+            if (applied) {
+                m_appliedGain = targetGain;
+            } else if (!m_gainFormatWarned) {
+                // 违背约格式：宁可音量失效，也不把字节解释错。
+                m_gainFormatWarned = true;
+                LOG_WARNING(LOG_TAG, "volume gain skipped: unsupported device format %d",
+                            static_cast<int>(m_devSpec.format));
+            }
+        }
         if (m_audioDev->write(buf.data(), got) < 0) {
             task->decoder->noteDeviceWriteFailure();
         }
@@ -868,6 +938,7 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
         MusicIndex index;
         index.index = property->index;
         index.name  = property->fileProperties.fileName;
+        index.id    = property->fileProperties.musicId;
         m_musicListIndex.push_back(index);
     }
     m_listener->onMusicPlayerMusicListChanged(m_musicListIndex);
@@ -1098,6 +1169,26 @@ void MusicPlayer::setAutoSkipOnError(bool enabled)
 bool MusicPlayer::autoSkipOnError() const
 {
     return m_impl->autoSkipOnError();
+}
+
+void MusicPlayer::setVolume(int percent)
+{
+    m_impl->setVolume(percent);
+}
+
+int MusicPlayer::volume() const
+{
+    return m_impl->volume();
+}
+
+void MusicPlayer::setMuted(bool muted)
+{
+    m_impl->setMuted(muted);
+}
+
+bool MusicPlayer::muted() const
+{
+    return m_impl->muted();
 }
 
 size_t MusicPlayer::queuedBytesForTest() const
