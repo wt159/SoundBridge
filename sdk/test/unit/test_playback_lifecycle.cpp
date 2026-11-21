@@ -1,4 +1,6 @@
 #include "../fixtures/RealMediaFixture.hpp"
+#include "../fixtures/SyntheticWav.hpp"
+#include "../fixtures/TempMediaDir.hpp"
 #include <AudioBuffer.h>
 #include <AudioCommon.hpp>
 #include <AudioRingBuffer.h>
@@ -12,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <string>
@@ -449,5 +452,61 @@ TEST_SUITE("PlaybackLifecycle")
         CHECK_MESSAGE(nextDecoder.positionMs() == 25,
                       "新任务的位置被停机窗口里的 seek 带偏到 " << nextDecoder.positionMs() << " ms");
         nextDecoder.stop();
+    }
+
+    // 规格 §5.3 / §7.2：退役槽读出口给出「窗口是否关闭」的可观察点。
+    // 判据只在切歌后观察 retiredTaskForTest()：它必须先是活的（软取消未 join），
+    // 线程退出后的第一拍 reap 之后必须过期，且当前任务不受影响。
+    TEST_CASE("retired slot is reclaimed after a switch")
+    {
+        TempMediaDir temp("retiredslot");
+        auto writeFile = [](const std::string &path, const std::vector<char> &bytes) {
+            std::ofstream out(path.c_str(), std::ios::binary);
+            if (!out) {
+                return false;
+            }
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            return out.good();
+        };
+        if (!writeFile(temp.file("first.wav"), makeSilentWavBytes(3))
+            || !writeFile(temp.file("second.wav"), makeSilentWavBytes(3))) {
+            FAIL_CHECK("cannot synthesize wav fixtures");
+            return;
+        }
+
+        RecordingPlayListCallback callback;
+        WorkQueue workQueue;
+        std::shared_ptr<sdk::MusicPlayList> playlist
+            = makePlayList(callback, workQueue, { temp.file("first.wav"), temp.file("second.wav") });
+        REQUIRE(playlist->getMusicCount() == 2);
+
+        REQUIRE(playlist->startCurrentTask());
+        sdk::PlaybackTaskPtr first = playlist->currentTask();
+        REQUIRE(first != nullptr);
+        REQUIRE_MESSAGE(waitUntil([&first]() { return first->ring->availableRead() > 0; }, 5000),
+                        "任务启动后 ring 里没有 PCM");
+
+        // 切歌：旧任务只 abort 并移入退役槽（软取消，不 join）。
+        REQUIRE(playlist->setCurrentIndexSync(1));
+        sdk::PlaybackTaskPtr current = playlist->currentTask();
+        REQUIRE(current != nullptr);
+        sdk::PlaybackTaskPtr retired = playlist->retiredTaskForTest().lock();
+        CHECK_MESSAGE(retired != nullptr, "切歌后退役槽为空（软取消未生效或读出口取错槽）");
+        CHECK_MESSAGE(retired != current, "退役槽与当前槽指向同一个任务");
+        retired.reset();
+        first.reset();
+        current.reset(); // 测试不持强引用，否则退役槽永远不会过期
+
+        // 500 ms 是给退役线程退出的余量（wav 的退出是毫秒级）；reap 模拟消费拍。
+        const bool reaped = waitUntil(
+            [&playlist]() {
+                playlist->reapRetiredTaskIfFinished();
+                return playlist->retiredTaskForTest().expired();
+            },
+            500);
+        CHECK_MESSAGE(reaped, "退役槽在 500 ms 内没有回收");
+        CHECK_MESSAGE(playlist->currentTask() != nullptr, "回收退役槽不应影响当前任务");
+
+        playlist->stopCurrentTask();
     }
 }

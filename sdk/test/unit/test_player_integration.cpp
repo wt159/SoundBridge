@@ -1,4 +1,6 @@
 #include "../fixtures/RealMediaFixture.hpp"
+#include "../fixtures/SyntheticWav.hpp"
+#include "../fixtures/TempMediaDir.hpp"
 #include "../mocks/AudioDeviceDouble.hpp"
 #include "../mocks/PlayerMocks.hpp"
 #include <AudioDevice.h>
@@ -104,56 +106,6 @@ void skipCase(const char *reason)
     }
 }
 
-// ---- 临时素材目录 -------------------------------------------------------------
-// 合成素材不入库：在系统临时目录里放几份真实文件的副本，析构时删干净。
-// 路径统一用 '/'，Windows 的 _mkdir/_rmdir 同样接受。
-class TempMediaDir {
-public:
-    explicit TempMediaDir(const char *tag)
-    {
-        const char *base = std::getenv("TEMP");
-        if (base == nullptr || base[0] == '\0')
-            base = std::getenv("TMPDIR");
-        const std::string root
-            = (base != nullptr && base[0] != '\0') ? std::string(base) : std::string(".");
-#ifdef _WIN32
-        const int pid = static_cast<int>(_getpid());
-#else
-        const int pid = static_cast<int>(getpid());
-#endif
-        m_path = root + "/sb_interaction_" + std::to_string(pid) + "_" + tag;
-#ifdef _WIN32
-        _mkdir(m_path.c_str());
-#else
-        mkdir(m_path.c_str(), 0777);
-#endif
-    }
-
-    ~TempMediaDir()
-    {
-        for (size_t i = 0; i < m_files.size(); ++i)
-            std::remove(m_files[i].c_str());
-#ifdef _WIN32
-        _rmdir(m_path.c_str());
-#else
-        rmdir(m_path.c_str());
-#endif
-    }
-
-    const std::string &dir() const { return m_path; }
-
-    std::string file(const std::string &name)
-    {
-        const std::string path = m_path + "/" + name;
-        m_files.push_back(path);
-        return path;
-    }
-
-private:
-    std::string m_path;
-    std::vector<std::string> m_files;
-};
-
 std::vector<char> readAllBytes(const std::string &path)
 {
     std::vector<char> data;
@@ -190,45 +142,6 @@ bool copyMediaFile(const std::string &source, const std::string &target)
     if (bytes.empty())
         return false;
     return writeAllBytes(target, bytes);
-}
-
-// ---- 缓冲与会话切换规格（doc/buffering-switching-spec.md §7）的合成素材 ----------
-// 标准 44 字节 RIFF/WAVE 头 + PCM16 / 44.1 kHz / 双声道零数据。
-// 用合成静音而不是真实素材：EOS / 欠流判据要的是可控时长，零振幅不引入解码差异。
-std::vector<char> makeSilentWavBytes(int seconds)
-{
-    const uint32_t sampleRate    = 44100;
-    const uint16_t channels      = 2;
-    const uint16_t bitsPerSample = 16;
-    const uint32_t blockAlign    = channels * bitsPerSample / 8;
-    const uint32_t dataSize
-        = sampleRate * blockAlign * static_cast<uint32_t>(seconds < 1 ? 1 : seconds);
-    std::vector<char> bytes(44 + dataSize, 0);
-
-    auto putU16 = [&bytes](size_t offset, uint16_t value) {
-        bytes[offset]     = static_cast<char>(value & 0xFF);
-        bytes[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
-    };
-    auto putU32 = [&bytes](size_t offset, uint32_t value) {
-        for (int i = 0; i < 4; ++i) {
-            bytes[offset + i] = static_cast<char>((value >> (8 * i)) & 0xFF);
-        }
-    };
-
-    std::memcpy(&bytes[0], "RIFF", 4);
-    putU32(4, 36 + dataSize);
-    std::memcpy(&bytes[8], "WAVE", 4);
-    std::memcpy(&bytes[12], "fmt ", 4);
-    putU32(16, 16);
-    putU16(20, 1); // WAVE_FORMAT_PCM
-    putU16(22, channels);
-    putU32(24, sampleRate);
-    putU32(28, sampleRate * blockAlign);
-    putU16(32, static_cast<uint16_t>(blockAlign));
-    putU16(34, bitsPerSample);
-    std::memcpy(&bytes[36], "data", 4);
-    putU32(40, dataSize);
-    return bytes;
 }
 
 // ADR 0010 测试钩子的 RAII guard：析构归零，避免进程级开关泄漏给同一二进制里的后续用例。
@@ -1528,6 +1441,152 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         // 单任务上限为 1：m_prefillWaitedTask 保证同一任务只等一次门槛（§2.3）。
         CHECK_MESSAGE(metrics.prefillTimeouts == 1,
                       "门槛超时没有记一次账，实际 " << metrics.prefillTimeouts);
+    }
+
+    // ---- 设备替身判据（规格 §7.2 / ADR 0011） --------------------------------
+    // 三条判据都靠装饰器替身注入失败：生产路径没有钩子读，替身只在测试代码里。
+    // 读数一律在 stop() 之前取：stopCurrentTask() 会 decoder.reset()，之后只剩零值快照。
+
+    // C1：正常分支的写失败恰好记账一次，且不终止播放。
+    TEST_CASE("a failed device write is counted once")
+    {
+        TempMediaDir temp("devwrite");
+        if (!writeAllBytes(temp.file("only.wav"), makeSilentWavBytes(8))) {
+            skipCase("cannot synthesize silent wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+
+        // 第 3 次 write 失败一次：此时队列刚起步，后续增长空间足够观测「写恢复」。
+        auto innerDevice  = std::make_shared<AudioDevice>();
+        auto deviceDouble = std::make_shared<AudioDeviceDouble>(innerDevice);
+        deviceDouble->failWriteAtCall(3);
+        REQUIRE(player.setAudioDeviceForTest(deviceDouble));
+
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+
+        const bool counted = waitFor([&player]() {
+            return player.metricsForTest().deviceWriteFailures >= 1;
+        }, 3000);
+        // 失败不终止播放：队列继续被喂到 64 KB，说明后续写都成功了。
+        const bool recovered               = counted && waitForQueuedBytes(player, 64 * 1024, 3000);
+        const StreamMetrics metrics        = player.metricsForTest();
+        const MusicPlayerState stateAtRead = player.state();
+        player.stop();
+
+        CHECK_MESSAGE(counted, "注入的写失败没有被记账");
+        CHECK_MESSAGE(metrics.deviceWriteFailures == 1,
+                      "写失败不是恰好一次，实际 " << metrics.deviceWriteFailures);
+        CHECK_MESSAGE(recovered, "写失败之后队列没有继续增长（播放被终止）");
+        CHECK_MESSAGE(stateAtRead == MusicPlayerState::PlayingState, "写失败把状态带离了 PlayingState");
+        CHECK(deviceDouble->writeCalls() > 3);
+    }
+
+    // C2：静音分支的写失败也记账，且静音填充本身被计数。
+    // 分支归属由脚本条件保证：只让「全零负载」的 write 失败，素材是非零方波，
+    // 因此失败只可能落在静音分支（正常分支读出的 PCM 不可能整块为零）。
+    TEST_CASE("a silence fill write failure is counted")
+    {
+        TempMediaDir temp("silencefail");
+        if (!writeAllBytes(temp.file("tone.wav"), makeToneWavBytes(10))) {
+            skipCase("cannot synthesize tone wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+
+        auto innerDevice  = std::make_shared<AudioDevice>();
+        auto deviceDouble = std::make_shared<AudioDeviceDouble>(innerDevice);
+        REQUIRE(player.setAudioDeviceForTest(deviceDouble));
+
+        player.play();
+        if (!waitForState(player, MusicPlayerState::PlayingState)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        // 先稳定喂一段，确保进入 DECODING 稳态；seek 之后才会出现静音窗口。
+        if (!waitFor([&listener]() { return listener.last_position.load() > 300; }, 5000)) {
+            skipCase("playback position never advanced");
+            return;
+        }
+
+        // seek 的 SEEKING 窗口只有十几毫秒，可能整段落在两次消费拍之间：
+        // 每次重装脚本再 seek，最多 6 次。脚本按「全零写的累计序号」命中。
+        bool counted = false;
+        for (int attempt = 0; attempt < 6 && !counted; ++attempt) {
+            deviceDouble->failZeroWriteAtCall(deviceDouble->zeroWriteCalls() + 1);
+            player.setPosition(2000 + attempt * 500);
+            counted = waitFor([&player]() {
+                return player.metricsForTest().deviceWriteFailures >= 1;
+            }, 400);
+        }
+
+        const StreamMetrics metrics        = player.metricsForTest();
+        const MusicPlayerState stateAtRead = player.state();
+        player.stop();
+
+        CHECK_MESSAGE(counted, "静音窗口里的写失败没有被记账");
+        CHECK_MESSAGE(metrics.deviceWriteFailures == 1,
+                      "静音分支写失败不是恰好一次，实际 " << metrics.deviceWriteFailures);
+        CHECK_MESSAGE(metrics.silenceFills >= 1,
+                      "静音填充没有被计数，无法证明失败来自静音分支，实际 " << metrics.silenceFills);
+        CHECK(stateAtRead == MusicPlayerState::PlayingState);
+    }
+
+    // C3：start 失败上报错误码且不进入 Playing；不断言清理（规格 §7.2 边界）。
+    TEST_CASE("a device start failure is reported and playback does not start")
+    {
+        TempMediaDir temp("startfail");
+        if (!writeAllBytes(temp.file("only.wav"), makeSilentWavBytes(8))) {
+            skipCase("cannot synthesize silent wav");
+            return;
+        }
+
+        MockMusicPlayerListener listener;
+        std::string logDir = "./log";
+        MusicPlayer player(&listener, logDir);
+        player.addMusicDir(temp.dir());
+        if (!waitFor([&player]() { return player.getMusicCount() == 1; }, 5000)) {
+            skipCase("single-track playlist did not load");
+            return;
+        }
+
+        auto innerDevice  = std::make_shared<AudioDevice>();
+        auto deviceDouble = std::make_shared<AudioDeviceDouble>(innerDevice);
+        deviceDouble->failStartAtCall(1);
+        REQUIRE(player.setAudioDeviceForTest(deviceDouble));
+
+        player.play();
+        const bool reported                = waitFor([&listener]() { return listener.error_count.load() > 0; }, 3000);
+        const MusicPlayerState stateAtRead = player.state();
+        player.stop();
+
+        CHECK_MESSAGE(reported, "start 失败没有上报错误");
+        CHECK_MESSAGE(listener.last_error_code == ErrorCode::AudioDeviceStartFailed,
+                      "错误码不是 AudioDeviceStartFailed，实际 "
+                          << static_cast<int>(listener.last_error_code));
+        CHECK_MESSAGE(stateAtRead == MusicPlayerState::StoppedState,
+                      "start 失败后状态不是 StoppedState，实际 " << static_cast<int>(stateAtRead));
+        CHECK(deviceDouble->startCalls() == 1);
     }
 }
 
