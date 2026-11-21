@@ -20,6 +20,8 @@ sdk/test/unit/
 
 `../LiveSmoke.cpp`（`sdk/test/` 根）是独立可执行（D23）：注册构建、不注册 ctest，承接 LIVE / ICY 稳态 8s 与 `stop()` 有限时间返回的手工冒烟；不在本子目录树内，也不编进 `UnitTests`。
 
+上面的树只列**主要入口，不是穷举**（该目录现有 26 个 `test_*.cpp`）。找具体套件用 `grep -rn 'TEST_SUITE(' sdk/test/unit`，不要据树的缺失判断某个套件不存在。
+
 ## WHERE TO LOOK
 | 任务 | 位置 | 备注 |
 |------|------|------|
@@ -33,6 +35,9 @@ sdk/test/unit/
 | LIVE 重连 / 停发形态判据 | `test_live_source.cpp` | `LiveSourceReconnect` 套件；mock 注入见 `../mocks/HttpMocks.hpp`；契约见 `doc/live-source-spec.md` §5.3 / §10 |
 | LIVE / ICY 手工冒烟 | `../LiveSmoke.cpp` | 独立可执行、不注册 ctest；稳态 8s + `stop()` 上界，D23 判据载体 |
 | 基础工具/容器 | `test_utils.cpp`, `test_cosmos.cpp` | 纯单元级，无媒体依赖 |
+| 软件增益数学 | `test_audio_common.cpp` | `PcmGain` 套件：按格式缩放的半幅/零增益/U8 中点/渐变端点 + 未识别格式直通（判据 `UI-VOL2`，ADR 0013） |
+| 音量契约（钳制与静音） | `test_player.cpp` | `MusicPlayerVolume` 套件：默认 100 与越界钳制、静音不改取值（判据 `UI-VOL1`） |
+| 曲目身份键派生 | `test_playlist.cpp` | `MusicId` 套件：空路径 / URL 原样 / 点段折叠（含越根）/ 重复分隔符 / 相对路径绝对化 / 混合分隔符与大小写 / 盘符与 UNC（ADR 0014） |
 
 ## CONVENTIONS
 - 新 doctest 用 `TEST_SUITE` + `TEST_CASE` 组织；相关断言优先 `REQUIRE`，只有允许继续收集更多失败信息时再用 `CHECK`。
