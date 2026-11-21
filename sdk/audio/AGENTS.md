@@ -6,7 +6,7 @@
 ## STRUCTURE
 ```text
 sdk/audio/
-├── common/                # AudioSpec / AudioFormat 等共享定义
+├── common/                # AudioSpec / AudioFormat 等共享定义；PcmGain.hpp 是软件增益（按设备格式分派）
 ├── decode/                # AudioDecode / AudioDecodeProcess / AudioStreamDecoder；看 decode/AGENTS.md
 ├── resample/              # AudioResample + swresample 封装
 └── device/                # AudioDevice + SDL callback 输出
