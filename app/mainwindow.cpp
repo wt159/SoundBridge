@@ -255,9 +255,10 @@ void MainWindow::musicLayout()
     mPushButton[6]->setAccessibleDescription("Not implemented");
 
     /* H0 layout */
-    mVWidget[0]->setMinimumSize(310, 480);
+    /* 两栏只锁宽度；高度交给布局计算，否则 480 的死值会盖掉最小窗口下的实际需求。 */
+    mVWidget[0]->setMinimumWidth(310);
     mVWidget[0]->setMaximumWidth(310);
-    mVWidget[1]->setMinimumSize(320, 480);
+    mVWidget[1]->setMinimumWidth(320);
     QSpacerItem *hSpacer0 = new QSpacerItem(70, 480, QSizePolicy::Minimum, QSizePolicy::Maximum);
 
     QSpacerItem *hSpacer1 = new QSpacerItem(65, 480, QSizePolicy::Minimum, QSizePolicy::Maximum);
@@ -275,7 +276,11 @@ void MainWindow::musicLayout()
     setCentralWidget(mHWidget[0]);
 
     /* V0 layout */
-    mListWidget->setMinimumSize(310, 265);
+    /* 列表最小高度按最小窗口 960×540 反推：左栏其余控件的硬高度与布局间距合计约 300，
+       最小尺寸下需给列表留出可滚动区域，取 150（约 5 行）。列表本身可滚动，
+       不承担内容高度，故这是可压缩项。 */
+    const int kListMinHeight = 150;
+    mListWidget->setMinimumSize(310, kListMinHeight);
     mHWidget[1]->setMinimumSize(310, 80);
     mHWidget[1]->setMaximumHeight(80);
     mLabel[0]->setMinimumSize(310, 95);
@@ -285,7 +290,7 @@ void MainWindow::musicLayout()
     mNowPlayingTitle->setMaximumHeight(28);
     mNowPlayingSubtitle->setMaximumHeight(18);
     QSpacerItem *vSpacer0 = new QSpacerItem(310, 10, QSizePolicy::Minimum, QSizePolicy::Maximum);
-    QSpacerItem *vSpacer1 = new QSpacerItem(310, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
+    QSpacerItem *vSpacer1 = new QSpacerItem(310, 30, QSizePolicy::Minimum, QSizePolicy::Maximum);
     mVBoxLayout[0]->addWidget(mLabel[0]);
     mVBoxLayout[0]->addWidget(mNowPlayingSubtitle);
     mVBoxLayout[0]->addWidget(mNowPlayingTitle);
@@ -316,7 +321,7 @@ void MainWindow::musicLayout()
     /* V1 layout */
     QSpacerItem *vSpacer2 = new QSpacerItem(320, 40, QSizePolicy::Minimum, QSizePolicy::Maximum);
     QSpacerItem *vSpacer3 = new QSpacerItem(320, 20, QSizePolicy::Minimum, QSizePolicy::Maximum);
-    QSpacerItem *vSpacer4 = new QSpacerItem(320, 30, QSizePolicy::Minimum, QSizePolicy::Minimum);
+    QSpacerItem *vSpacer4 = new QSpacerItem(320, 30, QSizePolicy::Minimum, QSizePolicy::Maximum);
     mLabel[1]->setMinimumSize(320, 320);
     QImage Image;
     Image.load(":/images/cd.png");
@@ -327,8 +332,10 @@ void MainWindow::musicLayout()
         = pixmap.scaled(with, height, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     mLabel[1]->setPixmap(fitpixmap);
     mLabel[1]->setAlignment(Qt::AlignCenter);
-    mVWidget[2]->setMinimumSize(300, 80);
-    mVWidget[2]->setMaximumHeight(80);
+    /* 传输行容器内部为 H2(20) + 间隔 10 + H3(60) = 90；此前的 min/max 80 与内容自相
+       矛盾，高度不足时先压掉 H2 的时长标签。改为 90，并让 V2 间距归零（间隔由 spacer 提供）。 */
+    mVWidget[2]->setMinimumSize(320, 90);
+    mVWidget[2]->setMaximumHeight(90);
     mVBoxLayout[1]->addSpacerItem(vSpacer2);
     mVBoxLayout[1]->addWidget(mLabel[1]);
     mVBoxLayout[1]->addSpacerItem(vSpacer3);
@@ -347,6 +354,7 @@ void MainWindow::musicLayout()
     mVBoxLayout[2]->addSpacerItem(vSpacer5);
     mVBoxLayout[2]->addWidget(mHWidget[3]);
     mVBoxLayout[2]->setContentsMargins(0, 0, 0, 0);
+    mVBoxLayout[2]->setSpacing(0);
 
     mVWidget[2]->setLayout(mVBoxLayout[2]);
 
