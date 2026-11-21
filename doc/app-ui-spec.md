@@ -507,8 +507,8 @@
 | `UI-A8` | 音量键与钳制 | 读 `restoreWindowState()` / `persistWindowState()`：`playback/volume` 钳制 `0..100`，`playback/muted` 为布尔 |
 | `UI-A9` | 面板可点性 | 读渲染路径：`btn_menu->setEnabled(!playlist.isEmpty())` |
 | `UI-A10` | 浮层机制 | 读 `app/popuppanel.cpp`：`Qt::Popup`、Esc 分支、关闭后 `anchor->setFocus()` |
-| `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`：混合分隔符 / `..` / 相对路径 / URL 四类用例全绿 |
-| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（半幅 / 零增益 / 渐变端点 / 格式直通）与 `-ts=MusicPlayerVolume`（默认 100、越界钳制、静音不改取值）全绿 |
+| `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`：混合分隔符 / `..`（含越根）/ UNC / 相对路径 / URL 五类用例全绿 |
+| `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（半幅 / 零增益 / 渐变端点 / S32 与 FLT32 逐格式 / 未识别格式直通）与 `-ts=MusicPlayerVolume`（默认 100、越界钳制、静音不改取值）全绿 |
 
 ### 9.3 B 类冒烟清单
 
@@ -602,4 +602,4 @@
 - 2026-11-21（收口后审计）：补测客户端 `1100×720` 推翻 §6.2「小于 `1200×720` 必裁切」的外推，追加更正；`UI-V8` 的「高度 0」与 `setMinimumHeight(50)` 矛盾，追加更正二；§9.6 注明三处时点文字与落地更新的关系。
 - 2026-11-21（[#228](https://github.com/wt159/SoundBridge/issues/228) 落地）：重排最小尺寸布局，`960×540` 恢复为可兑现承诺；§6.2 / §7 / §9.3 / §9.6 各追加时点注记，既有表格单元格与正文未改。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 转正）：收藏 / 音量 / 播放列表面板三控件转正。§1.1 增「本地偏好」第四条真相源；§1.3 增 5 个锚点并注明 `mListMask` 作废；§1.4 增控件文案；§6.1 增 3 个键并把命名区扩为 `window` / `playback` / `library`；§7 增 `UI-V9` / `UI-V10` 与更正四；§8 增 §8.4–§8.8；§9 增 `F` / `M` / `VOL` 三个编号区、6 条 A 类核对与 5 步冒烟；§10 注明三条界外被覆盖。ADR [0013](../docs/adr/0013-software-volume-gain.md) / [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md) / [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 同批落地。
-- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
+- 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
