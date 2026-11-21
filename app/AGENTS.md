@@ -15,7 +15,7 @@
 - UI 代码不要直接摸底层 audio/extractor；统一经 `PlayerController` 调 `soundbridge::Player`。
 - `PlayerController` 负责把 `std::string` 转成 `QString`，以及把播放状态整理成 `PlayerViewState`；不要把这些转换散回 `MainWindow`。
 - `MainWindow` 里已有大量旧式 `connect(... SIGNAL ... SLOT ...)`；在这个目录内改动时先跟随现状，不混入另一套信号风格造成半新半旧。
-- 持久化项集中在 `QSettings` 的 `playback/*` 键下；新增 UI 开关优先复用这个命名区。
+- 持久化项集中在 `QSettings` 的三个命名区：`window/*`（窗口几何与最大化）、`playback/*`（播放参数：模式、autoSkip、音量、静音）、`library/*`（曲库级本地状态：收藏集合）。键表以 `doc/app-ui-spec.md` §6.1 为准，新增键必须先登记。
 
 ## ANTI-PATTERNS
 - 不要在 `MainWindow` 里直接维护播放状态真相源；以 `PlayerViewState` 为准。
