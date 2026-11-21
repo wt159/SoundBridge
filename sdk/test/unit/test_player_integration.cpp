@@ -1,4 +1,5 @@
 #include "../fixtures/RealMediaFixture.hpp"
+#include "../mocks/AudioDeviceDouble.hpp"
 #include "../mocks/PlayerMocks.hpp"
 #include <AudioDevice.h>
 #include <FileSource.h>
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <doctest/doctest.h>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,16 +48,6 @@ bool waitFor(Predicate predicate, int timeoutMs, int stepMs = 20)
     }
     return predicate();
 }
-
-// 票 #110：设备错误注入开关的 RAII guard，保证 REQUIRE 抛异常时也恢复默认状态，
-// 不把进程级开关泄漏给同一测试二进制里的后续用例。
-class ForceAudioDeviceOpenFailure {
-public:
-    ForceAudioDeviceOpenFailure() { AudioDevice::setForceOpenFailureForTest(true); }
-    ~ForceAudioDeviceOpenFailure() { AudioDevice::setForceOpenFailureForTest(false); }
-    ForceAudioDeviceOpenFailure(const ForceAudioDeviceOpenFailure &) = delete;
-    ForceAudioDeviceOpenFailure &operator=(const ForceAudioDeviceOpenFailure &) = delete;
-};
 
 // 位置推进速率回落到「实时」才算进入稳态：起播后消费端会先把设备队列填到高水位
 // （256KB），这段时间 position 按 2x 左右飞奔；队列满了才 1:1 跟墙钟。用连续两个
@@ -373,7 +365,12 @@ TEST_SUITE("MusicPlayer Error Handling")
         const size_t eventBaseline = listener.eventSequence().size();
         const int stateBaseline    = listener.state_change_count.load();
 
-        ForceAudioDeviceOpenFailure forceFailure;
+        // ADR 0011：设备替身包住真实设备，只让 open() 恒失败。替身随本用例析构，
+        // 复位责任不再依赖进程级静态开关。
+        auto innerDevice  = std::make_shared<AudioDevice>();
+        auto deviceDouble = std::make_shared<AudioDeviceDouble>(innerDevice);
+        deviceDouble->setOpenFailureEnabled(true);
+        REQUIRE(player.setAudioDeviceForTest(deviceDouble));
         player.play();
         // 不写成 REQUIRE：设备错误被误判为可跳轨时，同步 error→state 序列可能
         // 根本不出现；用 CHECK 让后续 C1 / C5 断言也跑完，红色信息更具体。

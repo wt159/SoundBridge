@@ -1,7 +1,6 @@
 ﻿#include "AudioDevice.h"
 #include "LogWrapper.h"
 #include <SDL.h>
-#include <atomic>
 #include <iostream>
 #include <map>
 
@@ -33,7 +32,7 @@ public:
     int open();
     void close();
     bool isOpen() const;
-    void start();
+    int start();
     void stop();
     int write(const void *data, size_t len);
     size_t getQueuedBytes() const;
@@ -142,14 +141,20 @@ bool AudioDevice::Impl::isOpen() const
     return m_isOpen;
 }
 
-void AudioDevice::Impl::start()
+int AudioDevice::Impl::start()
 {
-    if (m_isStart || !m_isOpen) {
-        LOG_ERROR(LOG_TAG, "Audio device is already start or not open");
-        return;
+    // 未 open 才是失败：`_play()` 在「播放中重复 play()」时也会走到这里，设备已在跑
+    // 属于幂等成功，不能上报 AudioDeviceStartFailed（既有幂等判据依赖这一点）。
+    if (!m_isOpen) {
+        LOG_ERROR(LOG_TAG, "Audio device is not open");
+        return -1;
+    }
+    if (m_isStart) {
+        return 0;
     }
     SDL_PauseAudioDevice(m_deviceID, 0);
     m_isStart = true;
+    return 0;
 }
 
 void AudioDevice::Impl::stop()
@@ -300,27 +305,8 @@ int AudioDevice::selectDevice(uint64_t id)
     return m_impl->selectDevice(id);
 }
 
-namespace {
-// C1 / C5 端到端判据（票 #110）：默认关闭的设备错误注入开关。
-// 写端是测试线程（RAII 设置 / 恢复），读端是控制线程调用 open() 的路径；
-// 用 release/acquire 保证设置对 _play() 可见，不依赖 relaxed 的偶然时序。
-// 读点绝不落在解码线程 / 10 ms 消费主循环 / 判据主循环，避免放大 ctest -j4 的
-// 调度抖动（O1 对照实验：额外写曾把既有判据假红率从 0 抬到约 30%）。
-// 每次 open() 都读一次；误跳轨引发二次 open 时同样命中，这正是 C5 判据
-// 要检测的「第二次播放尝试」。
-std::atomic<bool> g_forceOpenFailure(false);
-} // namespace
-
-void AudioDevice::setForceOpenFailureForTest(bool enabled)
-{
-    g_forceOpenFailure.store(enabled, std::memory_order_release);
-}
-
 int AudioDevice::open()
 {
-    if (g_forceOpenFailure.load(std::memory_order_acquire)) {
-        return -1;
-    }
     return m_impl->open();
 }
 
@@ -337,8 +323,7 @@ bool AudioDevice::isOpen() const
 
 int AudioDevice::start()
 {
-    m_impl->start();
-    return 0;
+    return m_impl->start();
 }
 
 int AudioDevice::stop()

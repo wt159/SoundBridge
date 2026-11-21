@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include <AudioCommon.hpp>
+#include <IAudioDevice.h>
 #include <NonCopyable.hpp>
 #include <memory>
 #include <string>
@@ -11,36 +11,32 @@
  *
  * Push mode: use write() to push audio data, no callback needed.
  *
+ * 实现 IAudioDevice（规格：doc/buffering-switching-spec.md §7.2 / ADR 0011）：
+ * 生产路径直接持有本类，不加转发层；测试用装饰器替身包住它。
+ *
  * @version 0.2
  * @author wtp (wtp0727@gmail.com)
  * @date 2026-04-02
  * @copyright Copyright (c) 2023
  */
-class AudioDevice : public NonCopyable {
-public:
-    using AudDevPair = std::pair<uint64_t, std::string>;
-
+class AudioDevice : public IAudioDevice, public NonCopyable {
 public:
     AudioDevice();
-    ~AudioDevice();
-    std::vector<AudDevPair> getDeviceList();
-    int getDeviceSpec(AudioSpec &spec);
-    int selectDevice(uint64_t id);
-    int open();
-    // 仅供单元测试（票 #110）：强制 open() 返回失败，用来构造「设备错误 →
-    // error→state」的端到端判据。默认关闭；读点只在控制线程调用 open() 时，
-    // 不进 Impl::open()、不碰 SDL。AudioDevice 是 SDK 内部类型，本钩子不进入
-    // soundbridge::Player 的对外公开 API（票 #109 的一次限定例外）。
-    static void setForceOpenFailureForTest(bool enabled);
-    int close();
-    bool isOpen() const;
-    int start();
-    int stop();
+    ~AudioDevice() override;
+
+    std::vector<AudDevPair> getDeviceList() override;
+    int getDeviceSpec(AudioSpec &spec) override;
+    int selectDevice(uint64_t id) override;
+    int open() override;
+    int close() override;
+    bool isOpen() const override;
+    int start() override;
+    int stop() override;
 
     // Push mode interfaces
-    int write(const void *data, size_t len);
-    size_t getQueuedBytes() const;
-    void clearQueue();
+    int write(const void *data, size_t len) override;
+    size_t getQueuedBytes() const override;
+    void clearQueue() override;
 
 private:
     std::vector<AudDevPair> m_deviceList;
