@@ -89,3 +89,10 @@ add_test(NAME sdk_app_ui_tests
 set_tests_properties(sdk_app_ui_tests PROPERTIES
     TIMEOUT 120
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;LD_LIBRARY_PATH=${3RDPARTY_DIST_DIR}/lib")
+
+# 覆盖率门禁（Linux）：coverage 目标及其 DEPENDS 定义在 sdk/test（先于本目录解析，
+# 无法直接引用本目录 target），在这里补挂 AppUiTests——否则门禁脚本 ctest 跑到
+# 第 15 个目标时可执行文件不存在（"no such file or directory"，0.00 sec 即败）。
+if(COVERAGE_ENABLED AND TARGET coverage)
+    add_dependencies(coverage AppUiTests)
+endif()
