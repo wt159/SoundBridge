@@ -636,6 +636,8 @@
 
 合计：自动 50 条、半自动 4 条、人工 3 条（`UI-E2` 计入「自动（文案）+ 人工（呈现）」，只在其人工半边计数）。
 
+**注记（2026-11-22，执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）**：上表 `S` 行判别式「按住期间断言位置标签不变」与判据表 `UI-S6` 行「位置标签仍显示播放位置」相互矛盾。实现取判据表 + §6 渲染契约：按住滑块期间**滑块值**冻结、位置标签随状态帧继续更新（`s6` 用例断言 `value()==40` 且标签为 `01:00`）。§9.3 步骤 5 的「拖动中标签不动」按「标签不跟随拖动位置」解释，与此相容。三处原文均保留，本注记只在裁决处引用。
+
 ### 9.7.3 环境与隔离
 
 1. **offscreen 插件必须随测试 exe 部署**。2026-11-22 实测：把 `platforms/qoffscreen.dll` 拷到 exe 同目录后，`SoundBridge.exe` 才能在 `QT_QPA_PLATFORM=offscreen` 下建窗并写出 `render state=` 日志；缺它时进程停在 `Could not find the Qt platform plugin "offscreen"` 的致命对话框上，不返回、不写日志，`timeout` 只能看到退出码 `124`。`windeployqt` 的默认部署不含 offscreen，必须显式拷。
@@ -657,6 +659,18 @@
 | `UI-E2`（弹窗字段与呈现） | Windows + offscreen 下 `QMessageBox` 必崩；文案由纯函数自动断言，弹窗呈现永久人工 |
 | `UI-V3`（深色主题可读性） | 判据本身是「目测可读」，且明确不以特定色值为判据 |
 | `UI-P4`（无 CJK 字体环境） | 需在无字体机器上跑，CI 无法稳定模拟 |
+
+### 9.7.6 落地状态（2026-11-22，执行票 [#257](https://github.com/wt159/SoundBridge/issues/257)）
+
+§9.7 随 PR [#258](https://github.com/wt159/SoundBridge/pull/258)（merge `30fba6620`）落地，ADR [0016](../docs/adr/0016-app-ui-test-injection-seams.md) / [0017](../docs/adr/0017-app-ui-test-host-and-target-budget.md) 同批。以下为实现侧的口径，供后续维护对照：
+
+1. **用例规模**：`app/tests/AppUiTests.cpp` 54 个测试函数（53 个判据函数 + `initTestCase` / 初始化 / 清理基建），覆盖 §9.7.2 的自动 50 条与半自动 4 条；人工 3 条（`UI-E2` 呈现半边、`UI-V3`、`UI-P4`）不写用例。
+2. **测试缝**：`PlayerController::errorReasonText` / `composeErrorSubtitle` 由匿名命名空间函数上移为静态方法（生产行为等价），`MainWindow::buildErrorMessageBoxText` 承载 `UI-E2` 的文案半边；三者是唯一为可断言性新增的公开面。
+3. **`AppUiPorts` 实为三字段**：除 `player` / `musicDirectory` 外多一个 `QObject *playerSignals`——`PlayerCommandPort` 本身不是 `QObject`，无法从接口指针交叉转型取信号面，`SLOT()` 信号连接需要 QObject 面，由注入方显式给出（详见 ADR 0016 追加注记）。
+4. **`add_test` 的 PATH 烘焙**：用 `cmake -E env` 包装 `PATH`（3rdparty dist bin + Qt bin + 配置期 PATH）与 Linux `LD_LIBRARY_PATH`，与 `sdk/test` 的 `SDK_TEST_PATH` 同配方；缺它在 CI 上直接 `0xc0000135`。
+5. **覆盖率门禁的构建依赖**：`sdk/test/CMakeLists.txt` 的 `coverage` 目标先于 `app/` 解析，`DEPENDS` 无法引用 `AppUiTests`，由 `app/CMakeLists.txt` 侧 `add_dependencies(coverage AppUiTests)` 补挂；分母与 33% 门禁不变。
+6. **跨平台测试稳健性**：`QTest::mouseClick` 默认取控件几何中心，Linux runner 字体度量差异会让复选框点击脱靶；复选框类激活一律用 `QAbstractButton::click()`（几何无关）。
+7. **「能红」取证**：四轮区域变异（S+L / T+E / P+V / F+VOL+M）加靶向补红，53 条判据函数每条至少红一次；变异经 `git checkout` 还原，工作树与基线逐字节一致。
 
 ## 10. 界外
 
@@ -687,3 +701,4 @@
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 转正）：收藏 / 音量 / 播放列表面板三控件转正。§1.1 增「本地偏好」第四条真相源；§1.3 增 5 个锚点并注明 `mListMask` 作废；§1.4 增控件文案；§6.1 增 3 个键并把命名区扩为 `window` / `playback` / `library`；§7 增 `UI-V9` / `UI-V10` 与更正四；§8 增 §8.4–§8.8；§9 增 `F` / `M` / `VOL` 三个编号区、6 条 A 类核对与 5 步冒烟；§10 注明三条界外被覆盖。ADR [0013](../docs/adr/0013-software-volume-gain.md) / [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md) / [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 同批落地。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 收口后审计）：§8 标题改为「占位控件与转正控件」并加读法导语——原标题覆盖不了 §8.4–§8.8。`UI-A7` 补「读取侧丢空串 / 悬挂条目保留」、`UI-A8` 补「钳制后回写修正值 / 类型错误取默认 100」、`UI-A11` / `UI-A12` 由类别枚举改为「套件 + 例数 + 逐例要点」：原写法是局部枚举，会被读成完整清单（#242 / #243 的裁定里有、核对清单里看不见的条目据此补齐）。
+- 2026-11-22（地图 [#248](https://github.com/wt159/SoundBridge/issues/248) 执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）：§9.7 全量判据自动化随 PR [#258](https://github.com/wt159/SoundBridge/pull/258) 落地（54 个测试函数、第 15 个目标 `sdk_app_ui_tests`，双端 CI 绿）。§9.7.2 追加注记登记 `S` 行判别式与判据表 `UI-S6` 行的矛盾及实取口径；新增 §9.7.6 落地状态。既有行一字未改。

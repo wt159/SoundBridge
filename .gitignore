@@ -24,3 +24,5 @@ aqtinstall.log
 # Windows 工作流「Report coverage matrix numbers」步骤的输出落盘
 coverage.log
 /log/
+# ctest 在仓库目录被误调起时的产物（Testing/Temporary/LastTest.log）
+Testing/
