@@ -104,16 +104,25 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 //   （`reapRetiredTaskIfFinished()`）或下一次切歌 / stop / 析构（规格
 //   doc/buffering-switching-spec.md §5）；旧 ring 保活到 join 完成。
 // - 成员声明顺序决定析构顺序：decoder 声明在 ring 之后，所以先析构 decoder（其析构函数
-//   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
+//   join 掉自己的解码线程），再释放它只持有裸指针的 ring。`owner` 声明在最前，因此最后
+//   析构——解码线程只持有 extractor 的裸指针，条目必须活到线程退出。
 struct PlaybackTask {
     PlaybackTask(const std::shared_ptr<AudioRingBuffer> &ringBuffer,
-                 const std::shared_ptr<AudioStreamDecoder> &streamDecoder, uint64_t trackIdentity)
-        : ring(ringBuffer)
+                 const std::shared_ptr<AudioStreamDecoder> &streamDecoder, uint64_t trackIdentity,
+                 const MusicPropertiesPtr &owningProperties)
+        : owner(owningProperties)
+        , ring(ringBuffer)
         , decoder(streamDecoder)
         , trackUid(trackIdentity)
     {
     }
 
+    // extractor 的保活引用（#268 实证的 UAF）：decoder 只拿 `extractor.get()` 的裸指针，
+    // 以前靠「条目一直留在 m_musicListProperties 里」这个偶然事实续命。removeTrack 把这个
+    // 前提打破了——条目一 erase，extractor 立刻析构，而退役任务只 abort 不 join，解码线程
+    // 还在读它。MinGW 上释放的堆块仍映射所以没崩，glibc 直接 SIGSEGV。
+    // 与 ring 同一策略：保活到 join 完成。
+    MusicPropertiesPtr owner;
     std::shared_ptr<AudioRingBuffer> ring;
     std::shared_ptr<AudioStreamDecoder> decoder;
     // 曲目身份（ADR 0018）：位置会因 compaction 变化，uid 不变。所有「这个任务是不是
@@ -209,6 +218,10 @@ public:
     // 仅供测试（ADR 0011/0018）：第 index 条曲目的进程内 uid；越界返回 0。
     // 失败集合按 uid 记账，测试要用它把「第几条」翻译成身份。
     uint64_t trackUidForTest(size_t index) const;
+    // 仅供测试：第 index 条条目的弱引用；越界返回空。
+    // 用途是断言**所有权**而非「值」——删除当前曲目后，退役任务必须仍持有该条目，
+    // 否则解码线程读的就是已释放的 extractor（#268 在 glibc 上的 SIGSEGV）。
+    std::weak_ptr<MusicProperties> trackRefForTest(size_t index) const;
 
     // 批量扫描汇总：被拒文件不进播放列表，永远不会成为「当前曲目」，
     // 只能靠这份按错误码分桶的汇总把它们报给 UI（规格 5.4 H6）。

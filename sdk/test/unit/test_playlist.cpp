@@ -649,6 +649,36 @@ TEST_SUITE("MusicPlayList Edit")
         CHECK(callback.payloadIndices.back().empty());
     }
 
+    // #268 回归：删掉当前曲目之后，退役任务必须仍然持有那个条目。
+    // 反例在 Linux CI 上是 SIGSEGV（A5/A8 两处崩溃）：解码线程只拿 extractor 的裸指针，
+    // 条目一 erase 就析构；退役任务只 abort 不 join，于是解码线程读的是已释放的 extractor。
+    // MinGW 上释放的堆块仍映射，所以这条判据是唯一能在 Windows 上也变红的入口。
+    TEST_CASE("the retired task keeps the removed entry alive")
+    {
+        TempMediaDir temp("editOwner");
+        const std::vector<char> tone = makeToneWavBytes(1);
+        REQUIRE(writeBytes(temp.file("one.wav"), tone));
+        REQUIRE(writeBytes(temp.file("two.wav"), tone));
+
+        EditRecordingCallback callback;
+        std::shared_ptr<MusicPlayList> playlist = makeEditPlayList(callback);
+        playlist->addMusic(temp.file("one.wav"));
+        playlist->addMusic(temp.file("two.wav"));
+        REQUIRE_MESSAGE(waitForCount(*playlist, 2), "两条曲目没有入列完成");
+
+        // 首发曲目即当前曲目；任务由 startCurrentTask() 建（入列本身不建），
+        // 否则退役槽里根本没有任务，删除也就无从「保住」任何东西。
+        REQUIRE(playlist->startCurrentTask());
+        const std::weak_ptr<MusicProperties> removedRef = playlist->trackRefForTest(0);
+        REQUIRE_FALSE(removedRef.expired());
+
+        REQUIRE(playlist->removeTrackSync(0) == PlaylistEditOutcome::CurrentReplaced);
+        REQUIRE(playlist->getMusicCount() == 1);
+
+        CHECK_MESSAGE(!removedRef.expired(),
+                      "删掉当前曲目后条目立刻析构：退役任务里的解码线程会读已释放的 extractor");
+    }
+
     // 契约 §4.1：addTrack 的失败必须可见（绕过扫描降噪门槛），且不产生列表载荷。
     TEST_CASE("addTrack failure is reported even when a current track exists")
     {

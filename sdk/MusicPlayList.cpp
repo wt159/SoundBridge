@@ -466,6 +466,14 @@ uint64_t MusicPlayList::trackUidForTest(size_t index) const
     return m_musicListProperties[index]->uid;
 }
 
+std::weak_ptr<MusicProperties> MusicPlayList::trackRefForTest(size_t index) const
+{
+    if (index >= m_musicListProperties.size()) {
+        return std::weak_ptr<MusicProperties>();
+    }
+    return std::weak_ptr<MusicProperties>(m_musicListProperties[index]);
+}
+
 void MusicPlayList::recordScanRejection(ErrorCode code)
 {
     std::lock_guard<std::mutex> lock(m_rejectMutex);
@@ -913,7 +921,8 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         return false;
     }
 
-    PlaybackTaskPtr task = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid);
+    PlaybackTaskPtr task
+        = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid, musicProperties);
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
         m_currentTask = task;
