@@ -1077,16 +1077,22 @@ TEST_SUITE("BadInput Rejection")
                                                  fixture.mediaPath("music.wav") });
         REQUIRE(playlist->getMusicCount() == 3);
 
-        playlist->markTrackFailed(0);
-        playlist->markTrackFailed(1);
+        // 失败集合按条目身份（uid）记账：位置只用来把「第几条」翻译成身份。
+        const uint64_t uid0 = playlist->trackUidForTest(0);
+        const uint64_t uid1 = playlist->trackUidForTest(1);
+        const uint64_t uid2 = playlist->trackUidForTest(2);
+        REQUIRE(uid0 != 0);
+        REQUIRE(uid2 != 0);
+        playlist->markTrackFailed(uid0);
+        playlist->markTrackFailed(uid1);
         CHECK(playlist->skipToNextPlayable() == true);
         CHECK(callback.lastCurrentIndex == 2);
 
-        playlist->markTrackFailed(2);
+        playlist->markTrackFailed(uid2);
         CHECK(playlist->skipToNextPlayable() == false);
 
         playlist->clearFailedTracks();
-        CHECK(playlist->isTrackFailed(2) == false);
+        CHECK(playlist->isTrackFailed(uid2) == false);
     }
 
     TEST_CASE("truncated and corrupted errors read differently")

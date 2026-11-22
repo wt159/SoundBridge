@@ -11,6 +11,7 @@
 #include "PlaybackMode.h"
 #include "WorkQueue.hpp"
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -85,6 +86,10 @@ struct ProcessProperties {
 
 struct MusicProperties {
     size_t index;
+    // 进程内曲目身份（ADR 0018）：只在对象生命周期内唯一，不跨启动、不进公开面。
+    // index 会因 compaction 而变化，但要判「是不是同一曲」的地方一律比 uid。
+    // 0 永远不是有效 uid（从 1 起分配）。
+    uint64_t uid;
     FileProperties fileProperties;
     SignalProperties signalProperties;
     ProcessProperties processProperties;
@@ -102,19 +107,30 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 //   join 掉自己的解码线程），再释放它只持有裸指针的 ring。
 struct PlaybackTask {
     PlaybackTask(const std::shared_ptr<AudioRingBuffer> &ringBuffer,
-                 const std::shared_ptr<AudioStreamDecoder> &streamDecoder, size_t track)
+                 const std::shared_ptr<AudioStreamDecoder> &streamDecoder, uint64_t trackIdentity)
         : ring(ringBuffer)
         , decoder(streamDecoder)
-        , trackIndex(track)
+        , trackUid(trackIdentity)
     {
     }
 
     std::shared_ptr<AudioRingBuffer> ring;
     std::shared_ptr<AudioStreamDecoder> decoder;
-    size_t trackIndex;
+    // 曲目身份（ADR 0018）：位置会因 compaction 变化，uid 不变。所有「这个任务是不是
+    // 当前曲目的」判据都只认它，不再比较 index。
+    uint64_t trackUid;
 };
 
 using PlaybackTaskPtr = std::shared_ptr<PlaybackTask>;
+
+// 列表编辑的结果（ADR 0018 / 契约 §4.1）：播放器层据此决定「补位后是否恢复播放」「是否停机」。
+// 列表层只做「删条目 + 重编号 + 发布载荷 + 选落点」，状态机仍归 MusicPlayer。
+enum class PlaylistEditOutcome {
+    Dropped,         // 非法下标 / 空列表：丢弃，零回调、零查询值变化（契约 §4.1）
+    RemovedOther,    // 删的不是当前曲目；当前曲目的 index 可能已变（R2 由播放器层补 TC）
+    CurrentReplaced, // 删的是当前曲目，已补位到新落点（当前曲目已换、已发 TC）
+    CurrentCleared,  // 删的是当前曲目，列表为空或全部不可播：当前曲目已置空
+};
 
 class MusicPlayListCallback {
 public:
@@ -129,8 +145,9 @@ public:
 class MusicPlayList : public NonCopyable {
 private:
     MusicPlayListCallback *m_callback;
-    std::atomic<size_t> m_curIndex;
-    std::atomic<size_t> m_selectIndex;
+    // 条目数镜像（恒等于 m_musicListProperties.size()），只在队列线程写、任意线程读。
+    // 原来的名字 m_curIndex 会诱导人把它当「当前下标」，它就是计数。
+    std::atomic<size_t> m_count;
     WorkQueue *m_workQueue;
     AudioSpec m_devSpec;
     MusicPropertiesPtr m_selectMusicProperties;
@@ -145,6 +162,14 @@ public:
 
     void addMusic(const std::string &musicPath);
     void addMusicWithNotify(const std::string &musicPath, std::function<void()> onDone);
+    // 列表编辑（ADR 0018 / 契约 §4.1）：三个命令都是**纯入队**，调用者线程零文件系统访问。
+    void addTrack(const std::string &musicPath);
+    void removeTrack(int index);
+    void clearPlaylist();
+    // 同步版本只在 WorkQueue 线程上执行（测试可直接调用）。语义与异步版本一致。
+    bool addTrackSync(const std::string &musicPath);
+    PlaylistEditOutcome removeTrackSync(int index);
+    bool clearPlaylistSync();
     void next();
     void pervious();
     void setCurrentIndex(int index);
@@ -178,9 +203,12 @@ public:
 
     // 本次播放会话内因坏数据失败过的曲目：自动跳过不再回头重试（同一曲不重试第二次）。
     // 用户按播放（MusicPlayer::play）时清空，视为新会话。
-    void markTrackFailed(size_t index);
-    bool isTrackFailed(size_t index) const;
+    void markTrackFailed(uint64_t uid);
+    bool isTrackFailed(uint64_t uid) const;
     void clearFailedTracks();
+    // 仅供测试（ADR 0011/0018）：第 index 条曲目的进程内 uid；越界返回 0。
+    // 失败集合按 uid 记账，测试要用它把「第几条」翻译成身份。
+    uint64_t trackUidForTest(size_t index) const;
 
     // 批量扫描汇总：被拒文件不进播放列表，永远不会成为「当前曲目」，
     // 只能靠这份按错误码分桶的汇总把它们报给 UI（规格 5.4 H6）。
@@ -188,6 +216,9 @@ public:
 
 protected:
     void _addMusic(const std::string &musicPath);
+    void _addTrack(const std::string &musicPath);
+    void _removeTrack(int index);
+    void _clearPlaylist();
     void _next();
     void _pervious();
     void _setCurrentIndex(int index);
@@ -195,6 +226,17 @@ protected:
 
 private:
     bool selectTrack(size_t index);
+    // 入列的唯一实体：扫描与 addTrack 共用，差别只在「用户显式命令」这一路上的失败表达
+    // 与拒绝累计（契约 §4.1 失败三类）。返回 nullptr 表示该条目没有进列表。
+    MusicPropertiesPtr addMusicInternal(const std::string &musicPath, bool userInitiated);
+    // 补位序（ADR 0018 §1）：只算候选位置，不产生副作用。
+    // Sequential / Loop / 单曲模式 → 从 p 起的环形顺序；Random → 剩余条目的随机全序。
+    std::vector<size_t> seatingOrder(size_t p);
+    // 按序试播：跳过已失败条目、逐个 selectTrack，失败即记账；命中返回 true。
+    // 这是 skipToNextPlayable 的内层循环，删除路径复用同一份（#264 §5）。
+    bool selectFirstPlayable(const std::vector<size_t> &order);
+    // 无条件发布全量列表（列表编辑命令专用）。扫描路径仍走 _updateList() 的空列表守卫。
+    void publishPlaylist();
     // 换任务：旧任务只 abort、移入退役槽（不 join），再为新曲造 ring + decoder 并 start()。
     // 退役任务的 join 推迟到退役线程退出后的消费拍 / 下一次切歌 / stop / 析构（规格 §5）。
     bool replacePlaybackTask(const MusicPropertiesPtr &musicProperties);
@@ -204,14 +246,16 @@ private:
     // 以及退役线程退出后的消费拍（reapRetiredTaskIfFinished）。
     void joinRetiredTask();
     // 只清位置 / 数据量这类元数据；任务（ring / decoder）不属于曲目，不在遍历范围内。
-    void resetTrackProgressExcept(size_t keepIndex);
+    void resetTrackProgressExcept(uint64_t keepUid);
     void reportError(ErrorCode code, const std::string &detail,
-                     const MusicPropertiesPtr &musicProperties);
+                     const MusicPropertiesPtr &musicProperties, bool userInitiated = false);
     void recordScanRejection(ErrorCode code);
     std::string currentTraceId() const;
 
 private:
     std::atomic<MusicPlaybackMode> m_playbackMode;
+    // uid 单调递增、不复用；只在队列线程写。
+    uint64_t m_nextUid;
     std::mt19937 m_randomEngine;
     // 当前播放任务。只有控制线程写，消费者读快照；锁只保护指针本身，ring 内部无锁。
     mutable std::mutex m_taskMutex;
@@ -219,7 +263,10 @@ private:
     // 单槽退役：切歌时旧任务在这里等下一次控制事件 join（规格 §5.1）。
     PlaybackTaskPtr m_retiredTask;
     mutable std::mutex m_failedMutex;
-    std::set<size_t> m_failedIndices;
+    // 本次播放会话内失败的**条目**身份（ADR 0018 §2）：按 uid 而不是 index 记账，
+    // 压缩重排不会让「已知坏曲」漂移到别人头上；也不能按 TrackInfo::id——
+    // id 不唯一，一条坏文件会毒化同路径的所有副本。
+    std::set<uint64_t> m_failedUids;
     mutable std::mutex m_rejectMutex;
     std::map<ErrorCode, int> m_scanRejects;
 };

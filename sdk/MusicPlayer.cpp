@@ -37,6 +37,9 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    void addTrack(const std::string &path);
+    void removeTrack(int index);
+    void clearPlaylist();
     void setPlaybackMode(MusicPlaybackMode mode);
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
@@ -63,6 +66,12 @@ protected:
     void _next();
     void _previous();
     void _setCurrentIndex(int index);
+    void _addTrack(const std::string &path);
+    void _removeTrack(int index);
+    void _clearPlaylist();
+    // 列表变空（或无落点可补）后的终态：停消费线程、丢任务、关设备、清当前曲目、
+    // 落 Stopped。不能复用 _stop()——后者要求 m_curMusicProperties 非空。
+    void _stopAfterPlaylistEmptied();
 
 protected:
     virtual void putMusicPlayListCurBuf(MusicPropertiesPtr property);
@@ -72,7 +81,7 @@ protected:
 
 private:
     void updatePlayState(MusicPlayerState state);
-    void reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor,
+    void reportPosition(uint64_t positionMs, uint64_t trackUid, bool resetFloor,
                         uint64_t epoch);
     void bumpPositionSession();
     std::string newTraceId();
@@ -97,6 +106,8 @@ private:
     void beginSegmentSwitch(const char *reason);
     void endSegmentSwitch(bool switched);
     void handleDecodeError(const MusicPropertiesPtr &cur);
+    // 当前曲目是否仍是 uid 指定的那一条。给「延迟前进」的排队 lambda 做前提校验用（#264 §4）。
+    bool currentTrackIs(uint64_t uid);
 
 private:
     std::shared_ptr<IAudioDevice> m_audioDev;
@@ -136,7 +147,9 @@ private:
     // 六个回调都在同一条 WorkQueue 串行线程发出，这里只钳制二次 asyncRunTask
     // 回投 priority_queue 时同刻乱序带来的旧值；position() 查询口径不变。
     std::atomic<uint64_t> m_positionFloor;
-    std::atomic<int> m_positionTrackIndex;
+    // 位置会话归属（ADR 0018）：按 uid，不按下标——压缩重排后下标代表的是别人。
+    // 0 = 尚无效（uid 从 1 起分配）。
+    std::atomic<uint64_t> m_positionTrackUid;
     // 会话代际：seek / 换曲 / 从停机重播都会递增，让回投队列里同曲的旧任务整体失效，
     // 否则 reset 之前已投递、携带较大值的 position 任务会把新会话的基准重新抬高。
     std::atomic<uint64_t> m_positionEpoch;
@@ -165,7 +178,7 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_shuttingDown(false)
     , m_decodeErrorHandled(false)
     , m_positionFloor(0)
-    , m_positionTrackIndex(-1)
+    , m_positionTrackUid(0)
     , m_positionEpoch(0)
     , m_stateNotified(false)
     , m_lastReportedState(MusicPlayerState::StoppedState)
@@ -304,6 +317,33 @@ void MusicPlayer::Impl::setCurrentIndex(int index)
 int MusicPlayer::Impl::getMusicCount()
 {
     return m_musicList->getMusicCount();
+}
+
+void MusicPlayer::Impl::addTrack(const std::string &path)
+{
+    LOG_INFO(LOG_TAG, "addTrack : %s", path.data());
+    if (isShuttingDown()) {
+        return;
+    }
+    m_workQueue.asyncRunTask([this, path]() { _addTrack(path); });
+}
+
+void MusicPlayer::Impl::removeTrack(int index)
+{
+    LOG_INFO(LOG_TAG, "removeTrack : %d", index);
+    if (isShuttingDown()) {
+        return;
+    }
+    m_workQueue.asyncRunTask([this, index]() { _removeTrack(index); });
+}
+
+void MusicPlayer::Impl::clearPlaylist()
+{
+    LOG_INFO(LOG_TAG, "clearPlaylist");
+    if (isShuttingDown()) {
+        return;
+    }
+    m_workQueue.asyncRunTask([this]() { _clearPlaylist(); });
 }
 
 void MusicPlayer::Impl::setPlaybackMode(MusicPlaybackMode mode)
@@ -531,7 +571,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
         LOG_INFO(LOG_TAG, "seek dropped: no playback task");
         return;
     }
-    if (task->trackIndex != cur->index) {
+    if (task->trackUid != cur->uid) {
         LOG_INFO(LOG_TAG, "seek dropped: task belongs to another track");
         return;
     }
@@ -551,7 +591,7 @@ void MusicPlayer::Impl::_setPosition(uint64_t pos)
     task->decoder->seekToMs(pos);
     // seek 是合法回退：重置单调基准并立即上报一次（规格 §3 / §7）。
     bumpPositionSession();
-    reportPosition(pos, static_cast<int>(cur->index), true, m_positionEpoch.load());
+    reportPosition(pos, cur->uid, true, m_positionEpoch.load());
 }
 
 void MusicPlayer::Impl::_next()
@@ -603,6 +643,74 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
         return;
     }
     endSegmentSwitch(m_musicList->setCurrentIndexSync(index));
+}
+
+void MusicPlayer::Impl::_addTrack(const std::string &path)
+{
+    // 入列、载荷发布、（空列表首发时）设当前都在列表层完成；状态机不动：
+    // addTrack 不自动播放（契约 §4.1）。
+    m_musicList->addTrackSync(path);
+}
+
+void MusicPlayer::Impl::_removeTrack(int index)
+{
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    // index 是就地重写的字段（compaction 会改同一个 shared_ptr 指向的对象），
+    // 所以「删前」的值必须在调用列表层之前取。
+    const int indexBefore = (cur != nullptr) ? static_cast<int>(cur->index) : -1;
+
+    const PlaylistEditOutcome outcome = m_musicList->removeTrackSync(index);
+    if (outcome == PlaylistEditOutcome::Dropped) {
+        return;
+    }
+    if (outcome == PlaylistEditOutcome::RemovedOther) {
+        // R2（契约 §4.1）：当前曲目没换，但它上方的条目被删了 ⇒ index 变了，
+        // 必须补发一次 TC——TC 是公开面唯一的「当前是谁」载体。索引没变则不得发。
+        if (cur != nullptr && static_cast<int>(cur->index) != indexBefore) {
+            m_listener->onMusicPlayerListCurrentIndexChanged(static_cast<int>(cur->index));
+        }
+        return;
+    }
+    if (outcome == PlaylistEditOutcome::CurrentCleared) {
+        _stopAfterPlaylistEmptied();
+        return;
+    }
+
+    // CurrentReplaced：补位已完成（新任务已建、TC/DC/PC 已由列表层发出）。
+    // 只有 Playing 需要把新任务接进本次播放会话——与 auto-skip 成功路径完全同构；
+    // Paused / Stopped 一律不调 _play()：那会把暂停变成擅自恢复播放（#264 §2）。
+    if (m_state.load() == MusicPlayerState::PlayingState) {
+        if (m_audioDev != nullptr) {
+            // 队列里可能还压着被删曲目最多 256 KB 的 PCM（≈1.5 s），
+            // 不清就会先听见一首已经不存在的歌。
+            m_audioDev->clearQueue();
+        }
+        _play();
+    }
+}
+
+void MusicPlayer::Impl::_clearPlaylist()
+{
+    if (!m_musicList->clearPlaylistSync()) {
+        return; // 空列表上幂等：零回调、零查询值变化
+    }
+    _stopAfterPlaylistEmptied();
+}
+
+void MusicPlayer::Impl::_stopAfterPlaylistEmptied()
+{
+    stopConsumerThread();
+    _releaseAudio();
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        m_curMusicProperties.reset();
+    }
+    // 契约 §3.1：状态序列无相邻重复——原本已是 Stopped 时不补发。
+    updatePlayState(MusicPlayerState::StoppedState);
 }
 
 void MusicPlayer::Impl::beginSegmentSwitch(const char *reason)
@@ -700,7 +808,9 @@ bool MusicPlayer::Impl::shouldFillSilence()
         cur = m_curMusicProperties;
     }
     // 任务与「当前曲目」对不上：切歌通知还没走完，读 ring 就会把上一首的 PCM 送出去。
-    if (cur == nullptr || task->trackIndex != cur->index) {
+    // 任务与「当前曲目」对不上：切歌通知还没走完，读 ring 就会把上一首的 PCM 送出去。
+    // 只比 uid：index 会被 compaction 改掉，比它等于在「删了别的曲目」时误判成切歌。
+    if (cur == nullptr || task->trackUid != cur->uid) {
         return true;
     }
     return false;
@@ -787,14 +897,14 @@ void MusicPlayer::Impl::consumeAudioData()
         signalProperties.curPositionMs     = curPositionMs;
 
         if (!isShuttingDown()) {
-            const int trackIndex = static_cast<int>(cur->index);
-            const uint64_t epoch  = m_positionEpoch.load();
-            m_workQueue.asyncRunTask([this, curPositionMs, trackIndex, epoch]() {
+            const uint64_t trackUid = cur->uid;
+            const uint64_t epoch    = m_positionEpoch.load();
+            m_workQueue.asyncRunTask([this, curPositionMs, trackUid, epoch]() {
                 // 会话代际已变（seek / 换曲 / 重播）的迟到任务整体丢弃；
                 // 旧曲的迟到任务也不得写进新曲会话。
                 if (!isShuttingDown() && epoch == m_positionEpoch.load()
-                    && trackIndex == m_positionTrackIndex.load()) {
-                    reportPosition(curPositionMs, trackIndex, false, epoch);
+                    && trackUid == m_positionTrackUid.load()) {
+                    reportPosition(curPositionMs, trackUid, false, epoch);
                 }
             });
         }
@@ -819,8 +929,11 @@ void MusicPlayer::Impl::consumeAudioData()
 
     if (st == StreamDecoderState::EOS && ring->availableRead() == 0) {
         if (!isShuttingDown() && !m_switching.load() && !m_switching.exchange(true)) {
-            m_workQueue.asyncRunTask([this]() {
-                if (!isShuttingDown()) {
+            const uint64_t guardUid = cur->uid;
+            m_workQueue.asyncRunTask([this, guardUid]() {
+                // 前提校验：排队期间当前曲目可能已被删除 / 被补位替换。那时「前进」
+                // 是多余的（补位已经选过落点），照做会让用户删一首歌却连带跳过下一首。
+                if (!isShuttingDown() && currentTrackIs(guardUid)) {
                     if (!m_musicList->advanceToNextTrack()) {
                         _stop();
                     }
@@ -831,11 +944,21 @@ void MusicPlayer::Impl::consumeAudioData()
     }
 }
 
+bool MusicPlayer::Impl::currentTrackIs(uint64_t uid)
+{
+    MusicPropertiesPtr cur;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        cur = m_curMusicProperties;
+    }
+    return cur != nullptr && cur->uid == uid;
+}
+
 void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
 {
     PlaybackTaskPtr task = m_musicList->currentTask();
     if (cur == nullptr || task == nullptr || task->decoder == nullptr
-        || task->trackIndex != cur->index) {
+        || task->trackUid != cur->uid) {
         return;
     }
     if (m_decodeErrorHandled.exchange(true)) {
@@ -854,7 +977,7 @@ void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
                        cur->fileProperties.fullPath.c_str());
 
     // 本次播放会话内不再自动重试这一曲（规格 8.2 / 实现清单 21）
-    m_musicList->markTrackFailed(cur->index);
+    m_musicList->markTrackFailed(cur->uid);
     if (m_listener != nullptr) {
         m_listener->onMusicPlayerError(code, detail, static_cast<int>(cur->index),
                                        cur->fileProperties.fullPath, m_traceId);
@@ -872,7 +995,14 @@ void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
     }
 
     m_switching.store(true);
-    m_workQueue.asyncRunTask([this]() {
+    const uint64_t guardUid = cur->uid;
+    m_workQueue.asyncRunTask([this, guardUid]() {
+        if (!currentTrackIs(guardUid)) {
+            // 当前曲目已被删除 / 被补位替换：补位已经选过落点并接管了播放，
+            // 这里再跳一次就是多跳过一首（#264 §4 的真竞态）。
+            m_switching.store(false);
+            return;
+        }
         bool advanced = (m_musicList != nullptr) && m_musicList->skipToNextPlayable();
         m_switching.store(false);
         if (advanced) {
@@ -923,8 +1053,8 @@ void MusicPlayer::Impl::putMusicPlayListCurBuf(MusicPropertiesPtr property)
     m_listener->onMusicPlayerDurationChanged(property->signalProperties.durationMs);
     // 新曲会话：递增代际、重置单调基准，位置从该曲的 curPositionMs（通常 0）重新起算。
     bumpPositionSession();
-    reportPosition(property->signalProperties.curPositionMs,
-                   static_cast<int>(property->index), true, m_positionEpoch.load());
+    reportPosition(property->signalProperties.curPositionMs, property->uid, true,
+                   m_positionEpoch.load());
 }
 
 void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
@@ -986,8 +1116,21 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
     // autoSkip 成功时状态可能根本不变（切歌前后都是 Playing，不闪 Stopped）；
     // 只有跳轨失败才补那「一次状态事件」，避免先发一个不存在的状态。
     m_skipFailures.fetch_add(1);
-    m_workQueue.asyncRunTask([this]() {
+    uint64_t guardUid = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_curMusicMutex);
+        if (m_curMusicProperties != nullptr) {
+            guardUid = m_curMusicProperties->uid;
+        }
+    }
+    m_workQueue.asyncRunTask([this, guardUid]() {
         if (isShuttingDown()) {
+            return;
+        }
+        // 同一条前提校验（#264 §4）：当前曲目已被删除/替换时放弃本次前进。
+        // guardUid == 0 表示派发时就没有当前曲目，保持既有路径（跳到唯一可播的一首）。
+        if (guardUid != 0 && !currentTrackIs(guardUid)) {
+            m_switching.store(false);
             return;
         }
         if (m_musicList->skipToNextPlayable()) {
@@ -1006,7 +1149,7 @@ void MusicPlayer::Impl::bumpPositionSession()
     m_positionFloor.store(0);
 }
 
-void MusicPlayer::Impl::reportPosition(uint64_t positionMs, int trackIndex, bool resetFloor,
+void MusicPlayer::Impl::reportPosition(uint64_t positionMs, uint64_t trackUid, bool resetFloor,
                                        uint64_t epoch)
 {
     if (isShuttingDown() || m_listener == nullptr) {
@@ -1018,8 +1161,8 @@ void MusicPlayer::Impl::reportPosition(uint64_t positionMs, int trackIndex, bool
     }
     // 回调单线程串行（#76 事实基线），普通 load/store 即可；这里只做通知侧的钳制，
     // 不回写 signalProperties.curPositionMs，也不影响 position() 的实时查询。
-    if (resetFloor || trackIndex != m_positionTrackIndex.load()) {
-        m_positionTrackIndex.store(trackIndex);
+    if (resetFloor || trackUid != m_positionTrackUid.load()) {
+        m_positionTrackUid.store(trackUid);
         m_positionFloor.store(positionMs);
         m_listener->onMusicPlayerPositionChanged(positionMs);
         return;
@@ -1144,6 +1287,21 @@ void MusicPlayer::previous()
 void MusicPlayer::setCurrentIndex(int index)
 {
     m_impl->setCurrentIndex(index);
+}
+
+void MusicPlayer::addTrack(const std::string &path)
+{
+    m_impl->addTrack(path);
+}
+
+void MusicPlayer::removeTrack(int index)
+{
+    m_impl->removeTrack(index);
+}
+
+void MusicPlayer::clearPlaylist()
+{
+    m_impl->clearPlaylist();
 }
 
 int MusicPlayer::getMusicCount()

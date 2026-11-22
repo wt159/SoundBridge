@@ -254,7 +254,8 @@ TEST_SUITE("PlaybackLifecycle")
         REQUIRE(playlist->startCurrentTask());
         sdk::PlaybackTaskPtr first = playlist->currentTask();
         REQUIRE(first != nullptr);
-        CHECK(first->trackIndex == 0);
+        const uint64_t firstUid = first->trackUid;
+        CHECK(firstUid != 0); // 0 表示「无 uid」，从 1 起分配
         REQUIRE_MESSAGE(waitUntil([&first]() { return first->ring->availableRead() > 0; }, 5000),
                         "任务启动后 ring 里没有 PCM");
 
@@ -267,7 +268,7 @@ TEST_SUITE("PlaybackLifecycle")
         REQUIRE(playlist->setCurrentIndexSync(1));
         sdk::PlaybackTaskPtr second = playlist->currentTask();
         REQUIRE(second != nullptr);
-        CHECK(second->trackIndex == 1);
+        CHECK(second->trackUid != firstUid);
         CHECK_MESSAGE(second->ring.get() != oldRingAddress, "切歌复用了上一首的 ring 实例");
         CHECK_MESSAGE(second->ring->readPos() == 0, "新任务的 ring 段内读计数没有归零");
         CHECK_MESSAGE(second->decoder->positionMs() == 0, "新任务的位置没有从 0 起算");
@@ -285,7 +286,7 @@ TEST_SUITE("PlaybackLifecycle")
         REQUIRE(playlist->setCurrentIndexSync(0));
         sdk::PlaybackTaskPtr third = playlist->currentTask();
         REQUIRE(third != nullptr);
-        CHECK(third->trackIndex == 0);
+        CHECK(third->trackUid == firstUid); // 回到同一曲目 ⇒ 同一 uid（ADR 0018）
         std::weak_ptr<AudioRingBuffer> weakThirdRing = third->ring;
         CHECK_MESSAGE(weakOldRing.expired(), "退役槽没有在下一次切歌回收旧任务");
         CHECK_MESSAGE(weakOldDecoder.expired(), "退役槽没有在下一次切歌 join 旧 decoder");

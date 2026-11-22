@@ -73,6 +73,11 @@ public:
     void previous();
     void setCurrentIndex(int index);
     int getMusicCount();
+    // 列表编辑（ADR 0018 / 契约 §4.1）：三条命令都是纯入队，调用者线程零文件系统访问。
+    // 结果经既有回调（onMusicPlayerMusicListChanged / ...CurrentIndexChanged / Error）可见。
+    void addTrack(const std::string &path);
+    void removeTrack(int index);
+    void clearPlaylist();
     void setPlaybackMode(MusicPlaybackMode mode);
     MusicPlaybackMode playbackMode() const;
     void setAutoSkipOnError(bool enabled);
