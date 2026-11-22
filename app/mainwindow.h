@@ -27,7 +27,6 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
-
 using namespace soundbridge;
 
 /* Media information struct. */
@@ -42,7 +41,9 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    /* 构造注入（ADR 0016）：缺省 AppUiPorts = 生产现状（自建 PlayerController、
+       曲库取 applicationDirPath()/../../music）。测试传替身，进程内零 SDL。 */
+    MainWindow(const AppUiPorts &ports = AppUiPorts(), QWidget *parent = nullptr);
     ~MainWindow();
 
     static const QColor kSelectBg;
@@ -50,8 +51,24 @@ public:
     static const QColor kPlayBgSelected;
     static const QColor kPlayBar;
 
+public slots:
+    /* 渲染入口（ADR 0016 双缝之二）：由 private slots 提升为 public slots，
+       不改名不改签名——既有 SLOT() 连接不变，测试直接调用注入一帧状态。 */
+    void renderPlayerViewState(PlayerViewState viewState);
+
+public:
+    /* 错误弹窗的六个字段组装（UI-E2 文案半边）：从 handlePlayerError 提取为
+       纯函数，呈现（QMessageBox）永久人工（规格 §9.7.5）。 */
+    static QString buildErrorMessageBoxText(int codeValue, const QString &detail, int trackIndex,
+                                            const QString &path, const QString &traceId);
+
 private:
+    /* 命令口（ADR 0016）：生产指向 mController.get()，注入时指向替身。
+       mController 仅在生产路径持有（唯一构造点不变）。 */
     std::unique_ptr<PlayerController> mController;
+    PlayerCommandPort *m_commands    = nullptr;
+    QObject *m_signalSource = nullptr;
+    QString mMusicDirectory;
     QStringList mRenderedPlaylist;
     int mRenderedTrackIndex = -1;
 
@@ -106,7 +123,7 @@ protected:
     void scanSongs();
 
     /* Initialize media player. */
-    void mediaPlayerInit();
+    void mediaPlayerInit(PlayerCommandPort *injectedPort);
     void applyWindowPolicy();
     void restoreWindowState();
     void persistWindowState();
@@ -160,7 +177,6 @@ private slots:
     /* 面板内条目被点击（= selectTrack + 关闭面板）。 */
     void panelTrackActivated(int index);
 
-    void renderPlayerViewState(PlayerViewState viewState);
     void handlePlayerError(int code, const QString &detail, int trackIndex, const QString &path,
                            const QString &traceId, bool autoSkipEnabled);
 };

@@ -12,10 +12,11 @@ QString formatTime(qulonglong timeMs)
     formatted += (second >= 10 ? ":" : ":0") + QString::number(second, 10);
     return formatted;
 }
+} // namespace
 
 // 文件级错误的原因文案：措辞归 app 层（规格 8.3 只规定「必须分档、必须不同」）。
 // 每个错误码一句，禁止共用——「可能不完整」与「已损坏」必须是两句不同的话。
-QString errorReason(soundbridge::ErrorCode code)
+QString PlayerController::errorReasonText(soundbridge::ErrorCode code)
 {
     switch (code) {
     case soundbridge::ErrorCode::ExtractorUnsupported:
@@ -37,8 +38,9 @@ QString errorReason(soundbridge::ErrorCode code)
 
 // 提示文案按「原因 + 位置 + 处置」拼：处置来自 ErrorInfo.action / autoSkip（ADR 0001），
 // 位置来自已播到的 curPositionMs（规格 8.3：必须带已播到的位置）。
-QString errorSubtitle(soundbridge::ErrorCode code, bool autoSkip, qulonglong positionMs,
-                      int trackIndex, const QString &detail)
+QString PlayerController::composeErrorSubtitle(soundbridge::ErrorCode code, bool autoSkip,
+                                               qulonglong positionMs, int trackIndex,
+                                               const QString &detail)
 {
     // 批量扫描汇总（不绑定曲目）：detail 就是「N 个文件无法播放」，直接显示计数
     if (trackIndex < 0 && !detail.isEmpty()) {
@@ -46,7 +48,7 @@ QString errorSubtitle(soundbridge::ErrorCode code, bool autoSkip, qulonglong pos
     }
 
     const soundbridge::ErrorInfo &info = soundbridge::GetErrorInfo(code);
-    QString subtitle                   = errorReason(code);
+    QString subtitle                   = errorReasonText(code);
     if (info.recoverable && positionMs > 0) {
         subtitle += " AT " + formatTime(positionMs);
     }
@@ -54,7 +56,6 @@ QString errorSubtitle(soundbridge::ErrorCode code, bool autoSkip, qulonglong pos
         subtitle += autoSkip ? " - SKIPPED" : " - STOPPED";
     }
     return subtitle;
-}
 }
 
 PlayerController::PlayerController(const soundbridge::PlayerConfig &config, QObject *parent)
@@ -242,7 +243,7 @@ void PlayerController::onError(soundbridge::ErrorCode code, const std::string &d
 {
     const QString detailText = QString::fromUtf8(detail.c_str());
     m_viewState.subtitle
-        = errorSubtitle(code, m_autoSkipOnError, m_viewState.positionMs, trackIndex, detailText);
+        = composeErrorSubtitle(code, m_autoSkipOnError, m_viewState.positionMs, trackIndex, detailText);
     m_errorSubtitleActive = true;
     publishViewState();
     emit errorOccurred(static_cast<int>(code), detailText, trackIndex,
