@@ -2209,14 +2209,27 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         REQUIRE_MESSAGE(waitFor([&callbacks]() { return callbacks.last_position.load() > 0; }, 4000),
                         "起播后位置没有推进");
 
-        const int positionBefore  = callbacks.position_change_count.load();
-        const uint64_t lastBefore = callbacks.last_position.load();
-        const int stateBefore     = callbacks.state_change_count.load();
+        const int positionBefore     = callbacks.position_change_count.load();
+        const uint64_t lastBefore    = callbacks.last_position.load();
+        const int stateBefore        = callbacks.state_change_count.load();
+        const int trackChangesBefore = callbacks.track_change_count.load();
 
         player.removeTrack(aboveIndex);
 
         REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 2; }, 3000),
                         "removeTrack 没有生效");
+        // R2：当前曲目没换，但它的下标左移了一位 ⇒ 必须补发 onTrackChanged，否则 UI 的
+        // 选中行会指着别人的名字。删的是当前曲目「上方」的一条，故新下标恰好是 currentIndex-1。
+        CHECK_MESSAGE(
+            waitFor(
+                [&callbacks, trackChangesBefore]() {
+                    return callbacks.track_change_count.load() == trackChangesBefore + 1;
+                },
+                3000),
+            "删掉当前曲目上方的条目后没有补发 onTrackChanged（R2）");
+        CHECK_MESSAGE(callbacks.last_track_index.load() == currentIndex - 1,
+                      "补发的下标是 " << callbacks.last_track_index.load() << "，期望 "
+                                      << (currentIndex - 1));
         // 位置回调是二次投递的：删除前已排队的那些还会照常送达。先让它们排空，
         // 再取基线，否则「本来就在路上的位置」会被误当作删除后仍在推进。
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
