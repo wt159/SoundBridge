@@ -69,6 +69,8 @@
 | 所有权 | `PlayerCallbacks*` 由调用方持有，必须活过 `Player` 析构；停机期（`isShuttingDown`）一律不发回调。 |
 | 构造期 | 构造到首次命令之间不主动发回调；查询返回各自初值（Stopped / 0 / 空）。 |
 
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：上表「顺序（其他）」行的「`onPlaylistChanged` 先于由该次扫描引发的 `onTrackChanged`」**与实测相反**——首条成功曲目在 `MusicPlayList.cpp:525-529` 就发 `onTrackChanged`，`onPlaylistChanged` 要等 `m_pendingAdd` 归零（`MusicPlayer.cpp:223`）才发。本图不改扫描路径，因此**不把这句通例改写成「playlist 一律先于 track」**（改写会变成新的谎言），而是按**触发源分列**：扫描路径保留时点原文并以此注记登记其实测顺序；列表编辑命令的顺序由 §4.1 规定。上表原文一字未动。
+
 **为何错误顺序选 error→state 而不是 state→error**：autoSkip 开启时状态可能根本不变（解码错误路径是 `error→(async)skip→play`），先发 state 会撒谎；`onError` 是原因、`onStateChanged` 是处置结果，因果顺序也要求原因在先。代价是播放列表错误路径要改现有 `state→error` 顺序，属图外实现项。
 
 ### 3.2 落点分工
@@ -95,6 +97,75 @@
 | 播放模式 | 五种 `PlaybackMode` 语义沿用现状映射（`player_impl.cpp:185-221` 的 `SingleOnce → CurrentItemOnce`、`SingleLoop → CurrentItemInLoop`）；`setCurrentTrack` 与自动跳轨冲突时以显式命令为准；播放列表变更后索引以 `onTrackChanged` 为准。只裁契约，不重设计列表逻辑。 |
 
 **fog 收敛**：因不改任何签名，「公开 API 的兼容 / 演进策略」在本 effort 内无需决定，从 Not yet specified 删除；若将来要加返回值或改 `PlayerCallbacks`，须重开一张新 effort 的票，不许在本规格上打补丁。
+
+### 4.1 列表编辑命令（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）
+
+公开面新增三条命令（`sdk/include/soundbridge/player.h`），裁决记录见 ADR [0018](../docs/adr/0018-playlist-edit-contract.md)：
+
+```cpp
+void addTrack(const std::string &path);   // 单个文件；目录请用 addMusicDirectory
+void removeTrack(int index);              // 下标按「执行时刻」解释
+void clearPlaylist();
+```
+
+**为什么是 `void`，而不是 `bool`**：这不是风格选择，而是 `bool` **无法正确实现**。要同步判「下标是否合法」必须读 `m_musicListProperties.size()`，而该 vector 无锁、只在 WorkQueue 线程读写（所有权清单见 `doc/buffering-switching-spec.md` §5.1）；调用者线程同步读即数据竞争（UB），且该快照在任何排队命令之后立即失效。可行的替代只有「加锁」或「加第二真相源」，分别违反 §5 单一真相源与 §4「不新增可见通道」。结论：**新增命令沿用 `void` + 纯入队**，结果经回调与查询可见。
+
+**语义**
+
+| 维度 | `addTrack(path)` | `removeTrack(index)` | `clearPlaylist()` |
+|---|---|---|---|
+| 入参 | 单文件路径（UTF-8） | 列表位置（`int`） | — |
+| 传目录 | 丢弃（Warning 日志） | — | — |
+| 越界 / 负数 | — | 丢弃 | — |
+| 重复路径 | **允许**（两条同 `id` 记录） | — | — |
+| 空列表 | 正常入列 | 丢弃 | **丢弃（幂等）** |
+| 当前曲目 | 仅当原本无当前曲目时设为该条 | 删的是当前曲目 ⇒ **补位**（ADR 0018） | 变为「无当前曲目」 |
+| 播放状态 | **不自动播放** | Playing 保持 Playing；结果为空 ⇒ Stopped | 结果为空 ⇒ Stopped |
+| 调用者线程开销 | **零文件系统访问**（纯入队） | 零 | 零 |
+
+索引参数用 `int` 而不是 `size_t`：与 `setCurrentTrack(int)` / `onTrackChanged(int)` / `TrackInfo::index` / `trackCount()` 同型，且负数天然表达非法（`size_t` 下传 `-1` 会回绕成巨大值）。
+
+**失败表达：三类分治**
+
+| 类别 | 判定 | 表达 |
+|---|---|---|
+| **被丢弃的命令** | 非法下标、空列表上 `clearPlaylist`、把目录传给 `addTrack`、停机期 | **零回调、零查询值变化**、Warning 日志（沿用 §4「被丢弃的命令不产生任何回调、不改变任何查询值」） |
+| **命令执行失败** | `addTrack` 的文件打不开 / 格式不支持 / 提取器拒绝 | **一次 `onError(既有码, detail, -1, path)`**；不新增错误码、不改 `onError` 签名 |
+| **扫描降噪（不适用）** | `addMusicDirectory` 批次中的逐文件失败 | 沿用现状 |
+
+`addTrack` 的失败必须**绕过 `reportError` 的降噪门槛**（`MusicPlayList.cpp:750-754` 的 `shouldNotify`：已有当前曲目时不报逐文件错误）。那道门槛服务的是批量扫描的降噪；对用户显式发起的单条命令，它会让失败**完全不可见**。规则：**用户显式命令的失败必须可见**。同时 `addTrack` 必须在命令结束前排空自己产生的扫描拒绝累计（`reportScanSummary` 会 `swap` 取走），否则会以「N files cannot be played」并入下一次 `addMusicDirectory` 的批次汇总。
+
+**回调时序**
+
+`PL` = `onPlaylistChanged`，`TC` = `onTrackChanged`，`DC` = `onDurationChanged`，`PC` = `onPositionChanged`，`SC` = `onStateChanged`，`ER` = `onError`。
+
+| 命令 / 结果 | 回调序列 |
+|---|---|
+| `addTrack`，列表原非空 | `PL(n+1)` |
+| `addTrack`，列表原为空 | `PL(1)` → `TC(0)` → `DC` → `PC` |
+| `addTrack` 失败 | `ER`（**不发 `PL`**，列表未变） |
+| `removeTrack(i)`，`i` 非当前 | `PL(n-1)`（当前下标若因此变化，按 R2 补 `TC`） |
+| `removeTrack(i)`，`i` 是当前，结果非空 | `PL(n-1)` → `TC(j)` → `DC` → `PC` |
+| `removeTrack(i)`，`i` 是当前，结果为空 | `PL(0)` → `SC(Stopped)` |
+| `removeTrack` 非法下标 | 无 |
+| `clearPlaylist`，原非空 | `PL(0)` → `SC(Stopped)`（原状态已是 Stopped 时按 §3.1「无相邻重复」不重发） |
+| `clearPlaylist`，原为空 | 无（幂等） |
+
+三条规则：
+
+- **R1：`PL` 先于由同一命令引发的 `TC`。** `TC` 只携带 `int`，该下标只能对着新载荷解释；反过来会让客户端拿旧列表定位新下标。
+- **R2：当前曲目的下标变了就必须补发 `TC(新下标)`，即使音频没变。** 删掉当前曲目上方的任一条，当前曲目仍是同一首但其 `index` 变了；`TC` 是公开面唯一的「当前是谁」载体。反之当前曲目与其下标都不变时**不得**发 `TC`。
+- **R3：不发 `TC(-1)`。** 空列表由 `PL(0)` 与 `trackCount()==0` 表达；`-1` 在 `TC` 上属新增语义（今天只用于 `onError` 的批量汇总）。
+
+**`TrackInfo.index` 的时点语义**
+
+1. 载荷内：`index` = 该条目在**载荷生成时刻**的列表位置，`0..n-1` 连续；仅在该次 `PL` 内有效，任何后续 `PL` 都会重编号。
+2. 命令参数：`removeTrack` / `setCurrentTrack` 的 `index` 按**执行时刻**解释，不按调用时刻。连续排队两条删除时，第二条的下标指「第一条生效后的列表」——调用方自己折算，SDK 不提供快照语义。
+3. 身份：`TrackInfo.id` 跨命令稳定但**不唯一**（`player.h:18-22`），因此**不提供 `removeTrack(id)`**；以 id 为键只能定义「删除全部匹配项」，属另一功能。
+
+**空列表的可观测性**：`MusicPlayList::updateList()` 的空列表守卫（`MusicPlayList.cpp:564-569`）**不放开**——「空目录扫描不发载荷」与既有用例 `updateList with empty playlist does not call callback` 是既有契约。列表编辑命令走**独立的无条件发布路径**：`addMusicDirectory` 扫到 0 个文件仍是 0 次 `PL`，`removeTrack` / `clearPlaylist` 清到 0 条**必须**发 1 次 `PL(0)`。
+
+**ABI**：`SOUNDBRIDGE_ABI_VERSION` **保持 2**。`Player` 无虚成员、析构非虚、只有 `std::unique_ptr<Impl>` 一个数据成员 ⇒ 新增非虚成员函数不改对象布局、不改 vtable、不改任何既有符号的修饰名；`PlayerCallbacks` 与 `TrackInfo` 一字未动。ADR 0014 的 1 → 2 由 `TrackInfo` 加字段（布局变化）驱动，同批加入的四个音量方法并未单独成为升版理由。
 
 ## 5. 查询与事件的真相源（对应「单一真相源：查询与事件的一致性」）
 
@@ -147,6 +218,7 @@
 | position 单调 / 新曲归零 / getter 与回调 ≤50ms / duration 每曲一次 | 既有断言，**数值一字不动** | `sdk_player_tests` / `test_playback_position.cpp` |
 | 必须上报清单、三码不承诺上报 | 错误码 × 回调计数 | `sdk_unit_tests`（`test_error.cpp`） |
 | `durationMs==0` 的 seek 空操作 | 位置不回退、无新回调、无状态变化 | `sdk_interaction_tests` |
+| 列表编辑命令的语义、时序与失败表达（§4.1） | 载荷 `index` 连续、R2 的「补发 / 不补发」两态、清空到 0 条必发 `PL(0)`、`addTrack` 失败必发 `onError`、删除后播放不静音 | `sdk_unit_tests` / `sdk_interaction_tests` |
 
 - **判据不新造**：沿用 `max(1%,150ms)`、`r × good`、5pp、零容差差分与上述既有数值；坏输入 55 例 / 覆盖度 15 行是不可动基线。
 - 线程契约用 `promise/future` 或轮询验证状态迁移（`sdk/test/unit/AGENTS.md:34`），不裸 sleep；重入 / 所有权 / ABI 类只写头文件注释 + 本规格，**不做最小可测替身**（回调内发命令会自锁，测不出有效结论）。
