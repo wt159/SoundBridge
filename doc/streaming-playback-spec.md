@@ -104,6 +104,43 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 不改 10 ms push 驱动模型、不给 ring 加 mutex。`AudioRingBuffer.h:7-9` 的「reset 仅两线程静止」注释与现状不符，须由图外执行票更新。
 
+### 4.5 数据源开合与持有（2026-11-22，地图 [#273](https://github.com/wt159/SoundBridge/issues/273)）
+
+本地数据源（`FileSource`）是**可关闭、可重开、按引用计数存活**的资源。列表条目持有数据源对象与 extractor，但**不常驻打开的文件句柄**；常驻句柄数恒为 O(1)。本节只约束本地文件源，网络源界外（见本节末）。
+
+**状态与计数**
+
+| 量 | 语义 |
+|---|---|
+| `m_openRefs`（`FileSource` 私有，原子） | `0` = 句柄已关闭；`>0` = 句柄打开，值等于持有租约数 |
+| `initCheck()` | 只表达「此刻可否读」：打开时 `OK`，关闭时 `NO_INIT`。**不区分**「未打开」与「不可用」——可重开性由计数与 `acquire()` 表达，不由 `initCheck()` 表达 |
+| `acquire()` | 原子自增；从 `0` 变 `1` 时执行 `_wfopen` / `ifstream::open` 并重新求 `m_length`；打开失败则回退到 `0` 并返回 `NO_INIT` / `PERMISSION_DENIED`。已打开时只自增，不重复打开 |
+| `release()` | 原子自减；归零时 `fclose` / `close` 并置 `m_length = -1`；不归零不关 |
+
+`acquire()` / `release()` 只出现在内部头（`sdk/extractor/DataSource.hpp`、`FileSource.h` 均不在 `sdk/include/`），**不触及公开 ABI**，`SOUNDBRIDGE_ABI_VERSION` 保持 2。失败不新增对外错误码，由调用点映射为既有 `FileOpenFailed`（语义见 `doc/player-state-contract.md` §4.1 的补充条文）。
+
+**租约（`SourceLease`）**
+
+- `PlaybackTask` 持有一个 `SourceLease`：构造调用 `acquire()`，析构调用 `release()`。
+- 成员声明顺序固定为 `owner`（最前）、`lease`、`ring`、`decoder`（最后）。析构逆序 ⇒ **decoder 先析构**（其析构函数 `stop()` 内 join 解码线程），**随后才释放租约**。「关闭晚于 join」由声明顺序结构性保证，不依赖各收尾点自觉。
+- 同一 `MusicProperties` 可被先后两个任务持有（重播同一曲、自动补位回到原曲）：两个租约使计数为 2；旧任务 join 后的 `release()` 只降到 1，**不会关掉新任务正在读的句柄**。
+- 收尾路径（`stopCurrentTask` / `joinRetiredTask` / `reapRetiredTaskIfFinished`）**不需要**显式 `close()`，也不允许写「owner 指针不同才关」这类守卫——同一性判断已由计数取代。
+
+**探测后关闭**
+
+- `addMusicInternal` 的次序不变：打开 → `initCheck` → 建 extractor → 取 `AudioSpec` / `durationMs` → 入列。`addTrack` 的失败契约、`durationMs` 与 `AudioSpec` 的来源都不变。
+- `getAudioSpec()` 之后立即 `release()` 探测租约。WorkQueue 串行，因此**扫描期峰值句柄数 = 1**；条目只保留数据源对象、extractor 与已解析元数据。
+- 播放前 `acquire()` 由 `PlaybackTask` 构造触发，发生在 `replacePlaybackTask` 内、`decoder->start()` 之前；`acquire()` 失败的语义由 #276 裁决，本节只规定「失败时不得 `start()`，任务不入 `m_currentTask`」。
+
+**不变量**
+
+1. **零读窗口**：关闭期间不得出现 `readAt`。m4a / asf / ape / mkv 的 FFmpeg AVIO 缓存 `ctx->size` 快照与 `eof_reached`（取证见 [`docs/research/datasource-reopen-facts.md`](../docs/research/datasource-reopen-facts.md)），关闭后继续读会得到旧长度或假 EOF，且**不报错**——是静默截断，不是崩溃。
+2. **长度快照**：`m_length` 在每次 `acquire()` 时求值一次。文件在探测后变长会读不到追加部分，变短会短读或 `FAILED_TRANSACTION`；本图**不改**此语义，只在契约里写明。
+3. **并发**：`FileSource::readAt` 的 `isOpen()` 检查在锁外，关闭的正确性由租约计数与 join 次序保证，不依赖 `FileSource` 内部互斥。
+4. **次序**：禁止在 `decoder->stop()` 返回之前 `release()`（解码线程是 `readAt` 的唯一生产调用方）；禁止对正在被其他任务使用的条目做无条件 `close()`。
+
+**界外**：网络源（`HttpSource` / `UrlSource` / `HlsExtractor`）的连接生命周期与重连语义、设备重开、重采样链路。
+
 ## 5. 判据（#48）
 
 | 判据 | 量测对象 | 表达式 / 失败条件 |
