@@ -6,6 +6,8 @@
 > 本次**未修改任何生产代码 / 用例 / 规格**，**未构建、未跑测试**。
 > Grep 均限定到 `sdk/` 下具体目录或文件；3rdparty 只做定点读取（FFmpeg 4.4.4 的 `aviobuf.c`），不做全目录扫描。
 
+> **归档注记（2026-11-23，收口后审计）**：本快照原只存在于分支 `research/datasource-reopen-facts`（提交 `feb18f103`），归档进 `master` 是为了修掉 [`doc/streaming-playback-spec.md`](../../doc/streaming-playback-spec.md) §4.5 指向它的断链——该节把「关闭期间零 `readAt`」定为**正确性不变量**，证据不能只挂在可删的研究分支上。正文一字未改，仍是 `2eef4e8f7` 时点的事实。**其中 §5 第 5 条（「`readAt` 的关闭态检查在锁外」）已被后续 code-review 修复覆盖**：`isOpen()` 检查现已移入 `m_lock` 临界区，以现行源码与 §4.5 的更正注记为准。
+
 ---
 
 ## 0. 一句话结论与三分类
