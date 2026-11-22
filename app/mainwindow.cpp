@@ -129,15 +129,28 @@ const QColor MainWindow::kPlayBg(94, 220, 243, 70);
 const QColor MainWindow::kPlayBgSelected(94, 220, 243, 90);
 const QColor MainWindow::kPlayBar(94, 220, 243, 200);
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(const AppUiPorts &ports, QWidget *parent)
     : QMainWindow(parent)
 {
+    /* res.qrc 随 app_core 静态库链接（ADR 0017）；静态库里的资源需显式初始化，
+       否则链接器可能丢弃未被引用的 qrc 目标文件。重复调用安全。 */
+    Q_INIT_RESOURCE(res);
+
     /* Initialize UI layout */
     musicLayout();
     applyWindowPolicy();
 
     /* Initialize media player */
-    mediaPlayerInit();
+    mediaPlayerInit(ports.player);
+    /* 信号源（ADR 0016）：生产 = mController；注入 = 替身的 QObject 面。
+       接口本身不是 QObject，无法从 PlayerCommandPort* 交叉转型，由注入方显式给出。 */
+    m_signalSource = (ports.player != nullptr) ? ports.playerSignals : mController.get();
+
+    /* 曲库根（ADR 0016）：注入优先，缺省维持现状。 */
+    mMusicDirectory = ports.musicDirectory;
+    if (mMusicDirectory.isEmpty()) {
+        mMusicDirectory = QCoreApplication::applicationDirPath() + "/../../music";
+    }
 
     /* 浮层（ADR 0015）：与触发按钮同窗口，Qt::Popup 自带点外部关闭。 */
     mVolumePopup   = new VolumePopup(mPushButton[6]);
@@ -174,14 +187,17 @@ MainWindow::MainWindow(QWidget *parent)
     /* Slider signals */
     connect(mDurationSlider, SIGNAL(sliderReleased()), this, SLOT(durationSliderReleased()));
     connect(mAutoSkipCheck, SIGNAL(toggled(bool)), this, SLOT(autoSkipToggled(bool)));
-    connect(mController.get(), SIGNAL(viewStateChanged(PlayerViewState)), this,
-            SLOT(renderPlayerViewState(PlayerViewState)));
-    connect(mController.get(), SIGNAL(errorOccurred(int, QString, int, QString, QString, bool)),
-            this, SLOT(handlePlayerError(int, QString, int, QString, QString, bool)));
+    if (m_signalSource != nullptr) {
+        connect(m_signalSource, SIGNAL(viewStateChanged(PlayerViewState)), this,
+                SLOT(renderPlayerViewState(PlayerViewState)));
+        connect(m_signalSource,
+                SIGNAL(errorOccurred(int, QString, int, QString, QString, bool)), this,
+                SLOT(handlePlayerError(int, QString, int, QString, QString, bool)));
+    }
 
     /* Remove focus */
     this->setFocus();
-    renderPlayerViewState(mController->viewState());
+    renderPlayerViewState(m_commands->viewState());
 }
 
 void MainWindow::musicLayout()
@@ -496,8 +512,8 @@ void MainWindow::restoreWindowState()
     if (mAutoSkipCheck != nullptr) {
         mAutoSkipCheck->setChecked(autoSkipOnError);
     }
-    mController->setAutoSkipOnError(autoSkipOnError);
-    mController->setPlaybackMode(playbackMode);
+    m_commands->setAutoSkipOnError(autoSkipOnError);
+    m_commands->setPlaybackMode(playbackMode);
     updatePlaybackModeButton(playbackMode);
 
     /* 音量 / 静音（规格 §6.1）：越界钳制并回写修正值，与 playback/mode 的既有先例一致；
@@ -511,8 +527,8 @@ void MainWindow::restoreWindowState()
         settings.setValue("playback/volume", volume);
     }
     const bool muted = settings.value("playback/muted", false).toBool();
-    mController->setVolume(volume);
-    mController->setMuted(muted);
+    m_commands->setVolume(volume);
+    m_commands->setMuted(muted);
     updateVolumeUi();
 
     /* 收藏集合（规格 §6.1 / §8.4）：空串丢弃。悬挂条目保留，不做启动期 GC。 */
@@ -545,10 +561,10 @@ void MainWindow::persistWindowState()
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/maximized", isMaximized());
-    settings.setValue("playback/auto_skip_on_error", mController->autoSkipOnError());
-    settings.setValue("playback/mode", static_cast<int>(mController->playbackMode()));
-    settings.setValue("playback/volume", mController->volume());
-    settings.setValue("playback/muted", mController->muted());
+    settings.setValue("playback/auto_skip_on_error", m_commands->autoSkipOnError());
+    settings.setValue("playback/mode", static_cast<int>(m_commands->playbackMode()));
+    settings.setValue("playback/volume", m_commands->volume());
+    settings.setValue("playback/muted", m_commands->muted());
     settings.setValue("library/favorites", favoritesToList(mFavorites));
     warnIfSettingsWriteFailed(settings);
 }
@@ -556,15 +572,15 @@ void MainWindow::persistWindowState()
 void MainWindow::persistVolumeState()
 {
     QSettings settings;
-    settings.setValue("playback/volume", mController->volume());
-    settings.setValue("playback/muted", mController->muted());
+    settings.setValue("playback/volume", m_commands->volume());
+    settings.setValue("playback/muted", m_commands->muted());
     warnIfSettingsWriteFailed(settings);
 }
 
 void MainWindow::updateVolumeUi()
 {
-    const int volume = mController->volume();
-    const bool muted = mController->muted();
+    const int volume = m_commands->volume();
+    const bool muted = m_commands->muted();
     const QString tip = muted ? QStringLiteral("Volume: muted")
                               : QStringLiteral("Volume: %1%").arg(volume);
     if (mPushButton[6] != nullptr) {
@@ -598,17 +614,17 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::btn_play_clicked()
 {
-    mController->playPause();
+    m_commands->playPause();
 }
 
 void MainWindow::btn_next_clicked()
 {
-    mController->nextTrack();
+    m_commands->nextTrack();
 }
 
 void MainWindow::btn_previous_clicked()
 {
-    mController->previousTrack();
+    m_commands->previousTrack();
 }
 
 void MainWindow::btn_favorite_clicked()
@@ -630,7 +646,7 @@ void MainWindow::btn_favorite_clicked()
 
 void MainWindow::btn_playMode_clicked()
 {
-    PlaybackMode nextMode = mController->playbackMode();
+    PlaybackMode nextMode = m_commands->playbackMode();
     switch (nextMode) {
     case PlaybackMode::Sequential:
         nextMode = PlaybackMode::Loop;
@@ -648,12 +664,12 @@ void MainWindow::btn_playMode_clicked()
         nextMode = PlaybackMode::Sequential;
         break;
     }
-    mController->setPlaybackMode(nextMode);
+    m_commands->setPlaybackMode(nextMode);
 }
 
 void MainWindow::btn_playList_clicked()
 {
-    const PlayerViewState &viewState = mController->viewState();
+    const PlayerViewState &viewState = m_commands->viewState();
     LogPrintf(LogLevel::Debug, kTag, "btn_playList_clicked count=%d visible=%d",
               viewState.playlist.size(), mPlaylistPopup->isVisible() ? 1 : 0);
     if (viewState.playlist.isEmpty()) {
@@ -687,14 +703,14 @@ void MainWindow::btn_volume_clicked()
 
 void MainWindow::volumeSliderChanged(int volume)
 {
-    mController->setVolume(volume);
+    m_commands->setVolume(volume);
     updateVolumeUi();
     mVolumeSaveTimer->start();
 }
 
 void MainWindow::muteToggled(bool muted)
 {
-    mController->setMuted(muted);
+    m_commands->setMuted(muted);
     updateVolumeUi();
     // 静音是离散事件，直接写，不等去抖。
     persistVolumeState();
@@ -702,7 +718,7 @@ void MainWindow::muteToggled(bool muted)
 
 void MainWindow::panelTrackActivated(int index)
 {
-    mController->selectTrack(index);
+    m_commands->selectTrack(index);
 }
 
 void MainWindow::listWidgetCliked(QListWidgetItem *item)
@@ -716,37 +732,37 @@ void MainWindow::listWidgetCliked(QListWidgetItem *item)
               QThread::currentThread(), qApp ? qApp->thread() : nullptr);
     LogPrintf(LogLevel::Debug, kTag,
               "listWidgetCliked idx=%d playing=%d selectedCount=%d itemSelected=%d itemPlaying=%d",
-              clickedIndex, mController->currentTrackIndex(), selectedCount,
+              clickedIndex, m_commands->currentTrackIndex(), selectedCount,
               item ? item->isSelected() : -1, item ? item->data(kRolePlaying).toBool() : -1);
-    mController->selectTrack(clickedIndex);
+    m_commands->selectTrack(clickedIndex);
 }
 
 void MainWindow::durationSliderReleased()
 {
     /* Seek playback to slider position */
     LogPrintf(LogLevel::Debug, kTag, "durationSliderReleased: %d", mDurationSlider->value());
-    mController->seekSeconds(mDurationSlider->value());
+    m_commands->seekSeconds(mDurationSlider->value());
 }
 
 void MainWindow::autoSkipToggled(bool checked)
 {
-    mController->setAutoSkipOnError(checked);
+    m_commands->setAutoSkipOnError(checked);
 }
 
 void MainWindow::scanSongs()
 {
-    QDir dir(QCoreApplication::applicationDirPath() + "/../../music");
+    QDir dir(mMusicDirectory);
     QDir dirbsolutePath(dir.absolutePath());
     if (dirbsolutePath.exists()) {
-        mController->addMusicDirectory(dirbsolutePath.absolutePath().toUtf8().constData());
+        m_commands->addMusicDirectory(dirbsolutePath.absolutePath().toUtf8().constData());
     } else {
         LogMessage(LogLevel::Warning, kTag, "dir not exist");
         LogPrintf(LogLevel::Warning, kTag, "dir is %s",
-                  QCoreApplication::applicationDirPath().toUtf8().constData());
+                  mMusicDirectory.toUtf8().constData());
     }
 }
 
-void MainWindow::mediaPlayerInit()
+void MainWindow::mediaPlayerInit(PlayerCommandPort *injectedPort)
 {
     mAppDir = QCoreApplication::applicationDirPath().toStdString();
 #ifdef _WIN32
@@ -757,6 +773,14 @@ void MainWindow::mediaPlayerInit()
     mLogDir  = "/var/log/";
     mLogDir += TONAME(EXE_NAME);
 #endif // _WIN32
+
+    if (injectedPort != nullptr) {
+        /* 注入路径（ADR 0016）：不建 Player、不拉起 SDL、不建日志目录。
+           信号源由构造函数按 AppUiPorts::playerSignals 回填。 */
+        m_commands = injectedPort;
+        return;
+    }
+
     QDir dir(mLogDir.c_str());
     if (!dir.exists())
         dir.mkdir(mLogDir.c_str());
@@ -765,7 +789,9 @@ void MainWindow::mediaPlayerInit()
     config.logDirectory    = mLogDir;
     config.autoSkipOnError = true;
     mController.reset(new PlayerController(config));
-    updatePlaybackModeButton(mController->playbackMode());
+    m_commands     = mController.get();
+    m_signalSource = mController.get();
+    updatePlaybackModeButton(m_commands->playbackMode());
 }
 
 void MainWindow::renderPlayerViewState(PlayerViewState viewState)
@@ -889,13 +915,11 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
     mLabel[2]->setText(viewState.formattedPosition);
 }
 
-void MainWindow::handlePlayerError(int codeValue, const QString &detail, int trackIndex,
-                                   const QString &path, const QString &traceId,
-                                   bool autoSkipEnabled)
+QString MainWindow::buildErrorMessageBoxText(int codeValue, const QString &detail, int trackIndex,
+                                             const QString &path, const QString &traceId)
 {
     const ErrorCode code  = static_cast<ErrorCode>(codeValue);
     const ErrorInfo &info = GetErrorInfo(code);
-    QString title         = "Playback Error";
     QString message;
     message += "Message: "
         + QString::fromUtf8(FormatError(code, std::string(detail.toUtf8().constData())).c_str())
@@ -912,12 +936,21 @@ void MainWindow::handlePlayerError(int codeValue, const QString &detail, int tra
     if (!traceId.isEmpty()) {
         message += "Trace: " + traceId + "\n";
     }
+    return message.trimmed();
+}
+
+void MainWindow::handlePlayerError(int codeValue, const QString &detail, int trackIndex,
+                                   const QString &path, const QString &traceId,
+                                   bool autoSkipEnabled)
+{
+    const QString message = buildErrorMessageBoxText(codeValue, detail, trackIndex, path, traceId);
+    const QString title   = "Playback Error";
 
     if (autoSkipEnabled) {
         LogPrintf(LogLevel::Warning, kTag, "auto-skip error trace=%s: %s",
-                  traceId.toUtf8().constData(), message.trimmed().toUtf8().constData());
+                  traceId.toUtf8().constData(), message.toUtf8().constData());
         return;
     }
 
-    QMessageBox::warning(this, title, message.trimmed());
+    QMessageBox::warning(this, title, message);
 }

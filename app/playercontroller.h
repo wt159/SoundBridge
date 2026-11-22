@@ -1,54 +1,45 @@
 #pragma once
 
+// 命令口与状态事实（ADR 0016）在 app/playerport.h；本类是生产实现。
+#include "playerport.h"
 #include "soundbridge/sdk.h"
 #include <QObject>
 #include <QStringList>
 #include <memory>
 
-struct PlayerViewState {
-    int playerState       = static_cast<int>(soundbridge::PlayerState::Stopped);
-    int playbackMode      = static_cast<int>(soundbridge::PlaybackMode::Sequential);
-    bool autoSkipOnError  = true;
-    int currentTrackIndex = -1;
-    qulonglong durationMs = 0;
-    qulonglong positionMs = 0;
-    QStringList playlist;
-    // 与 playlist 同序的派生身份键（ADR 0014），来自 TrackInfo::id，可为空串。
-    QStringList trackIds;
-    QString title = "—";
-    QString artist;
-    QString album;
-    QString formattedDuration = "00:00";
-    QString formattedPosition = "00:00";
-    QString subtitle          = "IDLE";
-};
-
-Q_DECLARE_METATYPE(PlayerViewState)
-
-class PlayerController : public QObject, public soundbridge::PlayerCallbacks {
+class PlayerController : public QObject,
+                        public soundbridge::PlayerCallbacks,
+                        public PlayerCommandPort {
     Q_OBJECT
 
 public:
     explicit PlayerController(const soundbridge::PlayerConfig &config, QObject *parent = nullptr);
     ~PlayerController() override;
 
-    void addMusicDirectory(const std::string &path);
-    void playPause();
-    void nextTrack();
-    void previousTrack();
-    void selectTrack(int index);
-    void seekSeconds(int seconds);
-    void setPlaybackMode(soundbridge::PlaybackMode mode);
-    soundbridge::PlaybackMode playbackMode() const;
-    void setAutoSkipOnError(bool enabled);
-    bool autoSkipOnError() const;
-    void setVolume(int percent);
-    int volume() const;
-    void setMuted(bool muted);
-    bool muted() const;
-    int trackCount() const;
-    int currentTrackIndex() const;
-    const PlayerViewState &viewState() const;
+    /* 错误副标题组装（UI-E3/E4/E5/E6 表驱动断言的测试缝，实现在 .cpp 匿名命名
+       空间上移为静态方法；生产路径 onError 内部仍走同一份代码）。 */
+    static QString errorReasonText(soundbridge::ErrorCode code);
+    static QString composeErrorSubtitle(soundbridge::ErrorCode code, bool autoSkip,
+                                        qulonglong positionMs, int trackIndex,
+                                        const QString &detail);
+
+    void addMusicDirectory(const std::string &path) override;
+    void playPause() override;
+    void nextTrack() override;
+    void previousTrack() override;
+    void selectTrack(int index) override;
+    void seekSeconds(int seconds) override;
+    void setPlaybackMode(soundbridge::PlaybackMode mode) override;
+    soundbridge::PlaybackMode playbackMode() const override;
+    void setAutoSkipOnError(bool enabled) override;
+    bool autoSkipOnError() const override;
+    void setVolume(int percent) override;
+    int volume() const override;
+    void setMuted(bool muted) override;
+    bool muted() const override;
+    int trackCount() const override;
+    int currentTrackIndex() const override;
+    const PlayerViewState &viewState() const override;
 
 signals:
     void viewStateChanged(PlayerViewState viewState);

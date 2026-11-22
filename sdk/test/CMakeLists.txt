@@ -199,6 +199,9 @@ target_include_directories(UnitTests
 # 2026-11-07 按实测耗时（`UnitTests -d`）切成四段，单段约 24 / 27 / 15 / 28 s。
 # 分组只影响 ctest 的调度与超时口径，`ctest -R sdk_` 仍把全部套件跑完，
 # `coverage` target 的覆盖面不变。
+# 目标数口径（ADR 0017，地图 #248）：14 → 15 一次性显式例外，第 15 个目标
+# `sdk_app_ui_tests`（app 层 UI 自动化，TIMEOUT 120）注册在 app/CMakeLists.txt
+# （app_core 之后），不在本文件；此后任何新增目标仍需另开例外，不自动延展。
 set(SB_TEST_BAD_INPUT_SUITES
     "BadInput Rejection"
     "BadInput Frames"
