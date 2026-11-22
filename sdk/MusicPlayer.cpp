@@ -78,6 +78,9 @@ protected:
     virtual void updateMusicList(std::vector<MusicPropertiesPtr> &list);
     virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                       const std::string &path);
+    // #276：播放期重开失败仅上报，不动设备与状态机（旧任务仍在播）。
+    virtual void onPlaybackOpenFailed(ErrorCode code, const std::string &detail, int index,
+                                      const std::string &path);
 
 private:
     void updatePlayState(MusicPlayerState state);
@@ -477,8 +480,12 @@ void MusicPlayer::Impl::_play()
     // 暂停后恢复则沿用还活着的那个任务（缓冲不白扔）。顺序遵循规格 4.1：
     // 任务先就绪，再开设备、再起消费线程。
     if (!m_musicList->startCurrentTask()) {
-        onMusicPlayListError(ErrorCode::DecodeInitFailed, "failed to start playback task",
-                             static_cast<int>(cur->index), cur->fileProperties.fullPath);
+        // #276：重开失败已由列表层发过一次 onError 并记账，这里不再补第二条
+        // （否则 play() 会连发 FileOpenFailed + DecodeInitFailed）。
+        if (!m_musicList->isTrackFailed(cur->uid)) {
+            onMusicPlayListError(ErrorCode::DecodeInitFailed, "failed to start playback task",
+                                 static_cast<int>(cur->index), cur->fileProperties.fullPath);
+        }
         return;
     }
     // 设备可能已经打开：暂停只 stop 不 close（恢复时沿用同一个 SDL 设备），
@@ -1072,6 +1079,23 @@ void MusicPlayer::Impl::updateMusicList(std::vector<MusicPropertiesPtr> &list)
         m_musicListIndex.push_back(index);
     }
     m_listener->onMusicPlayerMusicListChanged(m_musicListIndex);
+}
+
+void MusicPlayer::Impl::onPlaybackOpenFailed(ErrorCode code, const std::string &detail, int index,
+                                             const std::string &path)
+{
+    if (isShuttingDown()) {
+        return;
+    }
+    std::string message = FormatError(code, detail);
+    LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, m_traceId,
+                       "playback open failed code=%d message=%s index=%d path=%s",
+                       static_cast<int>(code), message.c_str(), index, path.c_str());
+    // #276 / player-state-contract.md §4.1：只上报。不动 m_audioDev、不动 m_state、
+    // 不清设备队列——列表层在 acquire 失败时没有退役旧任务，当前曲目仍在播。
+    if (m_listener != nullptr) {
+        m_listener->onMusicPlayerError(code, detail, index, path, m_traceId);
+    }
 }
 
 void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &detail, int index,

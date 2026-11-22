@@ -51,6 +51,16 @@ inline const char *openFailureDetailForStatus(status_t status)
     }
 }
 
+// 句柄预算的两个 L2 gauge（observability-contract.md §5.1）：只在扫描汇总 / 切歌完成
+// 两个边界记录，避免千曲扫描产生 O(n) 条仪表日志。
+inline void recordHandleGauges(const MetricTags &tags)
+{
+    Metrics::RecordGauge("datasource_open_handles",
+                         static_cast<double>(FileSource::openHandleCount()), tags, "count");
+    Metrics::RecordGauge("datasource_open_peak",
+                         static_cast<double>(FileSource::peakOpenHandleCount()), tags, "count");
+}
+
 inline bool looksLikeHttpUrl(const std::string &path)
 {
     return path.compare(0, 7, "http://") == 0 || path.compare(0, 8, "https://") == 0;
@@ -506,15 +516,7 @@ void MusicPlayList::reportScanSummary()
     }
     // 句柄预算（observability-contract.md §5.1，L2 只记录不设阈值）：
     // 挂在这个边界上，千曲扫描不会产生 O(n) 条仪表日志。
-    {
-        sdk::MetricTags tags(currentTraceId(), std::string(), -1);
-        sdk::Metrics::RecordGauge("datasource_open_handles",
-                                  static_cast<double>(FileSource::openHandleCountForTest()), tags,
-                                  "count");
-        sdk::Metrics::RecordGauge("datasource_open_peak",
-                                  static_cast<double>(FileSource::peakOpenHandleCountForTest()),
-                                  tags, "count");
-    }
+    recordHandleGauges(MetricTags(currentTraceId(), std::string(), -1));
     if (rejects.empty()) {
         return;
     }
@@ -963,9 +965,10 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
     const auto switchStart = std::chrono::steady_clock::now();
 
-    // 先回收上一个退役任务，再重开：否则「当前 + 上一个退役 + 新任务」会让峰值瞬时到 3。
-    // joinRetiredTask 本来就由 retireCurrentTask 在同一个逻辑点调用，提前到重开之前不改变
-    // 任何时序语义；代价与既有切歌相同（旧线程已退出时 join 立即返回）。
+    // 先回收上一个退役任务，再重开：否则「当前 + 上一个退役 + 新任务」会让窗口峰值瞬时到 3
+    // （#277 判据 D3 实测打红）。与既有切歌相比，join 被提前了几行——代价相同（旧线程通常
+    // 已退出，join 立即返回），收益是峰值保持在 2。retireCurrentTask 内的同一次调用随后
+    // 变成空操作。
     joinRetiredTask();
 
     // 重开在退役之前（#276 / 规格 player-state-contract.md §4.1「播放期重开失败」）：
@@ -1008,16 +1011,8 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
                           MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
                                        static_cast<int>(musicProperties->index) });
     // 切歌完成边界的句柄预算快照（observability-contract.md §5.1，L2 只记录）。
-    Metrics::RecordGauge("datasource_open_handles",
-                         static_cast<double>(FileSource::openHandleCountForTest()),
-                         MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
-                                      static_cast<int>(musicProperties->index) },
-                         "count");
-    Metrics::RecordGauge("datasource_open_peak",
-                         static_cast<double>(FileSource::peakOpenHandleCountForTest()),
-                         MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
-                                      static_cast<int>(musicProperties->index) },
-                         "count");
+    recordHandleGauges(MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                                    static_cast<int>(musicProperties->index) });
     return true;
 }
 
@@ -1047,8 +1042,10 @@ void MusicPlayList::reportPlaybackOpenFailure(const MusicPropertiesPtr &musicPro
                        static_cast<int>(musicProperties->index),
                        musicProperties->fileProperties.fullPath.c_str());
     // 播放期失败必须可见：绕过 reportError 的批量扫描降噪门槛（用户正在等这次切歌）。
+    // 走独立回调而不是 onMusicPlayListError：播放器层对入列失败的处置是「停设备 + 置
+    // Stopped」，而本失败要求不改播放状态（旧任务仍在播）。
     if (m_callback != nullptr) {
-        m_callback->onMusicPlayListError(ErrorCode::FileOpenFailed, detail,
+        m_callback->onPlaybackOpenFailed(ErrorCode::FileOpenFailed, detail,
                                          static_cast<int>(musicProperties->index),
                                          musicProperties->fileProperties.fullPath);
     }

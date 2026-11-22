@@ -32,10 +32,11 @@ public:
     virtual void release();
     virtual sdk_utils::status_t openStatus() const { return m_lastOpenStatus; }
 
-    // 仅供测试（ADR 0010 边界）：进程级句柄预算的观察窗。只在控制线程读，
-    // 计数在 acquire/release 里维护（控制线程），不碰解码线程。
-    static int openHandleCountForTest();
-    static int peakOpenHandleCountForTest();
+    // 进程级句柄预算的观察窗（observability-contract.md §5.1）：计数在 acquire/release
+    // 的 0↔1 边界维护（控制线程）。这里不是测试专用钩子——生产路径的两个 L2 gauge
+    // 也从同一对计数取值；只有 reset 是测试专用。
+    static int openHandleCount();
+    static int peakOpenHandleCount();
     static void resetHandleStatsForTest();
 
     // 仅供测试（ADR 0010）：把 payload 读取放慢，用来制造稳态欠流。
@@ -65,7 +66,7 @@ private:
 #endif
     int64_t m_offset;
     int64_t m_length;
-    std::mutex m_lock;
+    mutable std::mutex m_lock; // initCheck() const 也要与 acquire/release 串行化
     std::string m_name;
     std::string m_extensionName;
     // 重开用的原始路径（m_name 是 "FileSource(<path>)" 形式的展示串，不能拿来打开）。

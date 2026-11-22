@@ -131,7 +131,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - `addMusicInternal` 的次序不变：打开 → `initCheck` → 建 extractor → 取 `AudioSpec` / `durationMs` → 入列。`addTrack` 的失败契约、`durationMs` 与 `AudioSpec` 的来源都不变。
 - `getAudioSpec()` 之后立即 `release()` 探测租约。WorkQueue 串行，因此**扫描期峰值句柄数 = 1**；条目只保留数据源对象、extractor 与已解析元数据。
 - **构造租约**（实现补记，2026-11-22）：`FileSource` 构造成功即持有 1 个租约，以保持既有「构造即可读」的直连用法（测试 fixture、诊断工具）不变；探测结束对同一次持有调用 `release()` 即归零关闭。`acquire()` 仍只在 `0 → 1` 时真正打开。
-- 播放前 `acquire()` 由 `PlaybackTask` 构造触发，发生在 `replacePlaybackTask` 内、`decoder->start()` 之前；`acquire()` 失败的语义由 #276 裁决，本节只规定「失败时不得 `start()`，任务不入 `m_currentTask`」。
+- 播放前 `acquire()` 由 `SourceLease` 构造触发，发生在 `replacePlaybackTask` 内、`decoder->start()` **与 `retireCurrentTask()` 之前**（后者是 #276 的硬要求：失败时旧任务不得被退役）；任务建成后接管该租约。本节只规定「失败时不得 `start()`，任务不入 `m_currentTask`」，失败的上报与状态语义见 [`player-state-contract.md`](player-state-contract.md) §4.1。
 
 **不变量**
 

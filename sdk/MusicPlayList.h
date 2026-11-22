@@ -155,6 +155,14 @@ public:
     virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                       const std::string &path)
         = 0;
+    // 播放期重开失败（规格 player-state-contract.md §4.1，地图 #273 / #276）：与入列失败分开，
+    // 因为播放器层对后者的处置是「停设备 + 置 Stopped」，而重开失败要求**不改播放状态**。
+    // 默认转发到 onMusicPlayListError，既有回调实现无需改动。
+    virtual void onPlaybackOpenFailed(ErrorCode code, const std::string &detail, int index,
+                                      const std::string &path)
+    {
+        onMusicPlayListError(code, detail, index, path);
+    }
 };
 
 class MusicPlayList : public NonCopyable {

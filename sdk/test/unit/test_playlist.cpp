@@ -766,8 +766,8 @@ TEST_SUITE("DataSource Lifecycle")
         }
         REQUIRE_MESSAGE(waitForCount(*playlist, 1000, 30000), "1000 条没有入列完成");
 
-        CHECK(FileSource::peakOpenHandleCountForTest() == 1);
-        CHECK(FileSource::openHandleCountForTest() == 0);
+        CHECK(FileSource::peakOpenHandleCount() == 1);
+        CHECK(FileSource::openHandleCount() == 0);
         CHECK(callback.errors.empty());
     }
 
@@ -790,14 +790,14 @@ TEST_SUITE("DataSource Lifecycle")
         }
         REQUIRE_MESSAGE(waitForCount(*playlist, 8), "八条曲目没有入列完成");
         FileSource::resetHandleStatsForTest();
-        CHECK(FileSource::openHandleCountForTest() == 0);
+        CHECK(FileSource::openHandleCount() == 0);
 
         for (int round = 0; round < 50; ++round) {
             REQUIRE_MESSAGE(playlist->setCurrentIndexSync(round % 8),
                             "switch round " << round);
         }
-        CHECK(FileSource::peakOpenHandleCountForTest() <= 2);
-        CHECK(FileSource::openHandleCountForTest() <= 2);
+        CHECK(FileSource::peakOpenHandleCount() <= 2);
+        CHECK(FileSource::openHandleCount() <= 2);
 
         // 重播同一曲：新任务 acquire 使计数 1→2，旧任务 join 后 release 只降到 1。
         // 「退役后无条件 close」的实现在这里会把句柄降到 0，新任务随即读到已关闭的 fd。
@@ -809,7 +809,7 @@ TEST_SUITE("DataSource Lifecycle")
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         CHECK(playlist->retiredTaskForTest().expired());
-        CHECK(FileSource::openHandleCountForTest() == 1);
+        CHECK(FileSource::openHandleCount() == 1);
         PlaybackTaskPtr task = playlist->currentTask();
         REQUIRE(task != nullptr);
         REQUIRE(task->decoder != nullptr);
@@ -818,7 +818,7 @@ TEST_SUITE("DataSource Lifecycle")
         task.reset();
 
         playlist->stopCurrentTask();
-        CHECK(FileSource::openHandleCountForTest() == 0);
+        CHECK(FileSource::openHandleCount() == 0);
     }
 
     // #276：播放期重开失败——一次 onError（index 用条目下标）、记账失败、不建任务、
@@ -844,7 +844,7 @@ TEST_SUITE("DataSource Lifecycle")
         REQUIRE(callback.errorDetails.size() == 1);
         CHECK(callback.errorDetails.back() == "open failed: not found");
         CHECK(playlist->currentTask() == nullptr);
-        CHECK(FileSource::openHandleCountForTest() == 0);
+        CHECK(FileSource::openHandleCount() == 0);
         CHECK(playlist->isTrackFailed(playlist->trackUidForTest(0)));
 
         // 播放期失败不进 m_scanRejects：扫描汇总不得因此多报一条。

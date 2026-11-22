@@ -202,12 +202,12 @@ void FileSource::release()
     m_openRefs.fetch_sub(1);
 }
 
-int FileSource::openHandleCountForTest()
+int FileSource::openHandleCount()
 {
     return g_openHandles.load();
 }
 
-int FileSource::peakOpenHandleCountForTest()
+int FileSource::peakOpenHandleCount()
 {
     return g_peakHandles.load();
 }
@@ -234,15 +234,19 @@ bool FileSource::isOpen() const
 
 status_t FileSource::initCheck() const
 {
+    // 与 acquire/release 同锁：控制线程重开时，其他线程的 initCheck 不会读到半开状态。
+    std::lock_guard<std::mutex> lock(m_lock);
     return isOpen() ? OK : NO_INIT;
 }
 
 ssize_t FileSource::readAt(off64_t offset, void *data, size_t size)
 {
+    // 关闭检查放进临界区：acquire/release 会在控制线程写 m_fp / m_file，锁外读是数据竞争
+    // （code-review 2026-11-22）。正确性仍由租约与 join 次序保证，这里只消除竞争本身。
+    std::lock_guard<std::mutex> lock(m_lock);
     if (!isOpen()) {
         return NO_INIT;
     }
-    std::lock_guard<std::mutex> lock(m_lock);
 
     if (m_length >= 0) {
         if (offset >= m_length) {

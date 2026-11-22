@@ -2495,4 +2495,70 @@ TEST_SUITE("PublicPlayer Interactive Paths")
         player.stop();
         CHECK_MESSAGE(playing, "删空后重新入列的曲目无法播放（被历史失败集合拦截？）");
     }
+
+    // 地图 #273 / #276：播放期重开失败只上报——不改变播放状态、不关设备、不连发第二条错误。
+    // 列表层的同一判据在 `DataSource Lifecycle` 套件；这里补的是 MusicPlayer 的接缝。
+    TEST_CASE("switching to a deleted track reports once and keeps the current one playing")
+    {
+        TempMediaDir temp("dsReopen");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        REQUIRE(writeAllBytes(temp.file("keep.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("gone.wav"), tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 2; }, 5000),
+                        "两曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        const int keepIndex = trackIndexBySuffix(callbacks, "keep");
+        const int goneIndex = trackIndexBySuffix(callbacks, "gone");
+        REQUIRE_MESSAGE(keepIndex >= 0, "回调里认不出 keep.wav");
+        REQUIRE_MESSAGE(goneIndex >= 0, "回调里认不出 gone.wav");
+
+        player.setCurrentTrack(keepIndex);
+        REQUIRE_MESSAGE(waitFor([&callbacks, keepIndex]() {
+                            return callbacks.last_track_index.load() == keepIndex;
+                        }, 3000),
+                        "setCurrentTrack 没有生效");
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        REQUIRE_MESSAGE(waitFor([&callbacks]() { return callbacks.last_position.load() > 0; }, 4000),
+                        "起播后位置没有推进");
+
+        // gone.wav 在探测后已关闭（streaming-playback-spec.md §4.5），能直接删除即为旁证。
+        REQUIRE(std::remove(temp.file("gone.wav").c_str()) == 0);
+
+        const int errorsBefore        = callbacks.error_count.load();
+        const uint64_t positionBefore = callbacks.last_position.load();
+        player.setCurrentTrack(goneIndex);
+
+        REQUIRE_MESSAGE(waitFor([&callbacks, errorsBefore]() {
+                            return callbacks.error_count.load() == errorsBefore + 1;
+                        }, 3000),
+                        "重开失败没有上报");
+        CHECK(callbacks.last_error_code == soundbridge::ErrorCode::FileOpenFailed);
+        CHECK(callbacks.last_error_track_index == goneIndex);
+        CHECK(callbacks.last_error_detail.find("open failed") != std::string::npos);
+        // 一次失败只发一条：不允许再补 DecodeInitFailed。
+        CHECK(callbacks.error_count.load() == errorsBefore + 1);
+        // 旧任务未被退役：状态仍是 Playing，位置继续推进，设备没有被关掉。
+        CHECK(player.state() == soundbridge::PlayerState::Playing);
+        CHECK(player.currentTrackName().find("keep") != std::string::npos);
+        CHECK_MESSAGE(waitFor([&callbacks, positionBefore]() {
+                          return callbacks.last_position.load() > positionBefore;
+                      }, 3000),
+                      "切到已删曲后当前曲目停止推进（设备被停）");
+        player.stop();
+    }
 }
