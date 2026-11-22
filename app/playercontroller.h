@@ -24,6 +24,8 @@ public:
                                         const QString &detail);
 
     void addMusicDirectory(const std::string &path) override;
+    void removeTrack(int index) override;
+    void clearPlaylist() override;
     void playPause() override;
     void nextTrack() override;
     void previousTrack() override;

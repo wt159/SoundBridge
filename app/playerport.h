@@ -5,7 +5,7 @@
 // 本头文件是接缝的唯一声明点：
 // 1. `PlayerViewState`：三层真相源的唯一状态事实（ADR 0012），从 playercontroller.h
 //    上移至此——命令口与渲染入口都以它为载体，放在一起避免循环包含。
-// 2. `PlayerCommandPort`：纯虚命令口，17 个公开方法与 `PlayerController` 同名同签名
+// 2. `PlayerCommandPort`：纯虚命令口，19 个公开方法与 `PlayerController` 同名同签名
 //    （app/playercontroller.h）。`MainWindow` 只依赖本接口；生产实现是
 //    `PlayerController`，测试注入记录型 fake（QObject + 同签名信号，
 //    复用既有 `SLOT()` 字符串连接）。
@@ -45,17 +45,23 @@ struct PlayerViewState {
 
 Q_DECLARE_METATYPE(PlayerViewState)
 
-/* 命令口（ADR 0016）：17 个方法与 PlayerController 公开面逐一对应。 */
+/* 命令口（ADR 0016）：19 个方法与 PlayerController 公开面逐一对应。
+   列表编辑两条（removeTrack / clearPlaylist，地图 #260 / 执行票 #269）只覆盖 UI 有的
+   入口；`addTrack` 无 UI 入口，故不进端口。 */
 class PlayerCommandPort {
 public:
     virtual ~PlayerCommandPort() = default;
 
-    virtual void addMusicDirectory(const std::string &path) = 0;
-    virtual void playPause()                                = 0;
-    virtual void nextTrack()                                = 0;
-    virtual void previousTrack()                            = 0;
-    virtual void selectTrack(int index)                     = 0;
-    virtual void seekSeconds(int seconds)                   = 0;
+    virtual void addMusicDirectory(const std::string &path)      = 0;
+    /* 下标按「执行时刻」解释，越界丢弃（与 SDK 的 `Player::removeTrack` 同语义）。 */
+    virtual void removeTrack(int index)                          = 0;
+    /* 空列表上幂等；非空则变为「无当前曲目」并停下（ADR 0018）。 */
+    virtual void clearPlaylist()                                 = 0;
+    virtual void playPause()                                     = 0;
+    virtual void nextTrack()                                     = 0;
+    virtual void previousTrack()                                 = 0;
+    virtual void selectTrack(int index)                          = 0;
+    virtual void seekSeconds(int seconds)                        = 0;
     virtual void setPlaybackMode(soundbridge::PlaybackMode mode) = 0;
     virtual soundbridge::PlaybackMode playbackMode() const       = 0;
     virtual void setAutoSkipOnError(bool enabled)                = 0;

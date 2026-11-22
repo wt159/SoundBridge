@@ -60,6 +60,13 @@ public:
         calls.append(FakeCall{"addMusicDirectory", {QString::fromStdString(path)}});
     }
 
+    void removeTrack(int index) override
+    {
+        calls.append(FakeCall{"removeTrack", {QString::number(index)}});
+    }
+
+    void clearPlaylist() override { calls.append(FakeCall{"clearPlaylist", {}}); }
+
     void playPause() override { calls.append(FakeCall{"playPause", {}}); }
 
     void nextTrack() override { calls.append(FakeCall{"nextTrack", {}}); }

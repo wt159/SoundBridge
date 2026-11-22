@@ -1,6 +1,6 @@
 // AppUiTests —— app 层 UI 判据自动化（地图 #248 / 执行票 #257）。
 //
-// 判据真源：doc/app-ui-spec.md §9.7.2（在册 57 条：自动 50 / 半自动 4 / 人工 3）。
+// 判据真源：doc/app-ui-spec.md §9.7.2（在册 65 条：自动 58 / 半自动 4 / 人工 3）。
 // 本文件按判据编号命名用例；`UI-VOL1` / `UI-VOL2` 由既有 MusicPlayerVolume +
 // PcmGain 单测承担，本目标不重复（§9.7.2）；永久人工三条（UI-E2 呈现半边 /
 // UI-V3 / UI-P4）不写用例（§9.7.5）。
@@ -51,7 +51,8 @@ const QStringList kAnchors = {
     "btn_play",        "btn_next",        "btn_favorite",       "btn_mode",
     "btn_menu",        "btn_volume",      "mNowPlayingTitle",   "mNowPlayingSubtitle",
     "mPositionLabel",  "mDurationLabel",  "mVolumePopup",       "mVolumeSlider",
-    "btn_mute",        "mPlaylistPopup",  "mPanelList",
+    "btn_mute",        "mPlaylistPopup",  "mPanelList",         "btn_clear",
+    "mPanelConfirm",   "btn_confirmClear", "btn_cancelClear",
 };
 
 // UI-E6 表驱动：六个文件级原因文案，与 PlayerController::errorReasonText 逐字一致
@@ -212,6 +213,16 @@ private slots:
     void m3_panel_row_click_selects_and_closes();
     void m4_panel_highlight_follows_next();
     void m5_both_popups_are_qt_popup_and_esc_closes();
+
+    /* D 区：列表编辑（规格 §8.9 / §9.7.2）。 */
+    void d1_main_list_delete_removes_current_row();
+    void d2_delete_without_selection_is_a_no_op();
+    void d3_panel_delete_keeps_panel_visible();
+    void d4_clear_shows_confirm_bar_without_command();
+    void d5_cancel_restores_normal_state();
+    void d6_confirm_clears_once_and_closes_panel();
+    void d7_empty_playlist_closes_panel();
+    void d8_selection_follows_removed_row_once();
 
     // ---- 生命周期 ----
     void initTestCase();
@@ -999,7 +1010,7 @@ void AppUiTests::v6_qss_selectors_stay_within_anchors()
     QRegularExpression singleColon("(?<!:):(handle|sub-page|add-line|sub-line)\\b");
     QVERIFY2(!singleColon.match(qss).hasMatch(), "single-colon pseudo element found");
 
-    /* ⑤ 19 个锚点全部落在实际窗口树里。 */
+    /* ⑤ 23 个锚点全部落在实际窗口树里。 */
     FakeCommandPort fake;
     std::unique_ptr<MainWindow> w(makeWindow(&fake));
     m_lastWindow = w.get();
@@ -1352,6 +1363,234 @@ void AppUiTests::m5_both_popups_are_qt_popup_and_esc_closes()
     QTest::keyClick(panel, Qt::Key_Escape);
     QTest::qWait(20);
     QVERIFY(!panel->isVisible());
+}
+
+// ============ D 区（列表编辑，规格 §8.9） ============
+
+void AppUiTests::d1_main_list_delete_removes_current_row()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B" << "C");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+
+    QListWidget *list = w->findChild<QListWidget *>("mListWidget");
+    list->setCurrentRow(1);
+    /* QListWidget 不处理 Delete，事件上抛到 MainWindow（§8.9 的接线方式）。 */
+    QTest::keyClick(list, Qt::Key_Delete);
+
+    QCOMPARE(fake.countOf("removeTrack"), 1);
+    QCOMPARE(fake.lastArgOf("removeTrack"), QString("1"));
+    QCOMPARE(fake.countOf("clearPlaylist"), 0);
+}
+
+void AppUiTests::d2_delete_without_selection_is_a_no_op()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    QListWidget *list = w->findChild<QListWidget *>("mListWidget");
+
+    /* 空列表：零命令、不崩。 */
+    QTest::keyClick(list, Qt::Key_Delete);
+    QCOMPARE(fake.countOf("removeTrack"), 0);
+
+    /* 有条目但无选中：同样零命令。 */
+    fake.state.playlist = (QStringList() << "A" << "B" << "C");
+    fake.state.currentTrackIndex = -1;
+    inject(w.get(), &fake);
+    list->setCurrentRow(-1);
+    QCOMPARE(list->currentRow(), -1);
+    QTest::keyClick(list, Qt::Key_Delete);
+    QCOMPARE(fake.countOf("removeTrack"), 0);
+}
+
+void AppUiTests::d3_panel_delete_keeps_panel_visible()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B" << "C");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+
+    PlaylistPopup *panel        = w->findChild<PlaylistPopup *>("mPlaylistPopup");
+    QListWidget *panelList      = w->findChild<QListWidget *>("mPanelList");
+    QVERIFY(panel->isVisible());
+
+    panelList->setCurrentRow(2);
+    QTest::keyClick(panelList, Qt::Key_Delete);
+
+    QCOMPARE(fake.countOf("removeTrack"), 1);
+    QCOMPARE(fake.lastArgOf("removeTrack"), QString("2"));
+    QVERIFY(panel->isVisible());
+
+    /* 连删前提：面板里的选中落到邻居（§8.9 的 min(p, n-1)），不是播放行。 */
+    fake.state.playlist = (QStringList() << "A" << "B");
+    inject(w.get(), &fake);
+    QCOMPARE(panelList->currentRow(), 1);
+    QVERIFY(panelList->item(0)->font().bold());
+    QVERIFY(panel->isVisible());
+}
+
+void AppUiTests::d4_clear_shows_confirm_bar_without_command()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B" << "C");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+
+    QPushButton *clear = w->findChild<QPushButton *>("btn_clear");
+    QWidget *confirm   = w->findChild<QWidget *>("mPanelConfirm");
+    QVERIFY(confirm != nullptr);
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(clear->isVisible());
+
+    clear->click();
+    QTest::qWait(10);
+
+    QVERIFY(confirm->isVisible());
+    QVERIFY(!clear->isVisible());
+    QCOMPARE(fake.countOf("clearPlaylist"), 0);
+
+    /* 文案逐字取 §1.4：`Clear all <n> tracks?`。 */
+    QLabel *hint = confirm->findChild<QLabel *>();
+    QVERIFY(hint != nullptr);
+    QCOMPARE(hint->text(), QString("Clear all 3 tracks?"));
+}
+
+void AppUiTests::d5_cancel_restores_normal_state()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+
+    QPushButton *clear = w->findChild<QPushButton *>("btn_clear");
+    QWidget *confirm   = w->findChild<QWidget *>("mPanelConfirm");
+    QPushButton *cancel = w->findChild<QPushButton *>("btn_cancelClear");
+
+    clear->click();
+    QVERIFY(confirm->isVisible());
+    cancel->click();
+    QTest::qWait(10);
+
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(clear->isVisible());
+    QCOMPARE(fake.countOf("clearPlaylist"), 0);
+}
+
+void AppUiTests::d6_confirm_clears_once_and_closes_panel()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+
+    PlaylistPopup *panel = w->findChild<PlaylistPopup *>("mPlaylistPopup");
+    QPushButton *clear   = w->findChild<QPushButton *>("btn_clear");
+    QWidget *confirm     = w->findChild<QWidget *>("mPanelConfirm");
+    QPushButton *ok      = w->findChild<QPushButton *>("btn_confirmClear");
+
+    clear->click();
+    ok->click();
+
+    QCOMPARE(fake.countOf("clearPlaylist"), 1);
+    QCOMPARE(fake.countOf("removeTrack"), 0);
+    QTest::qWait(20);
+    QVERIFY(!panel->isVisible());
+
+    /* 复位规则（§8.9）：再次打开必然是常态。 */
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+    QVERIFY(panel->isVisible());
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(clear->isVisible());
+}
+
+void AppUiTests::d7_empty_playlist_closes_panel()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+
+    PlaylistPopup *panel = w->findChild<PlaylistPopup *>("mPlaylistPopup");
+    QVERIFY(panel->isVisible());
+
+    fake.state.playlist.clear();
+    fake.state.currentTrackIndex = -1;
+    inject(w.get(), &fake);
+    QTest::qWait(20);
+
+    QCOMPARE(btnOf(w.get(), "btn_menu")->isEnabled(), false);
+    QVERIFY(!panel->isVisible());
+}
+
+void AppUiTests::d8_selection_follows_removed_row_once()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+    w->show();
+    QTest::qWait(30);
+
+    fake.state.playlist = (QStringList() << "A" << "B" << "C" << "D" << "E");
+    fake.state.currentTrackIndex = 0;
+    inject(w.get(), &fake);
+
+    QListWidget *list = w->findChild<QListWidget *>("mListWidget");
+    list->setCurrentRow(4);
+    QTest::keyClick(list, Qt::Key_Delete);
+    QCOMPARE(fake.lastArgOf("removeTrack"), QString("4"));
+
+    /* 删的不是当前曲目：播放行仍是 0，选中落到 min(4, 4-1) = 3。 */
+    fake.state.playlist = (QStringList() << "A" << "B" << "C" << "D");
+    inject(w.get(), &fake);
+    QCOMPARE(list->currentRow(), 3);
+    QVERIFY(list->item(3)->isSelected());
+    QVERIFY(list->item(0)->data(kPlayingRole).toBool());
+    QVERIFY(!list->item(0)->isSelected());
+
+    /* 其余刷新仍取播放行（§8.9）：只有删完那一帧按删除行。 */
+    fake.state.currentTrackIndex = 2;
+    inject(w.get(), &fake);
+    QCOMPARE(list->currentRow(), 2);
 }
 
 int main(int argc, char *argv[])

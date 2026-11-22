@@ -3,7 +3,10 @@
 #include <QAbstractItemView>
 #include <QColor>
 #include <QGuiApplication>
+#include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
 #include <QScreen>
@@ -192,6 +195,11 @@ void VolumePopup::syncFromState(int volume, bool muted)
 PlaylistPopup::PlaylistPopup(QWidget *anchor)
     : PopupPanel("mPlaylistPopup", anchor)
     , m_list(nullptr)
+    , m_clearButton(nullptr)
+    , m_confirm(nullptr)
+    , m_confirmText(nullptr)
+    , m_confirmButton(nullptr)
+    , m_cancelButton(nullptr)
 {
     setPreferredSize(300, 260);
 
@@ -207,8 +215,38 @@ PlaylistPopup::PlaylistPopup(QWidget *anchor)
     m_list->setTextElideMode(Qt::ElideRight);
     layout->addWidget(m_list);
 
+    /* 常态入口（§8.9）：单条删除没有确认，清空必须过确认条。 */
+    m_clearButton = new QPushButton("CLEAR", this);
+    m_clearButton->setObjectName("btn_clear");
+    layout->addWidget(m_clearButton);
+
+    /* 内嵌确认条：PlaylistPopup 内部的一行 QWidget，不新增浮层机制（ADR 0015）。 */
+    m_confirm = new QWidget(this);
+    m_confirm->setObjectName("mPanelConfirm");
+    QHBoxLayout *confirmLayout = new QHBoxLayout(m_confirm);
+    confirmLayout->setContentsMargins(0, 0, 0, 0);
+    confirmLayout->setSpacing(4);
+
+    m_confirmText = new QLabel(m_confirm);
+    m_confirmText->setTextFormat(Qt::PlainText);
+    confirmLayout->addWidget(m_confirmText, 1);
+
+    m_confirmButton = new QPushButton("CLEAR", m_confirm);
+    m_confirmButton->setObjectName("btn_confirmClear");
+    confirmLayout->addWidget(m_confirmButton);
+
+    m_cancelButton = new QPushButton("CANCEL", m_confirm);
+    m_cancelButton->setObjectName("btn_cancelClear");
+    confirmLayout->addWidget(m_cancelButton);
+
+    layout->addWidget(m_confirm);
+    setConfirmVisible(false);
+
     connect(m_list, SIGNAL(itemClicked(QListWidgetItem *)), this,
             SLOT(listItemClicked(QListWidgetItem *)));
+    connect(m_clearButton, SIGNAL(clicked()), this, SLOT(clearButtonClicked()));
+    connect(m_confirmButton, SIGNAL(clicked()), this, SLOT(confirmClearClicked()));
+    connect(m_cancelButton, SIGNAL(clicked()), this, SLOT(cancelClearClicked()));
 }
 
 void PlaylistPopup::listItemClicked(QListWidgetItem *item)
@@ -221,6 +259,66 @@ void PlaylistPopup::listItemClicked(QListWidgetItem *item)
     emit trackActivated(index);
 }
 
+void PlaylistPopup::keyPressEvent(QKeyEvent *event)
+{
+    /* 面板内 Delete 必须在 Esc 分支之前拦下（§8.9）：删完面板不关，可接着连删。
+       无选中时同样 accept——否则事件会冒泡到 MainWindow，删掉的是主列表那一行。 */
+    if (event->key() == Qt::Key_Delete) {
+        const int row = m_list != nullptr ? m_list->currentRow() : -1;
+        if (row >= 0) {
+            emit trackRemoveRequested(row);
+        }
+        event->accept();
+        return;
+    }
+    PopupPanel::keyPressEvent(event);
+}
+
+void PlaylistPopup::hideEvent(QHideEvent *event)
+{
+    /* 复位规则（§8.9）：面板一关就回到常态，下次打开不存在残留确认态。 */
+    setConfirmVisible(false);
+    PopupPanel::hideEvent(event);
+}
+
+void PlaylistPopup::clearButtonClicked()
+{
+    setConfirmVisible(true);
+}
+
+void PlaylistPopup::confirmClearClicked()
+{
+    /* 只发一条命令，然后关面板；关面板经 hideEvent 复位确认态。 */
+    emit clearPlaylistRequested();
+    hide();
+}
+
+void PlaylistPopup::cancelClearClicked()
+{
+    setConfirmVisible(false);
+}
+
+void PlaylistPopup::setConfirmVisible(bool visible)
+{
+    if (m_clearButton == nullptr || m_confirm == nullptr) {
+        return;
+    }
+    m_clearButton->setVisible(!visible);
+    m_confirm->setVisible(visible);
+    if (visible) {
+        updateConfirmText();
+    }
+}
+
+void PlaylistPopup::updateConfirmText()
+{
+    if (m_confirmText == nullptr || m_list == nullptr) {
+        return;
+    }
+    /* 文案逐字取 §1.4：`Clear all <n> tracks?`，<n> 无前导零。 */
+    m_confirmText->setText(QString("Clear all %1 tracks?").arg(m_list->count()));
+}
+
 void PlaylistPopup::showEvent(QShowEvent *event)
 {
     PopupPanel::showEvent(event);
@@ -230,7 +328,7 @@ void PlaylistPopup::showEvent(QShowEvent *event)
     }
 }
 
-void PlaylistPopup::setTracks(const QStringList &names, int currentIndex)
+void PlaylistPopup::setTracks(const QStringList &names, int currentIndex, int preferredRow)
 {
     if (m_list == nullptr) {
         return;
@@ -240,6 +338,14 @@ void PlaylistPopup::setTracks(const QStringList &names, int currentIndex)
         m_list->addItem(name);
     }
     updateCurrentIndex(currentIndex);
+    if (preferredRow >= 0 && m_list->count() > 0) {
+        m_list->setCurrentRow(qMin(preferredRow, m_list->count() - 1),
+                              QItemSelectionModel::ClearAndSelect);
+    }
+    /* 确认态在面板开着时列表被改（例如刚用 Delete 删了一条）：条数要跟着变。 */
+    if (m_confirm != nullptr && m_confirm->isVisible()) {
+        updateConfirmText();
+    }
 }
 
 void PlaylistPopup::updateCurrentIndex(int index)
