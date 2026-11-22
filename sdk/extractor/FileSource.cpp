@@ -2,6 +2,7 @@
 #include "LogWrapper.h"
 #include "Utf8Path.h"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -14,6 +15,11 @@ using namespace sdk_utils;
 namespace {
 // 仅供测试（ADR 0010）：见 FileSource.h 的例外边界。默认 0，生产路径零开销。
 std::atomic<uint32_t> g_readDelayMs(0);
+
+// 进程级句柄预算（规格 observability-contract.md §5.1，L2 只记录不设阈值）。
+// 维护点只在 acquire/release 的 0↔1 边界与析构，全部发生在控制线程。
+std::atomic<int> g_openHandles(0);
+std::atomic<int> g_peakHandles(0);
 } // namespace
 
 FileSource::FileSource(const char *filename)
@@ -26,58 +32,190 @@ FileSource::FileSource(const char *filename)
     , m_length(-1)
     , m_name("<null>")
     , m_extensionName("<null>")
+    , m_path()
+    , m_openRefs(0)
+    , m_lastOpenStatus(sdk_utils::OK)
 {
     if (filename) {
+        m_path          = std::string(filename);
         m_name          = std::string("FileSource(") + std::string(filename) + std::string(")");
         m_extensionName = getExtensionName(filename);
     }
 
     LOG_DEBUG(LOG_TAG, "%s", filename ? filename : "(null)");
 
-#ifdef _WIN32
-    // 宽字符路径：与系统代码页无关，非 ANSI 的文件名（中文、日文、emoji）都能打开。
-    if (filename && filename[0] != '\0') {
-        const std::wstring wide = sdk_utils::toWideString(filename);
-        if (!wide.empty()) {
-            m_fp = _wfopen(wide.c_str(), L"rb");
-        }
+    // 构造即持有一个租约（规格 streaming-playback-spec.md §4.5「构造租约」）：
+    // 保持既有「构造即可读」的直连用法不变；探测路径在 getAudioSpec() 之后 release()，
+    // 计数归零即关闭，条目不再常驻句柄。
+    std::lock_guard<std::mutex> lock(m_lock);
+    if (openInternal() == OK) {
+        m_openRefs.store(1);
     }
-    if (m_fp != nullptr) {
-        if (_fseeki64(m_fp, 0, SEEK_END) == 0) {
-            m_length = static_cast<int64_t>(_ftelli64(m_fp));
-            _fseeki64(m_fp, 0, SEEK_SET);
-        }
-        LOGI("file size: %lld", (long long)m_length);
-    } else {
-        LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename ? filename : "(null)");
-    }
-#else
-    if (filename && filename[0] != '\0') {
-        m_file.open(filename, std::ios::in | std::ios::binary);
-    }
-    if (m_file.is_open()) {
-        m_file.seekg(0, std::ios::end);
-        m_length = m_file.tellg();
-        m_file.seekg(0, std::ios::beg);
-        LOGI("file size: %lld", (long long)m_length);
-    } else {
-        LOG_ERROR(LOG_TAG, "failed to open file '%s'", filename ? filename : "(null)");
-    }
-#endif
 }
 
 FileSource::~FileSource()
+{
+    std::lock_guard<std::mutex> lock(m_lock);
+    if (m_openRefs.load() > 0 || isOpen()) {
+        closeInternal();
+    }
+    m_openRefs.store(0);
+}
+
+status_t FileSource::openInternal()
+{
+    if (isOpen()) {
+        m_lastOpenStatus.store(OK);
+        return OK;
+    }
+    if (m_path.empty()) {
+        m_lastOpenStatus.store(NO_INIT);
+        return NO_INIT;
+    }
+
+#ifdef _WIN32
+    // 宽字符路径：与系统代码页无关，非 ANSI 的文件名（中文、日文、emoji）都能打开。
+    const std::wstring wide = sdk_utils::toWideString(m_path.c_str());
+    if (wide.empty()) {
+        m_lastOpenStatus.store(NO_INIT);
+        return NO_INIT;
+    }
+    errno = 0;
+    m_fp  = _wfopen(wide.c_str(), L"rb");
+    if (m_fp == nullptr) {
+        const status_t status = mapOpenErrno(errno);
+        m_lastOpenStatus.store(status);
+        LOG_ERROR(LOG_TAG, "failed to open file '%s' (errno=%d)", m_path.c_str(), errno);
+        return status;
+    }
+    m_length = -1;
+    if (_fseeki64(m_fp, 0, SEEK_END) == 0) {
+        m_length = static_cast<int64_t>(_ftelli64(m_fp));
+        _fseeki64(m_fp, 0, SEEK_SET);
+    }
+#else
+    errno = 0;
+    // 重开时必须先清掉上一次失败留下的 failbit，否则 open() 直接被忽略。
+    m_file.clear();
+    m_file.open(m_path.c_str(), std::ios::in | std::ios::binary);
+    if (!m_file.is_open()) {
+        const status_t status = mapOpenErrno(errno);
+        m_lastOpenStatus.store(status);
+        LOG_ERROR(LOG_TAG, "failed to open file '%s' (errno=%d)", m_path.c_str(), errno);
+        m_file.clear();
+        return status;
+    }
+    m_length = -1;
+    m_file.seekg(0, std::ios::end);
+    m_length = static_cast<int64_t>(m_file.tellg());
+    m_file.seekg(0, std::ios::beg);
+#endif
+
+    LOGI("file size: %lld", (long long)m_length);
+    m_lastOpenStatus.store(OK);
+
+    const int now  = g_openHandles.fetch_add(1) + 1;
+    int peak       = g_peakHandles.load(std::memory_order_acquire);
+    while (now > peak
+           && !g_peakHandles.compare_exchange_weak(peak, now, std::memory_order_release,
+                                                  std::memory_order_acquire)) {
+    }
+    return OK;
+}
+
+void FileSource::closeInternal()
 {
 #ifdef _WIN32
     if (m_fp != nullptr) {
         std::fclose(m_fp);
         m_fp = nullptr;
+        g_openHandles.fetch_sub(1);
     }
 #else
     if (m_file.is_open()) {
         m_file.close();
+        m_file.clear();
+        g_openHandles.fetch_sub(1);
     }
 #endif
+    m_length = -1;
+}
+
+status_t FileSource::mapOpenErrno(int err)
+{
+    switch (err) {
+#ifdef EMFILE
+    case EMFILE:
+#endif
+#ifdef ENFILE
+    case ENFILE:
+#endif
+    case ENOMEM:
+        return NO_MEMORY;
+#ifdef EACCES
+    case EACCES:
+#endif
+    case EPERM:
+        return PERMISSION_DENIED;
+#ifdef ENOENT
+    case ENOENT:
+#endif
+#ifdef ENOTDIR
+    case ENOTDIR:
+#endif
+        return NO_INIT;
+    default:
+        return UNKNOWN_ERROR;
+    }
+}
+
+status_t FileSource::acquire()
+{
+    // 与 readAt 共用 m_lock：控制线程打开/关闭时不会撕裂正在进行的读。
+    // 关闭晚于 join 由租约与声明顺序保证（规格 §4.5 不变量 3/4），这里只做串行化。
+    std::lock_guard<std::mutex> lock(m_lock);
+    if (m_openRefs.load() == 0) {
+        const status_t status = openInternal();
+        if (status != OK) {
+            return status;
+        }
+        m_openRefs.store(1);
+        return OK;
+    }
+    m_openRefs.fetch_add(1);
+    return OK;
+}
+
+void FileSource::release()
+{
+    std::lock_guard<std::mutex> lock(m_lock);
+    const int current = m_openRefs.load();
+    if (current <= 0) {
+        // 防御：不配对的 release 不得把计数打成负数，也不得关掉别人正在用的句柄。
+        return;
+    }
+    if (current == 1) {
+        closeInternal();
+        m_openRefs.store(0);
+        return;
+    }
+    m_openRefs.fetch_sub(1);
+}
+
+int FileSource::openHandleCountForTest()
+{
+    return g_openHandles.load();
+}
+
+int FileSource::peakOpenHandleCountForTest()
+{
+    return g_peakHandles.load();
+}
+
+void FileSource::resetHandleStatsForTest()
+{
+    // 采样当前值而不是清零：别的测试可能仍持有句柄，峰值必须以现状为基线。
+    g_peakHandles.store(g_openHandles.load());
 }
 
 void FileSource::setReadDelayForTest(uint32_t ms)

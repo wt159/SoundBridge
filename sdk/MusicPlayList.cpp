@@ -36,6 +36,21 @@ using namespace sdk_utils;
 
 namespace {
 
+// 打开失败的分级文案（#278）：错误码面维持既有 FileOpenFailed，成因只落文本。
+inline const char *openFailureDetailForStatus(status_t status)
+{
+    switch (status) {
+    case NO_MEMORY:
+        return "open failed: too many open files";
+    case PERMISSION_DENIED:
+        return "open failed: permission denied";
+    case NO_INIT:
+        return "open failed: not found";
+    default:
+        return "open failed";
+    }
+}
+
 inline bool looksLikeHttpUrl(const std::string &path)
 {
     return path.compare(0, 7, "http://") == 0 || path.compare(0, 8, "https://") == 0;
@@ -483,9 +498,22 @@ void MusicPlayList::recordScanRejection(ErrorCode code)
 void MusicPlayList::reportScanSummary()
 {
     std::map<ErrorCode, int> rejects;
+    std::map<std::string, int> causes;
     {
         std::lock_guard<std::mutex> lock(m_rejectMutex);
         rejects.swap(m_scanRejects);
+        causes.swap(m_scanRejectCauses);
+    }
+    // 句柄预算（observability-contract.md §5.1，L2 只记录不设阈值）：
+    // 挂在这个边界上，千曲扫描不会产生 O(n) 条仪表日志。
+    {
+        sdk::MetricTags tags(currentTraceId(), std::string(), -1);
+        sdk::Metrics::RecordGauge("datasource_open_handles",
+                                  static_cast<double>(FileSource::openHandleCountForTest()), tags,
+                                  "count");
+        sdk::Metrics::RecordGauge("datasource_open_peak",
+                                  static_cast<double>(FileSource::peakOpenHandleCountForTest()),
+                                  tags, "count");
     }
     if (rejects.empty()) {
         return;
@@ -502,6 +530,28 @@ void MusicPlayList::reportScanSummary()
             m_callback->onMusicPlayListError(it->first, detail.str(), -1, "");
         }
     }
+    // 成因拆分是**追加**的一条（#278）：既有 code=N detail=… 那行与聚合键一字不动。
+    if (!causes.empty()) {
+        std::ostringstream line;
+        for (std::map<std::string, int>::const_iterator it = causes.begin(); it != causes.end();
+             ++it) {
+            if (it != causes.begin()) {
+                line << " ";
+            }
+            line << it->first << "=" << it->second;
+        }
+        LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
+                           "scan summary causes %s", line.str().c_str());
+    }
+}
+
+void MusicPlayList::recordScanRejectCause(const char *cause)
+{
+    if (cause == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(m_rejectMutex);
+    m_scanRejectCauses[cause] += 1;
 }
 void MusicPlayList::_addMusic(const std::string &musicPath)
 {
@@ -601,11 +651,14 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
         return nullptr;
     }
     if (source->initCheck() != OK) {
+        // 成因分级（#278）：错误码仍是 FileOpenFailed，detail 区分句柄耗尽 / 权限 / 找不到。
+        const status_t openStatus = source->openStatus();
+        const char *detail        = openFailureDetailForStatus(openStatus);
         if (!userInitiated) {
             recordScanRejection(ErrorCode::FileOpenFailed);
+            recordScanRejectCause(detail);
         }
-        reportError(ErrorCode::FileOpenFailed, "FileSource initCheck failed", musicProperties,
-                    userInitiated);
+        reportError(ErrorCode::FileOpenFailed, detail, musicProperties, userInitiated);
         return nullptr;
     }
     processProperties.source = source;
@@ -621,6 +674,8 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
                                                    : ErrorCode::ExtractorUnsupported;
         const char *detail   = extensionRegistered ? "extractor rejected the file header"
                                                    : "createExtractor returned nullptr";
+        // 探测失败也要归还句柄：条目不会入列，宁可这里显式释放。
+        processProperties.source->release();
         if (!userInitiated) {
             recordScanRejection(code);
         }
@@ -638,6 +693,9 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
     signalProperties.spec          = extractor->getAudioSpec();
     signalProperties.durationMs    = signalProperties.spec.durationMs;
     signalProperties.dataSize      = 0;
+    // 探测结束即释放构造租约（streaming-playback-spec.md §4.5）：条目只留数据源对象、
+    // extractor 与已解析元数据，常驻句柄数不再随条目数增长。播放前由 PlaybackTask 重开。
+    processProperties.source->release();
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
     musicProperties->uid = m_nextUid++;
     m_musicListProperties.push_back(musicProperties);
@@ -905,6 +963,20 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
     const auto switchStart = std::chrono::steady_clock::now();
 
+    // 先回收上一个退役任务，再重开：否则「当前 + 上一个退役 + 新任务」会让峰值瞬时到 3。
+    // joinRetiredTask 本来就由 retireCurrentTask 在同一个逻辑点调用，提前到重开之前不改变
+    // 任何时序语义；代价与既有切歌相同（旧线程已退出时 join 立即返回）。
+    joinRetiredTask();
+
+    // 重开在退役之前（#276 / 规格 player-state-contract.md §4.1「播放期重开失败」）：
+    // acquire() 失败时旧任务未被退役，当前曲目继续播放、设备队列不清空——
+    // 否则会留下「解码器已停、状态仍是 Playing」的静音窗口。
+    SourceLease lease(processProperties.source);
+    if (!lease.valid()) {
+        reportPlaybackOpenFailure(musicProperties, lease.status());
+        return false;
+    }
+
     // 切歌软取消（规格 §5）：旧任务只 abort 并移入退役槽，不 join；
     // 新任务立即启动，join 交给退役线程退出后的消费拍，或下一次切歌 / stop / 析构。
     retireCurrentTask();
@@ -921,8 +993,8 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         return false;
     }
 
-    PlaybackTaskPtr task
-        = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid, musicProperties);
+    PlaybackTaskPtr task = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid,
+                                                          musicProperties, std::move(lease));
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
         m_currentTask = task;
@@ -935,6 +1007,17 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     Metrics::RecordTiming("track_switch_ms", static_cast<uint64_t>(switchMs),
                           MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
                                        static_cast<int>(musicProperties->index) });
+    // 切歌完成边界的句柄预算快照（observability-contract.md §5.1，L2 只记录）。
+    Metrics::RecordGauge("datasource_open_handles",
+                         static_cast<double>(FileSource::openHandleCountForTest()),
+                         MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                                      static_cast<int>(musicProperties->index) },
+                         "count");
+    Metrics::RecordGauge("datasource_open_peak",
+                         static_cast<double>(FileSource::peakOpenHandleCountForTest()),
+                         MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                                      static_cast<int>(musicProperties->index) },
+                         "count");
     return true;
 }
 
@@ -946,6 +1029,28 @@ void MusicPlayList::resetTrackProgressExcept(uint64_t keepUid)
         }
         item->signalProperties.curPositionMs = 0;
         item->signalProperties.dataSize      = 0;
+    }
+}
+
+void MusicPlayList::reportPlaybackOpenFailure(const MusicPropertiesPtr &musicProperties,
+                                              sdk_utils::status_t status)
+{
+    if (musicProperties == nullptr) {
+        return;
+    }
+    const char *detail = openFailureDetailForStatus(status);
+    // 一次失败即记账：本次播放会话内不再重试，补位序与 skipToNextPlayable 自然跳过。
+    markTrackFailed(musicProperties->uid);
+    LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, currentTraceId(),
+                       "error=%d detail=%s index=%d path=%s",
+                       static_cast<int>(ErrorCode::FileOpenFailed), detail,
+                       static_cast<int>(musicProperties->index),
+                       musicProperties->fileProperties.fullPath.c_str());
+    // 播放期失败必须可见：绕过 reportError 的批量扫描降噪门槛（用户正在等这次切歌）。
+    if (m_callback != nullptr) {
+        m_callback->onMusicPlayListError(ErrorCode::FileOpenFailed, detail,
+                                         static_cast<int>(musicProperties->index),
+                                         musicProperties->fileProperties.fullPath);
     }
 }
 

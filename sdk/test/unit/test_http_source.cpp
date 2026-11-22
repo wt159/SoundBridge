@@ -474,7 +474,11 @@ TEST_SUITE("PlaylistUrlDispatch")
         uint8_t urlHead[16];
         uint8_t fileHead[16];
         REQUIRE(urlProps->processProperties.source->readAt(0, urlHead, sizeof(urlHead)) == 16);
+        // 本地文件源在探测后已关闭（streaming-playback-spec.md §4.5）：要读必须先 acquire，
+        // 这条同时验证「关闭再重开」对既有 extractor 透明（研究 #274）。
+        REQUIRE(fileProps->processProperties.source->acquire() == sdk_utils::OK);
         REQUIRE(fileProps->processProperties.source->readAt(0, fileHead, sizeof(fileHead)) == 16);
+        fileProps->processProperties.source->release();
         CHECK(std::memcmp(urlHead, fileHead, sizeof(urlHead)) == 0);
         CHECK(std::memcmp(urlHead, bytes.data(), sizeof(urlHead)) == 0);
     }
