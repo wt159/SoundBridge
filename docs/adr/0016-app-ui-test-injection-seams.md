@@ -44,3 +44,9 @@
 - fake 口放在测试源里，不进生产目标；`PlayerController` 仍是生产唯一构造点。
 - §9.3 冒烟步骤保留为人工抽查用途；回归口径以 §9.7.2 分级为准。
 - 错误路径注意：`handlePlayerError` 的非 autoSkip 分支弹 `QMessageBox`，在 Windows + offscreen 下必崩（§9.7.3），相关呈现判据永久人工（§9.7.5）。
+
+## 追加注记（2026-11-22，执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）
+
+「决策」第 3 条写 `AppUiPorts` 两字段，实现为**三字段**：多一个 `QObject *playerSignals`。理由：`PlayerCommandPort` 是纯虚接口、本身不是 `QObject`，无法从 `PlayerCommandPort *` 交叉转型到 QObject 面，而 `SLOT()` 信号连接需要 QObject 面；接口形状因此保持不变，信号面由注入方显式给出（生产路径取 `mController.get()`，注入路径取替身的 QObject 面）。上文保留原文。
+
+同批新增三处静态方法作为可断言测试缝，均不改变生产行为：`PlayerController::errorReasonText` / `PlayerController::composeErrorSubtitle`（由 `playercontroller.cpp` 匿名命名空间函数上移）与 `MainWindow::buildErrorMessageBoxText`（由 `handlePlayerError` 的文案构造提取）。它们服务于规格 §9.7.2 的 `UI-E2`–`UI-E6` 文案断言；错误码到文案的映射与 `QMessageBox` 的呈现分支逐字未动。
