@@ -17,6 +17,7 @@ Copyright (c) Deng Zhimao Co., Ltd. 1990-2021. All rights reserved.
 #include <QColor>
 #include <QDebug>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
@@ -71,6 +72,11 @@ private:
     QString mMusicDirectory;
     QStringList mRenderedPlaylist;
     int mRenderedTrackIndex = -1;
+    /* 列表编辑命令之后的选中落点（§8.9）：第一次全量重建把 currentRow 放到
+       min(删掉的行号, n-1)，用后清零；其余刷新仍取播放行。
+       `mPendingSelectCount` 是删除后的预期条数，只有「恰好少一条」的重建才消费锚点。 */
+    int mPendingSelectRow   = -1;
+    int mPendingSelectCount = -1;
 
     /* Music list. */
     QListWidget *mListWidget;
@@ -119,6 +125,9 @@ protected:
 
     void closeEvent(QCloseEvent *event);
 
+    /* 主列表的 Delete（§8.9）：QListWidget 不处理该键，事件自然上抛到这里。 */
+    void keyPressEvent(QKeyEvent *event) override;
+
     /* Scan local songs. */
     void scanSongs();
 
@@ -132,6 +141,9 @@ protected:
     /* 音量与收藏的可见状态回填（规格 §8.4 / §8.5）。 */
     void updateFavoriteButton();
     void updateVolumeUi();
+
+    /* 列表编辑的统一下发点（主列表 Delete 与面板 Delete 共用）。 */
+    void requestRemoveTrack(int row);
 
 protected:
 private slots:
@@ -176,6 +188,10 @@ private slots:
 
     /* 面板内条目被点击（= selectTrack + 关闭面板）。 */
     void panelTrackActivated(int index);
+
+    /* 面板内 Delete（删单条，面板不关闭）与确认条确认（清空）。 */
+    void panelTrackRemoveRequested(int index);
+    void panelClearPlaylistRequested();
 
     void handlePlayerError(int code, const QString &detail, int trackIndex, const QString &path,
                            const QString &traceId, bool autoSkipEnabled);

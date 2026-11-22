@@ -743,6 +743,17 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 6. **跨平台测试稳健性**：`QTest::mouseClick` 默认取控件几何中心，Linux runner 字体度量差异会让复选框点击脱靶；复选框类激活一律用 `QAbstractButton::click()`（几何无关）。
 7. **「能红」取证**：四轮区域变异（S+L / T+E / P+V / F+VOL+M）加靶向补红，53 条判据函数每条至少红一次；变异经 `git checkout` 还原，工作树与基线逐字节一致。
 
+### 9.7.7 列表编辑的落地状态（2026-11-22，执行票 [#269](https://github.com/wt159/SoundBridge/issues/269)）
+
+`D` 区随本票落地，判据真源仍是 §9.7.2 的 `D` 行；以下是实现侧口径，供后续维护对照：
+
+1. **用例规模**：`app/tests/AppUiTests.cpp` 的测试函数由 54 增至 62（判据函数 53 → 61，新增 `d1`–`d8`），进程内合计 63 例；仍进第 15 个目标 `sdk_app_ui_tests`，不新增 ctest 目标、不动 `TIMEOUT 120`。
+2. **锚点集 19 → 23**：`btn_clear` / `mPanelConfirm` / `btn_confirmClear` / `btn_cancelClear` 均已在 §1.3 登记。确认条的提示文案是 `mPanelConfirm` 内**无 `objectName`** 的 `QLabel`——§1.3 不为它登记第二个名字，锚点集合比对（`UI-A1` 同精神）才不会多出一个未登记项。
+3. **选中落点**：`MainWindow` 在下发 `removeTrack` **之前**记下删除行与删除后的预期条数，随后的全量重建只有「恰好少一条」才消费这对值（命令被 SDK 丢弃、或期间发生重扫时条数不匹配 ⇒ 锚点作废，不会被下一次重建劫持），换算成 `min(p, n-1)` 后同时交给主列表与面板；`PlaylistPopup::setTracks` 因此新增 `preferredRow` 参数（`-1` = 跟播放行），并把落点行 `EnsureVisible`，连删才看得见邻居。播放标记与加粗仍由 `kRolePlaying` 与播放下标决定，与 `currentRow` 解耦。
+4. **`Delete` 的作用范围**：主列表侧只在焦点位于 `mListWidget`（或其 viewport）时生效——焦点在播放键 / 复选框 / 进度条上按 `Delete` 零命令，`d1` 一并断言。面板侧由 `QListWidget` 不处理该键、事件上抛到 `PlaylistPopup::keyPressEvent`；**无选中时也 `accept()`**——否则事件继续冒泡到 `MainWindow`，删掉的会是主列表那一行。
+5. **确认只发一次**：`btn_confirmClear` 先 `hide()` 再 `emit`，隐藏后按钮不可能再被点到，`clearPlaylist()` 必然一条；关面板经 `hideEvent` 复位确认态，Esc / 点外 / 点条目 / 再点 `btn_menu` 四条路径共用它（`d5` 覆盖 CANCEL 与 Esc 两条）。
+6. **「能红」取证**：四轮变异各红一次——禁用主列表 `Delete` 分支（`d1` / `d8` 红）、`CLEAR` 直接发命令（`d4` / `d6` 红）、去掉空列表关面板（`d7` 红）、面板删完顺手关闭（`d3` 红），每轮后 `git checkout HEAD -- <file>` 还原并复跑全绿。
+
 ## 10. 界外
 
 - SDK 公开契约与 `PlayerViewState` 结构调整（含删除 `artist` / `album` 死字段）。

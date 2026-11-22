@@ -76,6 +76,18 @@ void PlayerController::addMusicDirectory(const std::string &path)
     m_player->addMusicDirectory(path);
 }
 
+/* 列表编辑（地图 #260 / 执行票 #269）：下标语义与越界丢弃完全交给 SDK，
+   界面不做二次判定——`removeTrack` 越界时 SDK 静默丢弃（ADR 0018）。 */
+void PlayerController::removeTrack(int index)
+{
+    m_player->removeTrack(index);
+}
+
+void PlayerController::clearPlaylist()
+{
+    m_player->clearPlaylist();
+}
+
 void PlayerController::playPause()
 {
     switch (m_player->state()) {

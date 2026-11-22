@@ -3,6 +3,7 @@
 #include <QStringList>
 #include <QWidget>
 
+class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QPushButton;
@@ -64,25 +65,48 @@ private:
     QPushButton *m_muteButton;
 };
 
-// 播放列表面板：主列表的第二个只读视图（规格 §8.6）。
+// 播放列表面板：主列表的第二个只读视图（规格 §8.6），并承载列表编辑的两个入口
+// （§8.9：面板内 Delete、CLEAR + 内嵌确认条）。
 class PlaylistPopup : public PopupPanel {
     Q_OBJECT
 
 public:
     explicit PlaylistPopup(QWidget *anchor);
 
-    void setTracks(const QStringList &names, int currentIndex);
+    /* preferredRow ≥ 0 时把面板选中行放到 min(preferredRow, n-1)：列表编辑命令之后的
+       第一次全量重建用（§8.9 选中落点），其余刷新传 -1 = 跟播放行。 */
+    void setTracks(const QStringList &names, int currentIndex, int preferredRow);
     void updateCurrentIndex(int index);
 
 signals:
     void trackActivated(int index);
+    /* 面板内 Delete：删单条，面板不关闭（可以接着连删）。 */
+    void trackRemoveRequested(int index);
+    /* 确认条点确认：一条命令，面板随即关闭。 */
+    void clearPlaylistRequested();
 
 protected:
+    void keyPressEvent(QKeyEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void showEvent(QShowEvent *event) override;
 
 private slots:
     void listItemClicked(QListWidgetItem *item);
+    void clearButtonClicked();
+    void confirmClearClicked();
+    void cancelClearClicked();
+
+private:
+    void setConfirmVisible(bool visible);
+    void updateConfirmText();
 
 private:
     QListWidget *m_list;
+    /* 常态入口与确认条占同一格，同时只显示一个（§8.9）。 */
+    QPushButton *m_clearButton;
+    QWidget *m_confirm;
+    /* 确认条提示文案：§1.3 不登记锚点，故不设 objectName（UI-A1 的集合比对）。 */
+    QLabel *m_confirmText;
+    QPushButton *m_confirmButton;
+    QPushButton *m_cancelButton;
 };
