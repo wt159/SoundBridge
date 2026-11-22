@@ -165,6 +165,20 @@
 
 > **`track_switch_ms` 取数窗口时点注记（2026-11-16，地图 #173）**：上表该行「起止沿用 #51：新任务 `start()` 之前销毁旧任务（stop+join 旧线程、旧 ring 引用计数归零、建新 ring / decoder）」是定稿时点口径。软取消落地后切歌路径不再 join，实测窗口改为「旧任务退役（只置取消位）→ 新任务 `start()` 返回」；指标名、单位、`Metrics::RecordTiming` 落点、CI 可见性（L2 不可见）与「只记录、不设阈值」全部不变。**本节既有行一字不动**。
 
+### 5.1 数据源句柄预算与失败成因（2026-11-22，地图 [#273](https://github.com/wt159/SoundBridge/issues/273) / [#278](https://github.com/wt159/SoundBridge/issues/278)）
+
+上表不新增行、不改口径。数据源可关闭可重开（[`streaming-playback-spec.md`](streaming-playback-spec.md) §4.5）之后，需要两件 L2 观测，**只记录、不设阈值**（措辞按 §3.1）：
+
+| 量 | 单位 | 取数点 / 落点 | 判不判 | CI 可见性 |
+|---|---|---|---|---|
+| `datasource_open_handles` | count | `FileSource` 的打开句柄当前值，在扫描汇总与切歌完成两个边界由 `Metrics::RecordGauge` 记录 | 只记录 | **不可见**（L2） |
+| `datasource_open_peak` | count | 进程内打开句柄峰值，与当前值在同样两个边界一起记录 | 只记录 | **不可见**（L2） |
+
+- 两个量都是**进程级**口径（不是 per-playlist、不是 per-file），因为要约束的是「千曲条目数不再映射到句柄数」这件事本身。
+- **失败成因分级**只落在文本面，不落在错误码面：`addMusicInternal` 的重开 / 打开失败按内部 `status_t` 映射为 `open failed: too many open files`（`NO_MEMORY`）、`open failed: permission denied`（`PERMISSION_DENIED`）、`open failed: not found`（`NO_INIT`）、`open failed`（其余）。对外错误码仍是既有的 `FileOpenFailed`，**不新增 `ErrorCode`**。
+- `reportScanSummary` 的既有文案与聚合键（`ErrorCode`）**不变**；成因拆分以一条**追加**的汇总日志表达（`scan summary causes <cause>=<n> ...`，仅在有打开失败时输出），不改既有那行。
+- 判据可断言的部分：`1000` 条入列后 `datasource_open_peak == 1`、切歌窗口内 `datasource_open_handles <= 2`。成因文案只能人工看日志，**不作为门禁**。
+
 ## 6. 跨素材峰值差判据的状态（含一处事实更正）
 
 ### 6.1 更正

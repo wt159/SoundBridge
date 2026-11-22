@@ -464,6 +464,8 @@
 
 **注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：上一条「不做」中的「增删」「清空」已被本图**部分解除**——删除单条与清空纳入，语义见 §8.9；**重排、搜索、拖放、多选仍属界外**。同时，「面板条目文本不显示序号、标记」与「点任意行 = `selectTrack(row)`」两条不变：编辑能力只通过键盘手势与底部操作条进入，**不给列表行增加任何控件或装饰**。
 
+**注（2026-11-22，地图 [#273](https://github.com/wt159/SoundBridge/issues/273)）**：本节「规模：千曲量级可接受，约数十毫秒」的**前置限制已解除**——入列的探测租约在 `getAudioSpec()` 之后即释放（[`streaming-playback-spec.md`](streaming-playback-spec.md) §4.5），列表条目不再每曲常驻一个打开的文件句柄，因此 [#270](https://github.com/wt159/SoundBridge/issues/270) 取证的「第 509 条起 `fopen` 失败」不再成立。面板填充本身仍是 UI 侧全量填充，既有数值与措辞一字不动；本注记只登记「千曲可入列」这一前提已由 SDK 侧满足。
+
 ### 8.7 浮层底座
 
 两个浮层共用 `PopupPanel`（ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md)）：

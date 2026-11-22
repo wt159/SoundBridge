@@ -19,6 +19,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sdk {
@@ -109,8 +110,9 @@ using MusicPropertiesPtr = std::shared_ptr<MusicProperties>;
 struct PlaybackTask {
     PlaybackTask(const std::shared_ptr<AudioRingBuffer> &ringBuffer,
                  const std::shared_ptr<AudioStreamDecoder> &streamDecoder, uint64_t trackIdentity,
-                 const MusicPropertiesPtr &owningProperties)
+                 const MusicPropertiesPtr &owningProperties, SourceLease &&sourceLease)
         : owner(owningProperties)
+        , lease(std::move(sourceLease))
         , ring(ringBuffer)
         , decoder(streamDecoder)
         , trackUid(trackIdentity)
@@ -123,6 +125,10 @@ struct PlaybackTask {
     // 还在读它。MinGW 上释放的堆块仍映射所以没崩，glibc 直接 SIGSEGV。
     // 与 ring 同一策略：保活到 join 完成。
     MusicPropertiesPtr owner;
+    // 数据源租约（规格 streaming-playback-spec.md §4.5）：声明在 ring / decoder 之前，
+    // 析构逆序 ⇒ decoder 先 stop()（内含 join）、租约后 release()。「关闭晚于 join」
+    // 由声明顺序结构性保证，三个收尾点不需要显式 close，也不需要同一性守卫。
+    SourceLease lease;
     std::shared_ptr<AudioRingBuffer> ring;
     std::shared_ptr<AudioStreamDecoder> decoder;
     // 曲目身份（ADR 0018）：位置会因 compaction 变化，uid 不变。所有「这个任务是不是
@@ -149,6 +155,14 @@ public:
     virtual void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                       const std::string &path)
         = 0;
+    // 播放期重开失败（规格 player-state-contract.md §4.1，地图 #273 / #276）：与入列失败分开，
+    // 因为播放器层对后者的处置是「停设备 + 置 Stopped」，而重开失败要求**不改播放状态**。
+    // 默认转发到 onMusicPlayListError，既有回调实现无需改动。
+    virtual void onPlaybackOpenFailed(ErrorCode code, const std::string &detail, int index,
+                                      const std::string &path)
+    {
+        onMusicPlayListError(code, detail, index, path);
+    }
 };
 
 class MusicPlayList : public NonCopyable {
@@ -262,7 +276,13 @@ private:
     void resetTrackProgressExcept(uint64_t keepUid);
     void reportError(ErrorCode code, const std::string &detail,
                      const MusicPropertiesPtr &musicProperties, bool userInitiated = false);
+    // 播放期重开失败（规格 player-state-contract.md §4.1）：一次 onError、记账为失败曲目，
+    // 不改播放状态、不进扫描汇总。index 用条目在列表中的下标，不是 -1。
+    void reportPlaybackOpenFailure(const MusicPropertiesPtr &musicProperties,
+                                   sdk_utils::status_t status);
     void recordScanRejection(ErrorCode code);
+    // 打开失败成因（#278）：与 m_scanRejects 同锁，只在入列期记账。
+    void recordScanRejectCause(const char *cause);
     std::string currentTraceId() const;
 
 private:
@@ -282,5 +302,7 @@ private:
     std::set<uint64_t> m_failedUids;
     mutable std::mutex m_rejectMutex;
     std::map<ErrorCode, int> m_scanRejects;
+    // 打开失败的成因分布（#278）：只用于追加一条汇总日志，不改既有聚合键与文案。
+    std::map<std::string, int> m_scanRejectCauses;
 };
 }

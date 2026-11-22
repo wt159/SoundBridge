@@ -1,6 +1,7 @@
 #include "../fixtures/RealMediaFixture.hpp"
 #include "../fixtures/SyntheticWav.hpp"
 #include "../fixtures/TempMediaDir.hpp"
+#include <FileSource.h>
 #include <MusicPlayList.h>
 #include <chrono>
 #include <cstdio>
@@ -94,6 +95,7 @@ struct EditRecordingCallback : public MusicPlayListCallback {
     std::vector<size_t> payloadSizes;
     std::vector<std::vector<size_t>> payloadIndices;
     std::vector<ErrorCode> errors;
+    std::vector<std::string> errorDetails;
     std::vector<int> errorIndices;
 
     void putMusicPlayListCurBuf(MusicPropertiesPtr property) override
@@ -118,10 +120,11 @@ struct EditRecordingCallback : public MusicPlayListCallback {
         payloadIndices.push_back(indices);
     }
 
-    void onMusicPlayListError(ErrorCode code, const std::string &, int index,
+    void onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                               const std::string &) override
     {
         errors.push_back(code);
+        errorDetails.push_back(detail);
         errorIndices.push_back(index);
     }
 };
@@ -567,23 +570,22 @@ TEST_SUITE("MusicPlayList Edit")
 
         EditRecordingCallback callback;
         std::shared_ptr<MusicPlayList> playlist = makeEditPlayList(callback);
-        // 规模取 500 而不是票面写的 1000：每条曲目在列表里常驻一个 FileSource（打开的
-        // FILE*），而本平台的 CRT 默认只允许 512 个并发流、`_setmaxstdio` 在这里返回 -1
-        // （MinGW msvcrt 不支持）。实测第 509 条开始 fopen 失败——这是被测代码之外的既有
-        // 限制，已单独登记 issue #270。500 条足以覆盖 O(n) 重编号与载荷连续性。
-        for (int i = 0; i < 500; ++i) {
+        // 规模恢复票面要求的 1000（地图 #273 / #279）：入列的探测租约在 getAudioSpec()
+        // 之后即释放（streaming-playback-spec.md §4.5），条目不再常驻 FILE*，因此
+        // #270 取证的「第 509 条起 fopen 失败」不再是前提。500 的降级注释同时作废。
+        for (int i = 0; i < 1000; ++i) {
             playlist->addMusic(path);
         }
-        REQUIRE_MESSAGE(waitForCount(*playlist, 500, 30000), "500 条没有入列完成");
+        REQUIRE_MESSAGE(waitForCount(*playlist, 1000, 30000), "1000 条没有入列完成");
 
         const size_t payloadsBefore = callback.payloadIndices.size();
         // 直接调同步版本：此刻队列已空闲，与既有 setCurrentIndexSync 用例同一前提。
         CHECK(playlist->removeTrackSync(250) == PlaylistEditOutcome::RemovedOther);
         REQUIRE(callback.payloadIndices.size() == payloadsBefore + 1);
 
-        CHECK(callback.payloadSizes.back() == 499);
+        CHECK(callback.payloadSizes.back() == 999);
         CHECK(indicesConsecutive(callback.payloadIndices.back()));
-        CHECK(playlist->getMusicCount() == 499);
+        CHECK(playlist->getMusicCount() == 999);
     }
 
     // #268 / A2：失败集合按条目身份记账 —— 删掉它上方的一条之后，跳过的仍是原来那条坏曲。
@@ -741,5 +743,113 @@ TEST_SUITE("MusicPlayList Edit")
         REQUIRE(callback.payloadSizes.size() == 1);
         CHECK(callback.payloadSizes.back() == 0);
         CHECK(playlist->getMusicCount() == 0);
+    }
+}
+
+// 地图 #273：本地数据源的句柄预算与开合契约（streaming-playback-spec.md §4.5）。
+// 判据对照表见 #279 resolution；每条都要能在对应变异下打红。
+TEST_SUITE("DataSource Lifecycle")
+{
+    // #279：千曲入列不再映射到千个句柄——探测租约在 getAudioSpec() 之后即释放。
+    TEST_CASE("probing a thousand tracks keeps the handle budget at one")
+    {
+        TempMediaDir temp("dsProbe");
+        const std::string path = temp.file("bulk.wav");
+        REQUIRE(writeBytes(path, makeToneWavBytes(1)));
+
+        EditRecordingCallback callback;
+        std::shared_ptr<MusicPlayList> playlist = makeEditPlayList(callback);
+        FileSource::resetHandleStatsForTest();
+
+        for (int i = 0; i < 1000; ++i) {
+            playlist->addMusic(path);
+        }
+        REQUIRE_MESSAGE(waitForCount(*playlist, 1000, 30000), "1000 条没有入列完成");
+
+        CHECK(FileSource::peakOpenHandleCount() == 1);
+        CHECK(FileSource::openHandleCount() == 0);
+        CHECK(callback.errors.empty());
+    }
+
+    // #277 / #279：切换窗口最多两个句柄（当前 + 退役保活）；重播同曲不得误关正在读的 fd。
+    TEST_CASE("switching keeps at most two handles and replay never closes the live one")
+    {
+        TempMediaDir temp("dsSwitch");
+        const std::vector<char> tone = makeToneWavBytes(1);
+        std::vector<std::string> paths;
+        for (int i = 0; i < 8; ++i) {
+            const std::string name = std::string("t") + static_cast<char>('0' + i) + ".wav";
+            paths.push_back(temp.file(name));
+            REQUIRE(writeBytes(paths.back(), tone));
+        }
+
+        EditRecordingCallback callback;
+        std::shared_ptr<MusicPlayList> playlist = makeEditPlayList(callback);
+        for (const std::string &path : paths) {
+            playlist->addMusic(path);
+        }
+        REQUIRE_MESSAGE(waitForCount(*playlist, 8), "八条曲目没有入列完成");
+        FileSource::resetHandleStatsForTest();
+        CHECK(FileSource::openHandleCount() == 0);
+
+        for (int round = 0; round < 50; ++round) {
+            REQUIRE_MESSAGE(playlist->setCurrentIndexSync(round % 8),
+                            "switch round " << round);
+        }
+        CHECK(FileSource::peakOpenHandleCount() <= 2);
+        CHECK(FileSource::openHandleCount() <= 2);
+
+        // 重播同一曲：新任务 acquire 使计数 1→2，旧任务 join 后 release 只降到 1。
+        // 「退役后无条件 close」的实现在这里会把句柄降到 0，新任务随即读到已关闭的 fd。
+        REQUIRE(playlist->setCurrentIndexSync(0));
+        REQUIRE(playlist->setCurrentIndexSync(0));
+        for (int waited = 0; waited < 2000 && !playlist->retiredTaskForTest().expired();
+             waited += 20) {
+            playlist->reapRetiredTaskIfFinished();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        CHECK(playlist->retiredTaskForTest().expired());
+        CHECK(FileSource::openHandleCount() == 1);
+        PlaybackTaskPtr task = playlist->currentTask();
+        REQUIRE(task != nullptr);
+        REQUIRE(task->decoder != nullptr);
+        CHECK(task->decoder->state() != StreamDecoderState::ERROR);
+        // 快照本身延长任务生命周期（契约允许），所以先放掉再断言句柄归零。
+        task.reset();
+
+        playlist->stopCurrentTask();
+        CHECK(FileSource::openHandleCount() == 0);
+    }
+
+    // #276：播放期重开失败——一次 onError（index 用条目下标）、记账失败、不建任务、
+    // 不进扫描汇总、不改变播放状态（旧任务未被退役）。
+    TEST_CASE("a deleted file fails at playback with an indexed error and no task")
+    {
+        TempMediaDir temp("dsReopenFail");
+        const std::string path = temp.file("gone.wav");
+        REQUIRE(writeBytes(path, makeToneWavBytes(1)));
+
+        EditRecordingCallback callback;
+        std::shared_ptr<MusicPlayList> playlist = makeEditPlayList(callback);
+        playlist->addMusic(path);
+        REQUIRE_MESSAGE(waitForCount(*playlist, 1), "参考曲目没有入列");
+        FileSource::resetHandleStatsForTest();
+
+        REQUIRE(std::remove(path.c_str()) == 0);
+
+        CHECK_FALSE(playlist->setCurrentIndexSync(0));
+        REQUIRE(callback.errors.size() == 1);
+        CHECK(callback.errors.back() == ErrorCode::FileOpenFailed);
+        CHECK(callback.errorIndices.back() == 0);
+        REQUIRE(callback.errorDetails.size() == 1);
+        CHECK(callback.errorDetails.back() == "open failed: not found");
+        CHECK(playlist->currentTask() == nullptr);
+        CHECK(FileSource::openHandleCount() == 0);
+        CHECK(playlist->isTrackFailed(playlist->trackUidForTest(0)));
+
+        // 播放期失败不进 m_scanRejects：扫描汇总不得因此多报一条。
+        const size_t errorsBefore = callback.errors.size();
+        playlist->reportScanSummary();
+        CHECK(callback.errors.size() == errorsBefore);
     }
 }
