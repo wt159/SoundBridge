@@ -140,6 +140,17 @@
 
 另有一条时序约束（同图）：所有「延迟前进」的排队 lambda（EOS 的 `advanceToNextTrack`、auto-skip 的 `skipToNextPlayable`）必须在执行前校验发起时的 `cur->uid` 仍等于当前曲目的 uid，不成立则**放弃本次前进**。理由：`removeTrack` 可能排在那个 lambda **之前**执行，此时补位已经发生过，再前进一次会连带跳过一首正常曲目，且没有任何错误可看。
 
+**句柄关闭窗口（2026-11-22，地图 [#273](https://github.com/wt159/SoundBridge/issues/273) / [#277](https://github.com/wt159/SoundBridge/issues/277)）**
+
+§5.1 的所有权表不变，但**关闭动作不再由收尾点显式执行**：`PlaybackTask` 持 `SourceLease`，`release()` 落在任务析构。可判定的次序如下（[`streaming-playback-spec.md`](streaming-playback-spec.md) §4.5）：
+
+1. **成员序**：`owner` → `lease` → `ring` → `decoder`。析构逆序 ⇒ `trackUid` → `decoder` → `ring` → `lease` → `owner`。`decoder` 的析构函数 `stop()` 内含 `join`，因此**租约释放必然晚于 join 返回**。
+2. **三个收尾点**（`stopCurrentTask` / `joinRetiredTask` / `reapRetiredTaskIfFinished`）先显式 `decoder->stop()`，再 `decoder.reset()` / `ring.reset()`；局部 `PlaybackTaskPtr` 在函数返回时析构，`release()` 发生在最后一个引用消失时。**不需要**「owner 指针不同才关」这类守卫。
+3. **重播同一曲的完整序列**：`replacePlaybackTask` → `acquire()`（旧任务仍持租约，计数 1→2）→ `retireCurrentTask`（只 `requestStop`，**不** release）→ `joinRetiredTask` 回收的是**上一个**退役任务 → 下次收尾 `release()`（2→1）。只要这一序列成立，「误关正在解码的 fd」不可能发生。
+4. **`reapRetiredTaskIfFinished` 的消费拍**只在线程已退出时 join，仍然不阻塞；它释放的是退役任务的租约，与当前任务的租约互不影响。
+
+**播放期重开失败时的窗口**：`acquire()` 失败**不进入**切换窗口——旧任务未被退役、新任务未建立，`m_currentTask` 不变，设备队列不清空。语义见 [`player-state-contract.md`](player-state-contract.md) §4.1 的「播放期重开失败」条。
+
 ### 5.2 时序
 
 1. 旧 decoder：`requestStop()` 只置 `m_stopRequest` / `m_abortDecode`，**不 join**；

@@ -167,6 +167,22 @@ void clearPlaylist();
 
 **ABI**：`SOUNDBRIDGE_ABI_VERSION` **保持 2**。`Player` 无虚成员、析构非虚、只有 `std::unique_ptr<Impl>` 一个数据成员 ⇒ 新增非虚成员函数不改对象布局、不改 vtable、不改任何既有符号的修饰名；`PlayerCallbacks` 与 `TrackInfo` 一字未动。ADR 0014 的 1 → 2 由 `TrackInfo` 加字段（布局变化）驱动，同批加入的四个音量方法并未单独成为升版理由。
 
+**播放期重开失败（2026-11-22，地图 [#273](https://github.com/wt159/SoundBridge/issues/273) / [#276](https://github.com/wt159/SoundBridge/issues/276)）**
+
+探针后关闭（[`streaming-playback-spec.md`](streaming-playback-spec.md) §4.5）把「打开」推迟到播放前，因此新增了一个失败面：入列成功、播放前重开失败。裁决如下，**既有「失败三类」一字不动**，本节只补充第四类。
+
+| 维度 | 裁定 |
+|---|---|
+| 成因 | 文件被删 / 改名、权限或独占变化、句柄耗尽（探测阶段已释放，正常不应再现） |
+| 错误码 | 只用既有 `FileOpenFailed`（`0x010001`）；**不新增错误码、不改 `onError` 签名** |
+| `index` | 用**该条目在列表中的下标**（≥ 0），不是 `-1`——与 `addTrack` 的「条目从未入列」不同 |
+| `path` | 该条目入列时的 `fullPath` |
+| 通知 | **一次** `onError`，**绕过** `reportError` 的批量扫描降噪门槛（用户正在等这一次切歌，静默失败等于「点了没反应」） |
+| 重试 | **不重试**：一次失败即上报，并把该 `uid` 记入本会话失败集合（`markTrackFailed`），补位序与 `skipToNextPlayable` 自然跳过它 |
+| 状态落点 | **不改播放状态**。`acquire()` 必须在 `retireCurrentTask()` **之前**：失败时旧任务未被退役，当前曲目继续播放、设备队列不清空。禁止「先退役再试重开」——那会留下「解码器已停、状态仍是 Playing」的静音窗口，属于 §4 明令禁止的缺陷类 |
+| 扫描汇总 | **不进** `m_scanRejects`：`reportScanSummary` 只谈入列期，播放期失败已有逐条 `onError` |
+| 无当前任务时 | 与今天 `selectTrack` 返回 `false` 等价：`endSegmentSwitch(false)` 保留设备队列、播放状态不变 |
+
 ## 5. 查询与事件的真相源（对应「单一真相源：查询与事件的一致性」）
 
 - **唯一权威**是内部 `MusicPlayerState`（状态）与消费端累计值 `segmentBaseBytes + m_readPos`（位置），标称时长由提取器 init 期给出。对外 `state()` / `duration()` / `position()` 是它们的实时投影；`onStateChanged` 等事件是**变更通知**，允许滞后于查询但不得丢失（停机期除外）。

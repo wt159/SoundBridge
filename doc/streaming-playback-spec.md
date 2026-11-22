@@ -114,7 +114,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 |---|---|
 | `m_openRefs`（`FileSource` 私有，原子） | `0` = 句柄已关闭；`>0` = 句柄打开，值等于持有租约数 |
 | `initCheck()` | 只表达「此刻可否读」：打开时 `OK`，关闭时 `NO_INIT`。**不区分**「未打开」与「不可用」——可重开性由计数与 `acquire()` 表达，不由 `initCheck()` 表达 |
-| `acquire()` | 原子自增；从 `0` 变 `1` 时执行 `_wfopen` / `ifstream::open` 并重新求 `m_length`；打开失败则回退到 `0` 并返回 `NO_INIT` / `PERMISSION_DENIED`。已打开时只自增，不重复打开 |
+| `acquire()` | 原子自增；从 `0` 变 `1` 时执行 `_wfopen` / `ifstream::open` 并重新求 `m_length`；打开失败则回退到 `0` 并返回 `NO_INIT`（找不到 / 不可用）/ `PERMISSION_DENIED` / `NO_MEMORY`（句柄或内存耗尽）/ `UNKNOWN_ERROR`。已打开时只自增，不重复打开 |
 | `release()` | 原子自减；归零时 `fclose` / `close` 并置 `m_length = -1`；不归零不关 |
 
 `acquire()` / `release()` 只出现在内部头（`sdk/extractor/DataSource.hpp`、`FileSource.h` 均不在 `sdk/include/`），**不触及公开 ABI**，`SOUNDBRIDGE_ABI_VERSION` 保持 2。失败不新增对外错误码，由调用点映射为既有 `FileOpenFailed`（语义见 `doc/player-state-contract.md` §4.1 的补充条文）。
@@ -130,6 +130,7 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 - `addMusicInternal` 的次序不变：打开 → `initCheck` → 建 extractor → 取 `AudioSpec` / `durationMs` → 入列。`addTrack` 的失败契约、`durationMs` 与 `AudioSpec` 的来源都不变。
 - `getAudioSpec()` 之后立即 `release()` 探测租约。WorkQueue 串行，因此**扫描期峰值句柄数 = 1**；条目只保留数据源对象、extractor 与已解析元数据。
+- **构造租约**（实现补记，2026-11-22）：`FileSource` 构造成功即持有 1 个租约，以保持既有「构造即可读」的直连用法（测试 fixture、诊断工具）不变；探测结束对同一次持有调用 `release()` 即归零关闭。`acquire()` 仍只在 `0 → 1` 时真正打开。
 - 播放前 `acquire()` 由 `PlaybackTask` 构造触发，发生在 `replacePlaybackTask` 内、`decoder->start()` 之前；`acquire()` 失败的语义由 #276 裁决，本节只规定「失败时不得 `start()`，任务不入 `m_currentTask`」。
 
 **不变量**
