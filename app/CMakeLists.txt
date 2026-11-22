@@ -78,7 +78,14 @@ endif()
 
 # 第 15 个 ctest 目标（ADR 0017：14 → 15 一次性显式例外，已登记 sdk/test/AGENTS.md）。
 # TIMEOUT 120 沿用坏输入四段档位值；offscreen + dummy 音频保证测试进程零真实设备。
-add_test(NAME sdk_app_ui_tests COMMAND AppUiTests)
+# PATH 烘焙与 sdk/test 的 SDK_TEST_PATH 同配方（dist/bin + Qt bin + 配置期 PATH）：
+# app 层拿不到 sdk/test 目录作用域的变量，按同一配方重算；Linux 侧补 LD_LIBRARY_PATH。
+set(APP_UI_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;$ENV{PATH}")
+if(WIN32 AND DEFINED SOUNDBRIDGE_QT_TEST_BIN_DIR AND NOT "${SOUNDBRIDGE_QT_TEST_BIN_DIR}" STREQUAL "")
+    set(APP_UI_TEST_PATH "${3RDPARTY_DIST_DIR}/bin;${SOUNDBRIDGE_QT_TEST_BIN_DIR};$ENV{PATH}")
+endif()
+add_test(NAME sdk_app_ui_tests
+    COMMAND ${CMAKE_COMMAND} -E env "PATH=${APP_UI_TEST_PATH}" $<TARGET_FILE:AppUiTests>)
 set_tests_properties(sdk_app_ui_tests PROPERTIES
     TIMEOUT 120
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;SDL_AUDIODRIVER=dummy;LD_LIBRARY_PATH=${3RDPARTY_DIST_DIR}/lib")
