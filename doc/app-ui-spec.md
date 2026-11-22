@@ -666,6 +666,7 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 两条接缝：
 
 1. **命令口** `PlayerCommandPort`（`app/playerport.h`）：纯虚接口，17 个方法与 `PlayerController` 同名同签名（`playPause` / `nextTrack` / `previousTrack` / `selectTrack` / `seekSeconds` / `setPlaybackMode` / `setAutoSkipOnError` / `setVolume` / `setMuted` / `addMusicDirectory` / 六个只读状态与 `viewState()`），由 `PlayerController` 实现。测试注入记录型 fake，断言「点哪个控件 → 下发哪条命令、几次」。
+   > **注记（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260) / 执行票 [#269](https://github.com/wt159/SoundBridge/issues/269)）**：本条「17 个方法」是 #248 时点值。现行端口为 **19**（新增 `removeTrack` / `clearPlaylist`）；`addTrack` 没有 UI 入口（`QFileDialog` 被 ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 否决），不进端口。权威表述见 §10 注记与 ADR [0016](../docs/adr/0016-app-ui-test-injection-seams.md) 追加注记。
 2. **渲染入口** `MainWindow::renderPlayerViewState(const PlayerViewState &)`：由 `private slots` 提升为 `public slots`，**不改名**（`SLOT(renderPlayerViewState(PlayerViewState))` 连接不变）。测试直接调用它注入一帧状态。
 
 构造注入 `MainWindow(const AppUiPorts &ports = AppUiPorts(), QWidget *parent = nullptr)`，`AppUiPorts` 两个字段：

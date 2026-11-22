@@ -140,6 +140,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 3. **并发**：`FileSource::readAt` 的 `isOpen()` 检查在锁外，关闭的正确性由租约计数与 join 次序保证，不依赖 `FileSource` 内部互斥。
 4. **次序**：禁止在 `decoder->stop()` 返回之前 `release()`（解码线程是 `readAt` 的唯一生产调用方）；禁止对正在被其他任务使用的条目做无条件 `close()`。
 
+> **更正注记（2026-11-22，收口后审计）**：不变量 3 的后半句「正确性由租约计数与 join 次序保证」仍然成立，前半句「`readAt` 的 `isOpen()` 检查在锁外」已不描述实现。双轴 code-review 发现锁外读 `m_fp` / `m_file` 与 `acquire()` / `release()` 的写入构成数据竞争，`isOpen()` 检查已移入 `m_lock` 临界区（`FileSource::readAt` 开头，注释标注 `code-review 2026-11-22`）。这处改动**只消除竞争**，不改次序保证：互斥量不阻止在零读窗口内调用 `readAt`，那仍由租约与 join 次序结构性排除。
+
 **界外**：网络源（`HttpSource` / `UrlSource` / `HlsExtractor`）的连接生命周期与重连语义、设备重开、重采样链路。
 
 ## 5. 判据（#48）

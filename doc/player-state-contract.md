@@ -206,6 +206,8 @@ void clearPlaylist();
 | 解码汇总 | `DecodeInitFailed`、`DataTruncated`、`DataCorrupted`、`Resample*` 等 | 播放期 EOS 汇总（`:576-591`） |
 | 扫描 | `FileOpenFailed`、`ExtractorUnsupported`、`ExtractorInitFailed` 及 `index=-1` 批量汇总 | `MusicPlayList.cpp:242,260-283` |
 
+> **行号注记（2026-11-22，收口后审计）**：上表三处 `文件:行号` 是 2026-11-08 基线写下的指针，行号已随后续落地漂移（`MusicPlayer.cpp:287-309` 现为 `setPosition`，`MusicPlayList.cpp:242,260-283` 现为构造与对外转发），**不得当作导航**，以函数名为准。现行落点：`PlayerNoCurrent` / `AudioDeviceOpenFailed` / `AudioDeviceStartFailed` 在 `MusicPlayer::Impl::play()`（`MusicPlayer.cpp:474` / `:495` / `:510`）；播放期解码汇总在 `MusicPlayer::Impl::handleDecodeError`（`MusicPlayer.cpp:964`，调用点 `:506`、`:932`）；扫描上报在 `MusicPlayList::addMusicInternal`（`MusicPlayList.cpp:606-686`），播放期重开失败在 `MusicPlayList::reportPlaybackOpenFailure`（`:1030-1050`）；`traceId` 刷新在 `MusicPlayer::Impl::bumpTraceId`（`MusicPlayer.cpp:1244-1249`）。本节既有行一字未改。
+
 **有码但不承诺上报**：`PlaylistEmpty`、`ResampleInitFailed`、`ResampleFailed` 在 `sdk/ErrorCode.cpp` 有查表项，#76 实测生产链**零上报点**（resample 初始化失败实际报 `DecodeInitFailed`，`AudioStreamDecoder.cpp:163,792`）。本规格把它们明确标为「内部查表项，调用方不得等待其回调」，**不新增上报点、不删码**（错误码体系界外）。
 
 `traceId`：一次播放会话一个 id，`play`（Stopped 时）/ `next` / `previous` / `setCurrentTrack` 刷新（`MusicPlayer.cpp:745-761`）；随 `onError` 透传。`detail` 与 `path` 在批量汇总时可为空；`trackIndex` 在批量汇总时为 `-1`，单曲错误时为具体索引。
