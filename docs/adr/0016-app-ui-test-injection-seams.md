@@ -50,3 +50,11 @@
 「决策」第 3 条写 `AppUiPorts` 两字段，实现为**三字段**：多一个 `QObject *playerSignals`。理由：`PlayerCommandPort` 是纯虚接口、本身不是 `QObject`，无法从 `PlayerCommandPort *` 交叉转型到 QObject 面，而 `SLOT()` 信号连接需要 QObject 面；接口形状因此保持不变，信号面由注入方显式给出（生产路径取 `mController.get()`，注入路径取替身的 QObject 面）。上文保留原文。
 
 同批新增三处静态方法作为可断言测试缝，均不改变生产行为：`PlayerController::errorReasonText` / `PlayerController::composeErrorSubtitle`（由 `playercontroller.cpp` 匿名命名空间函数上移）与 `MainWindow::buildErrorMessageBoxText`（由 `handlePlayerError` 的文案构造提取）。它们服务于规格 §9.7.2 的 `UI-E2`–`UI-E6` 文案断言；错误码到文案的映射与 `QMessageBox` 的呈现分支逐字未动。
+
+## 追加注记（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）
+
+「决策」末条的不变量「`soundbridge::Player` 公开面零改动，`SOUNDBRIDGE_ABI_VERSION` 保持 2」被**定向覆盖一次**：
+
+- `Player` 新增 `addTrack` / `removeTrack` / `clearPlaylist` 三个非虚成员函数（ADR [0018](0018-playlist-edit-contract.md)）；`PlayerCallbacks` 与 `TrackInfo` 的字段一字未动，`SOUNDBRIDGE_ABI_VERSION` **仍为 2**。
+- 因此「决策」第 1 条的「17 个公开方法」涨到 **19**：新增 `removeTrack` / `clearPlaylist`。`addTrack` **不进端口**——它在 UI 层没有入口（`QFileDialog` 是 `QDialog` 子类，被 ADR [0015](0015-popup-base-and-list-mask-removal.md) 否决），进端口会让「端口方法与 UI 实际能发出的命令一一对应」这条核对失去意义。
+- 其余结论不变：`AppUiPorts` 三字段、`renderPlayerViewState` 提升 public、fake 口不进生产目标、`PlayerController` 仍是生产唯一构造点。

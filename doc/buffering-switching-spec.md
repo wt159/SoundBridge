@@ -136,6 +136,10 @@
 - `stopCurrentTask()`：先 join retired，再 join current；`stop` 是终态，不走退役槽。
 - 析构：`~MusicPlayList` join 两槽；`~MusicPlayer::Impl` 仍先 `m_workQueue.shutdown()` 再走 `_releaseAudio()`。
 
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：本节的所有权与生命周期**不变**，但**任务身份的判据**改了——`PlaybackTask::trackIndex` 换成 `trackUid`（ADR [0018](../docs/adr/0018-playlist-edit-contract.md)）。原因是播放列表编辑让位置会变：仍用 index 判「任务与当前曲目是否同一首」时，删掉当前曲目上方一条就会让 `shouldFillSilence`（`MusicPlayer.cpp:703`）判为不匹配 → **整拍只写静音**，而状态仍是 Playing；`handleDecodeError`（`:837`）同样会静默返回，自动跳轨失效。改 uid 后任务身份与位置解耦，删除路径**不需要**重写任何任务的标识。
+
+另有一条时序约束（同图）：所有「延迟前进」的排队 lambda（EOS 的 `advanceToNextTrack`、auto-skip 的 `skipToNextPlayable`）必须在执行前校验发起时的 `cur->uid` 仍等于当前曲目的 uid，不成立则**放弃本次前进**。理由：`removeTrack` 可能排在那个 lambda **之前**执行，此时补位已经发生过，再前进一次会连带跳过一首正常曲目，且没有任何错误可看。
+
 ### 5.2 时序
 
 1. 旧 decoder：`requestStop()` 只置 `m_stopRequest` / `m_abortDecode`，**不 join**；

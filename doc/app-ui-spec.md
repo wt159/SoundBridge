@@ -58,6 +58,10 @@
 | `btn_mute` | `QPushButton`（checkable） | 新增 | 静音开关 |
 | `mPlaylistPopup` | `QWidget`（`Qt::Popup`） | 新增 | 播放列表面板容器 |
 | `mPanelList` | `QListWidget` | 新增 | 面板内的只读列表视图 |
+| `btn_clear` | `QPushButton` | 新增 | 面板底部「清空整个列表」（§8.9） |
+| `mPanelConfirm` | `QWidget` | 新增 | 面板内嵌确认条容器，默认隐藏（§8.9） |
+| `btn_confirmClear` | `QPushButton` | 新增 | 确认条的确认按钮（§8.9） |
+| `btn_cancelClear` | `QPushButton` | 新增 | 确认条的取消按钮（§8.9） |
 
 **注（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`btn_favorite` / `btn_menu` / `btn_volume` 三行的「角色」列保留时点原文（占位），现行角色以 §8.4–§8.6 为准；`mListMask` 行随死代码删除作废，见 §7 更正四。
 
@@ -69,6 +73,7 @@
 - 不引入 `tr()` 与语言资源；中文只出现在日志与代码注释。
 - 文案大小写与连字符按本文逐字取；改字视为破坏契约。
 - **解锁控件文案（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`Volume: <n>%`（`<n>` 为 0–100 的十进制、无前导零）、`Volume: muted`、`MUTE`（`btn_mute` 文本）、`Favorite` / `Favorited`（`btn_favorite` 提示）、`Playlist`（`btn_menu` 提示）。`Not implemented` 不再是任何控件的提示文案。
+- **列表编辑文案（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：`CLEAR`（`btn_clear` 文本）、`CANCEL`（`btn_cancelClear` 文本）、`Clear all <n> tracks?`（`mPanelConfirm` 的提示，`<n>` 为剩余条数的十进制、无前导零，与 `Volume: <n>%` 同一格式约定）、`CLEAR`（`btn_confirmClear` 文本，与触发按钮同名，不引入第二套词汇）。`Delete` 键不设控件文案——键盘手势没有控件，且不为列表行增加装饰（§8.6「不显示序号、时长、收藏标记、失败标记」同精神）。
 
 ### 1.5 新增控件流程
 
@@ -121,6 +126,8 @@
 | 上一首/下一首/播放 | 点击无可见变化（允许一次状态回调纠正勾选） |
 
 不新增空状态引导文案（界外：§10）。
+
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：本表原本只描述「启动时无曲目」。列表编辑能力落地后，列表可能在**运行期**被删空，期望与本表逐字相同（标题 `—`、`IDLE`、`00:00`、播放按钮 `unchecked`），并且多一条：**面板若可见必须关闭**（§8.9）——否则会出现 §8.6 声明不存在的「空面板」。
 
 ### 2.6 判据
 
@@ -455,6 +462,8 @@
 - **规模**：打开时全量填充（千曲量级可接受，约数十毫秒）；`setUniformItemSizes(true)`。
 - **不做**：增删、重排、清空、搜索、拖放、多选。列表增删需要 SDK 新增公开接口并联动播放状态机、失败集合与随机模式，属界外（§10）。
 
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：上一条「不做」中的「增删」「清空」已被本图**部分解除**——删除单条与清空纳入，语义见 §8.9；**重排、搜索、拖放、多选仍属界外**。同时，「面板条目文本不显示序号、标记」与「点任意行 = `selectTrack(row)`」两条不变：编辑能力只通过键盘手势与底部操作条进入，**不给列表行增加任何控件或装饰**。
+
 ### 8.7 浮层底座
 
 两个浮层共用 `PopupPanel`（ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md)）：
@@ -486,12 +495,63 @@
 
 音量「最终一致」的取证口径：改值后等待 **2 s** 再判断有无声音变化（覆盖 §8.5 的 ≈1.5 s 上界），不写「≤N 毫秒」这类依赖采样撞窗口的断言。
 
+### 8.9 播放列表编辑（删除 / 清空）
+
+**能力边界**：UI 只暴露「删除单条」与「清空」。「单文件追加」（SDK 的 `addTrack`）**没有 UI 入口**——合法入口只有 `QFileDialog`，它是 `QDialog` 子类，被 ADR [0015](../docs/adr/0015-popup-base-and-list-mask-removal.md) 否决；§10 的「打开文件/目录」仍是界外。该接口的现实用途是测试造数据。
+
+**入口**
+
+| 能力 | 入口 | 作用视图 |
+|---|---|---|
+| 删除单条 | `Delete` 键 | 主列表与面板列表两处都接 |
+| 清空 | `btn_clear` + `mPanelConfirm` | 仅面板 |
+
+- **接线方式**：不用 `QShortcut` / `QAction`，用 `keyPressEvent`。`QListWidget` 默认不处理 `Delete`，事件自然上抛——主列表上抛到 `MainWindow`，面板内由 `PlaylistPopup::keyPressEvent` 在 Esc 分支**之前**拦下并 `accept()`。理由：`QShortcut` 依赖窗口激活，在 offscreen 下判据会退化成「测快捷键有没有注册」。
+- **操作对象**：`currentRow()`。`< 0`（空列表 / 无选中）时零命令。
+- 面板内删除**不关闭面板**（删完还能接着删）；不改变 §3.3 的点击语义。
+- 键盘只新增这一条序列，**不给列表行增加任何控件或装饰**（§8.6 的「不显示序号、标记」不变）。
+
+**选中落点（只作用于列表编辑命令之后的第一次全量重建）**
+
+删除后 `currentRow` 取 `min(删掉的行号, n-1)`，而不是播放行；其余刷新（启动扫描、切歌等）仍取播放行。理由：不这样规定，第二次按 `Delete` 删的会是「当前播放行」而不是「刚删掉那一条的邻居」，连删不可用。播放标记与加粗仍按 §3.2 由播放下标决定，与 `currentRow` 解耦。
+
+**清空的确认形态**
+
+`btn_clear` 不直接清空，先进确认态：
+
+```text
+[ CLEAR ]                                    常态
+Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
+```
+
+- 确认态存在期间 `btn_clear` 隐藏、`mPanelConfirm` 可见；点 `btn_confirmClear` 发**一次** `clearPlaylist()`；点 `btn_cancelClear` 复位。
+- **复位规则**：面板关闭（Esc / 点外部 / 再次点 `btn_menu` / 点条目）即复位；下次打开必然是常态，不存在跨次残留。
+- **不得使用 `QMessageBox`**（Windows + offscreen 必崩，§9.7.3）与任何 `QDialog`（ADR 0015）。确认条是 `PlaylistPopup` 内部的一行 `QWidget`，不新增第二套浮层机制。
+- 单条删除**无确认**：可从目录重扫恢复，且确认会破坏「按 `Delete` 连删」。
+
+**空列表不变量**
+
+| 不变量 | 落地 |
+|---|---|
+| `trackCount()==0` ⇒ `btn_menu` 禁用 | 既有（`UI-A9`） |
+| `trackCount()==0` ⇒ **面板必须关闭** | 新增：`renderPlayerViewState` 在 `playlist.isEmpty()` 且面板可见时 `hide()` |
+| `trackCount()==0` ⇒ 主列表空、标题 `—`、`IDLE`、`00:00`、播放按钮 `unchecked` | 由 `onPlaylistChanged([])` + `onStateChanged(Stopped)` 驱动，形态与 §2.5 逐字相同 |
+| `trackCount()==0` ⇒ 收藏键的当前 id 为空 | 既有守卫在空列表下必然落空，无需新增 |
+| `Delete` 在空列表 / 无选中 | 零命令 |
+
+**「有列表就一定有当前曲目」不成立**：删除到空时 SDK 会置空当前曲目（ADR [0018](../docs/adr/0018-playlist-edit-contract.md)），UI 不得假设两者同生同灭。
+
+**与 `GLOSSARY.md` 的冲突（只登记，不改词条）**：`GLOSSARY.md:147` 写「同一份曲目数据、同一点击语义，**不支持增删或重排**」。本节解除了其中「增删」的一半（删除单条 + 清空），`GLOSSARY.md` 受「一字不动」约束，词条保留时点原文，以本节为准。规格内的「补位」是就地定义的一次性术语（见 ADR 0018），**不登记进 `GLOSSARY.md`**。
+
+**判据**：`UI-D1`–`UI-D8`，分级与判别式见 §9.7.2。
+
 ## 9. 判据与验收
 
 ### 9.1 编号与两类判据
 
 - 编号：`UI-<区>-<序号>`；区 = `S`（状态）/ `L`（列表）/ `T`（传输）/ `E`（错误）/ `P`（持久化）/ `V`（视觉）/ `H`（占位）。
 - **新增区（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`F`（收藏）、`M`（播放列表面板）、`VOL`（音量）。`VOL` 是三字母区，编号写作 `UI-VOL1` 不带连字符，以免与视觉区的 `UI-V1` 混淆。`H` 区自本日起无在册判据（占位清单为空），编号保留不复用。
+- **新增区（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：`D`（删除 / 编辑），编号 `UI-D1` 起。不并入 `M` 区——该区判据多数作用于**主列表**，并入「播放列表面板」区会误导读者。
 - **A 类**：可脚本核对（锚点、选择器、资源、常量、键名）；当前不新增自动化测试，核对方式是 `grep` + 人工读代码，证据贴票。
 - **B 类**：手工冒烟；按步骤操作，截图/日志取证。
 
@@ -511,6 +571,7 @@
 | `UI-A10` | 浮层机制 | 读 `app/popuppanel.cpp`：`Qt::Popup`、Esc 分支、关闭后 `anchor->setFocus()` |
 | `UI-A11` | 身份键派生 | `UnitTests -ts=MusicId`（7 例全绿）：空路径 / URL 原样 / 点段折叠（含越根）/ 重复分隔符 / 相对路径绝对化 / 混合分隔符与大小写折叠 / 盘符与 UNC 前缀 |
 | `UI-A12` | 增益数学与音量钳制 | `UnitTests -ts=PcmGain`（6 例全绿，S16 半幅 / 零增益 / U8 绕中点 / S32 与 FLT32 逐格式 / 渐变端点 / 未识别格式直通）与 `-ts=MusicPlayerVolume`（2 例全绿，默认 100 与越界钳制 / 静音不改取值） |
+| `UI-A13` | 浮层与对话框的禁区 | `grep -rn 'QMenu\|QDialog\|QFileDialog\|getOpenFileName\|QMessageBox' app/ --include=*.cpp --include=*.h`：`QMessageBox` 只允许出现在 `handlePlayerError` 的错误弹窗分支（§9.7.5 永久人工），其余五者**零命中**。同时把「`addTrack` 无 UI 入口」与「ADR 0015 未被绕过」变成可复核的静态判据 |
 
 ### 9.3 B 类冒烟清单
 
@@ -535,6 +596,11 @@
 | 15 | 静音后再取消静音 | 无声 → 有声；提示文案在 `Volume: muted` 与 `Volume: 60%` 之间切换 | `UI-VOL4` |
 | 16 | 点播放列表按钮，点面板第 3 行 | 播放第 3 首，面板关闭，主列表选中同步 | `UI-M2`、`UI-M3` |
 | 17 | 面板打开时按下一首 | 高亮跟随到新行并居中 | `UI-M4` |
+| 18 | 5 首素材，主列表点第 3 行后按 `Delete` | 第 3 首被移除，列表变 4 条；播放不中断（删的是当前曲目时前进一首，`position` 继续前进）；`currentRow` 落在第 3 行（原第 4 首） | `UI-D1`、`UI-D8` |
+| 19 | 打开面板按 `Delete` ×2 | 每次移除一行，面板保持打开；列表不空时 `btn_menu` 保持可用 | `UI-D3` |
+| 20 | 点 `CLEAR` → `CANCEL` → 再点 `CLEAR` → 确认 | 第一次无变化；第二次清空后列表为空、出现 `IDLE`、`btn_menu` 变为禁用、**面板自动关闭** | `UI-D4`、`UI-D5`、`UI-D6`、`UI-D7` |
+
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：步骤 18–20 为本图新增。步骤 18 的「播放不中断」指 `onStateChanged` 不出现相邻重复、`position` 持续前进；删到空时的期望与步骤 1 的空列表形态一致，见 §2.5 的注。
 
 **注记（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：步骤 12 随 `UI-H1` / `UI-H2` 退役作废，三控件改由步骤 13–17 覆盖；本表行保留时点原文。
 
@@ -633,10 +699,13 @@
 | VOL | `UI-VOL1`–`UI-VOL2` | 自动 | 既有单测承担（`MusicPlayerVolume` 2 例、`PcmGain` 6 例），本目标不重复 |
 | VOL | `UI-VOL3`–`UI-VOL4` | 半自动 | 持久化值与 `volume` / `muted` 状态全自动；「输出音量一致」用 `PcmGain` 数学 + ring 采样取证，**不做人耳判断** |
 | M | `UI-M1`–`UI-M5` | 自动 | `btn_menu->isEnabled()` 两态、面板条目数与加粗字重、点第 3 行 → `selectTrack(2)` + 面板关闭 + 主列表同步、`next` 后高亮行在视口内 |
+| D | `UI-D1`–`UI-D8` | 自动 | `keyClick(Key_Delete)` → `removeTrack(row)` 一次 / 零次；面板内删后 `isVisible()` 仍为真；`CLEAR` → 确认条可见且零命令；`CANCEL` → 复位且零命令；确认 → `clearPlaylist()` 一次且面板关闭；空列表 ⇒ `btn_menu` 禁用且面板不可停留；删后 `currentRow == min(p, n-1)` |
 
 合计：自动 50 条、半自动 4 条、人工 3 条（`UI-E2` 计入「自动（文案）+ 人工（呈现）」，只在其人工半边计数）。
 
 **注记（2026-11-22，执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）**：上表 `S` 行判别式「按住期间断言位置标签不变」与判据表 `UI-S6` 行「位置标签仍显示播放位置」相互矛盾。实现取判据表 + §6 渲染契约：按住滑块期间**滑块值**冻结、位置标签随状态帧继续更新（`s6` 用例断言 `value()==40` 且标签为 `01:00`）。§9.3 步骤 5 的「拖动中标签不动」按「标签不跟随拖动位置」解释，与此相容。三处原文均保留，本注记只在裁决处引用。
+
+**注记（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：上表新增 `D` 区 8 条，全部为自动分级。在册总数 **57 → 65**，自动 **50 → 58**，半自动 4、人工 3 不变。本小节标题「（在册 57 条）」与上表之后的「合计」行保留时点原文，实际计数以本注记为准。`D` 区的判别式全部落在既有 `sdk_app_ui_tests`（第 15 个目标），不新增 ctest 目标——ADR [0017](../docs/adr/0017-app-ui-test-host-and-target-budget.md) 的一次性例外已用掉。
 
 ### 9.7.3 环境与隔离
 
@@ -691,6 +760,12 @@
 2. **「SDK 公开契约」被覆盖一次**：`TrackInfo` 新增派生键 `id`（ADR [0014](../docs/adr/0014-track-identity-and-favorites-ownership.md)），`Player` 新增 `setVolume` / `volume` / `setMuted` / `muted` 四个方法（ADR [0013](../docs/adr/0013-software-volume-gain.md)），`SOUNDBRIDGE_ABI_VERSION` 1 → 2。此覆盖是**定向的**：除这两处外，「不在本图内改动 SDK 公开契约」仍然有效。
 3. 其余条目（打开文件/目录、拖放、曲库扫描、搜索、元数据、封面、视觉重设计、快捷键、多语言、自动化 UI 测试、空状态、打包）一律不动。
 
+**注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：本图对上列条目的解除是**定向**的，其余一字不动——
+
+1. **「SDK 公开契约」被覆盖第三次**：`Player` 新增 `addTrack` / `removeTrack` / `clearPlaylist` 三个方法（ADR [0018](../docs/adr/0018-playlist-edit-contract.md)）。`PlayerCallbacks` 与 `TrackInfo` 的字段一字未动，`SOUNDBRIDGE_ABI_VERSION` **保持 2**——新增非虚成员函数不改对象布局、不改 vtable（`Player` 无虚成员）、不改任何既有符号的修饰名。app 侧 `PlayerCommandPort` 17 → **19**（`addTrack` 没有 UI 入口，不进端口）。
+2. **「播放列表面板」的「增删」被覆盖一半**：删除单条与清空纳入（§8.9），**重排、搜索、拖放、多选仍属界外**。
+3. 其余条目一律不动，其中「打开文件/目录」仍是界外——这正是 `addTrack` 只有 SDK 面、没有 UI 入口的原因（`QFileDialog` 是 `QDialog`，被 ADR 0015 否决）。列表跨启动持久化同样不动。
+
 ## 11. 变更记录
 
 - 2026-11-21：定稿。地图 [#216](https://github.com/wt159/SoundBridge/issues/216) 收口；规格与 ADR 0012 同时落地。既有 SDK 规格零改动，`player-state-contract.md` 只加一行纯新增指针。
@@ -702,3 +777,4 @@
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 收口后审计）：§8 标题改为「占位控件与转正控件」并加读法导语——原标题覆盖不了 §8.4–§8.8。`UI-A7` 补「读取侧丢空串 / 悬挂条目保留」、`UI-A8` 补「钳制后回写修正值 / 类型错误取默认 100」、`UI-A11` / `UI-A12` 由类别枚举改为「套件 + 例数 + 逐例要点」：原写法是局部枚举，会被读成完整清单（#242 / #243 的裁定里有、核对清单里看不见的条目据此补齐）。
 - 2026-11-22（地图 [#248](https://github.com/wt159/SoundBridge/issues/248) 执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）：§9.7 全量判据自动化随 PR [#258](https://github.com/wt159/SoundBridge/pull/258) 落地（54 个测试函数、第 15 个目标 `sdk_app_ui_tests`，双端 CI 绿）。§9.7.2 追加注记登记 `S` 行判别式与判据表 `UI-S6` 行的矛盾及实取口径；新增 §9.7.6 落地状态。既有行一字未改。
+- 2026-11-22（地图 [#260](https://github.com/wt159/SoundBridge/issues/260) 收口）：新增播放列表编辑能力（删除单条 / 清空）。§1.3 增 4 个锚点（`btn_clear` / `mPanelConfirm` / `btn_confirmClear` / `btn_cancelClear`）；§1.4 增编辑文案；§2.5 增「运行期删空」注；§8.6 增注说明「不做」中的增删清空已部分解除；新增 §8.9（入口、选中落点、确认条三态、空列表不变量、与 `GLOSSARY.md` 的冲突登记）；§9.1 增 `D` 区，§9.2 增 `UI-A13`，§9.3 增步骤 18–20，§9.7.2 增 `D` 行与计数注记（57 → 65，自动 50 → 58）；§10 增定向解除注记。ADR [0018](../docs/adr/0018-playlist-edit-contract.md) 同批落地。既有行一字未改。
