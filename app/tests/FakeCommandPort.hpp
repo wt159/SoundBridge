@@ -48,9 +48,6 @@ public:
         return QString();
     }
 
-    /* 渲染驱动：等价生产侧 PlayerController::publishViewState 的信号半边。 */
-    void publish() { emit viewStateChanged(state); }
-
     /* 错误驱动：等价 PlayerController::onError 的信号半边。 */
     void emitError(int code, const QString &detail, int trackIndex, const QString &path,
                    const QString &traceId, bool autoSkipEnabled)

@@ -789,6 +789,8 @@ void MainWindow::mediaPlayerInit(PlayerCommandPort *injectedPort)
     config.logDirectory    = mLogDir;
     config.autoSkipOnError = true;
     mController.reset(new PlayerController(config));
+    m_commands     = mController.get();
+    m_signalSource = mController.get();
     updatePlaybackModeButton(m_commands->playbackMode());
 }
 

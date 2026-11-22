@@ -59,7 +59,7 @@ add_executable(AppUiTests ${APP_UI_TEST_SOURCES})
 target_include_directories(AppUiTests PRIVATE ${SDK_DIR}/test/fixtures)
 target_compile_definitions(AppUiTests PRIVATE
     SB_APP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(AppUiTests Qt5::Test app_core)
+target_link_libraries(AppUiTests Qt5::Widgets Qt5::Test sdk app_core)
 
 # Windows 下 offscreen 平台插件不在 windeployqt 默认集，必须随测试 exe 部署
 # （规格 §9.7.3：缺它进程停在致命对话框、不返回、零日志，timeout 只见 124）。
@@ -71,6 +71,9 @@ if(WIN32 AND QT_MINGW_PATH AND EXISTS "${QT_MINGW_PATH}/plugins/platforms/qoffsc
                 "${QT_MINGW_PATH}/plugins/platforms/qoffscreen.dll"
                 "$<TARGET_FILE_DIR:AppUiTests>/platforms/qoffscreen.dll"
         COMMENT "Deploy qoffscreen platform plugin for AppUiTests")
+elseif(WIN32)
+    message(WARNING "qoffscreen.dll NOT deployed (QT_MINGW_PATH unset or plugin missing); "
+        "sdk_app_ui_tests will hang at the fatal dialog with timeout 124, zero logs - spec 9.7.3")
 endif()
 
 # 第 15 个 ctest 目标（ADR 0017：14 → 15 一次性显式例外，已登记 sdk/test/AGENTS.md）。

@@ -14,6 +14,7 @@
 
 #include "FakeCommandPort.hpp"
 #include "mainwindow.h"
+#include "TestProcess.hpp"
 
 #include "soundbridge/logging.h"
 
@@ -38,8 +39,6 @@
 #include <QXmlStreamReader>
 
 #include <memory>
-
-#include "TestProcess.hpp"
 
 namespace {
 
