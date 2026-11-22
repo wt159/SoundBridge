@@ -633,7 +633,7 @@ void AppUiTests::t6_mode_and_autoskip_survive_restart()
         w1->show();
         QTest::qWait(30);
         QTest::mouseClick(btnOf(w1.get(), "btn_mode"), Qt::LeftButton);
-        QTest::mouseClick(w1->findChild<QCheckBox *>("mAutoSkipCheck"), Qt::LeftButton);
+        w1->findChild<QCheckBox *>("mAutoSkipCheck")->click(); /* 几何无关激活（Linux runner 字体度量下中心点击会脱靶） */
         QCOMPARE(fake1.state.playbackMode,
                  static_cast<int>(soundbridge::PlaybackMode::Loop));
         QCOMPARE(fake1.state.autoSkipOnError, false);
@@ -661,7 +661,7 @@ void AppUiTests::t7_autoskip_single_call_discipline()
 
     w->show();
     QTest::qWait(30);
-    QTest::mouseClick(w->findChild<QCheckBox *>("mAutoSkipCheck"), Qt::LeftButton);
+    w->findChild<QCheckBox *>("mAutoSkipCheck")->click(); /* 几何无关激活（Linux runner 字体度量下中心点击会脱靶） */
     QCOMPARE(fake.countOf("setAutoSkipOnError"), 2);
 
     /* SDK 回写同值（blockSignals 守卫）：不产生第二次 setAutoSkipOnError。 */
@@ -813,7 +813,7 @@ void AppUiTests::p2_geometry_mode_autoskip_roundtrip()
         QTest::qWait(30);
         w1->resize(1100, 720);
         QTest::mouseClick(btnOf(w1.get(), "btn_mode"), Qt::LeftButton);
-        QTest::mouseClick(w1->findChild<QCheckBox *>("mAutoSkipCheck"), Qt::LeftButton);
+        w1->findChild<QCheckBox *>("mAutoSkipCheck")->click(); /* 几何无关激活（Linux runner 字体度量下中心点击会脱靶） */
         w1->close();
     }
 
