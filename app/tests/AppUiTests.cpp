@@ -1617,6 +1617,17 @@ void AppUiTests::d8_selection_follows_removed_row_once()
     fake.state.currentTrackIndex = 2;
     inject(w.get(), &fake);
     QCOMPARE(list->currentRow(), 2);
+
+    /* 锚点失效条件（§9.7.7 第 3 条）：命令还没生效就发生重扫——条数不是「恰好少一条」
+       ⇒ 锚点作废，选中仍跟播放行，不被劫持到与编辑无关的行。 */
+    list->setCurrentRow(0);
+    list->setFocus(Qt::OtherFocusReason);
+    QTest::qWait(10);
+    QTest::keyClick(list, Qt::Key_Delete); /* pending(0, 预期 3 条) */
+    fake.state.playlist = (QStringList() << "A" << "B" << "C" << "D" << "E" << "F");
+    fake.state.currentTrackIndex = 1;
+    inject(w.get(), &fake);
+    QCOMPARE(list->currentRow(), 1);
 }
 
 int main(int argc, char *argv[])
