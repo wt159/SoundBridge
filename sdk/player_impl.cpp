@@ -161,6 +161,12 @@ public:
 
     void setCurrentTrack(int index) { m_player->setCurrentIndex(index); }
 
+    void addTrack(const std::string &path) { m_player->addTrack(path); }
+
+    void removeTrack(int index) { m_player->removeTrack(index); }
+
+    void clearPlaylist() { m_player->clearPlaylist(); }
+
     int trackCount() const { return m_player->getMusicCount(); }
 
     PlayerState state() const
@@ -289,6 +295,21 @@ void Player::setCurrentTrack(int index)
 int Player::trackCount() const
 {
     return m_impl->trackCount();
+}
+
+void Player::addTrack(const std::string &path)
+{
+    m_impl->addTrack(path);
+}
+
+void Player::removeTrack(int index)
+{
+    m_impl->removeTrack(index);
+}
+
+void Player::clearPlaylist()
+{
+    m_impl->clearPlaylist();
 }
 
 PlayerState Player::state() const

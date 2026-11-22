@@ -68,6 +68,19 @@ public:
     void setCurrentTrack(int index);
     int trackCount() const;
 
+    // Playlist editing（ADR 0018，契约见 doc/player-state-contract.md §4.1）
+    // 三条命令都是 `void` + 纯入队：结果经回调与查询可见，调用者线程不做文件系统访问。
+    // - addTrack：单个文件（传目录丢弃）；允许重复路径；只在列表原本为空时设为当前曲目，
+    //   不自动播放。失败发一次 onError(index == -1)，列表不变。
+    // - removeTrack：下标按「执行时刻」解释；越界丢弃。删的是当前曲目时按播放模式补位
+    //   （列表非空就一定有当前曲目），Playing 保持 Playing，变空则停止。
+    // - clearPlaylist：空列表上为幂等丢弃；非空则变为「无当前曲目」，Playing/Paused → Stopped。
+    // 回调顺序：onPlaylistChanged 先于同一命令引发的 onTrackChanged；当前曲目未换、
+    // 仅其 index 因压缩重排而改变时，也会补发一次 onTrackChanged(新下标)。
+    void addTrack(const std::string &path);
+    void removeTrack(int index);
+    void clearPlaylist();
+
     // State queries
     PlayerState state() const;
     uint64_t duration() const;

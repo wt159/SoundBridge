@@ -160,6 +160,22 @@ bool waitForQueuedBytes(MusicPlayer &player, size_t bytes, int timeoutMs)
     return waitFor([&player, bytes]() { return player.queuedBytesForTest() >= bytes; },
                    timeoutMs, 10);
 }
+
+// 按名字后缀在回调快照里定位真实下标：扫描顺序不承诺字典序（规格 §3.5），
+// 而 Windows 上的 fileName 还可能带目录前缀，所以只按尾部匹配。
+int trackIndexBySuffix(MockPlayerCallbacks &callbacks, const std::string &suffix)
+{
+    std::lock_guard<std::mutex> lock(callbacks.mutex);
+    for (std::map<int, std::string>::const_iterator it = callbacks.track_names.begin();
+         it != callbacks.track_names.end(); ++it) {
+        const std::string &name = it->second;
+        if (name.size() >= suffix.size()
+            && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return it->first;
+        }
+    }
+    return -1;
+}
 } // namespace
 
 TEST_SUITE("MusicPlayer State Transitions")
@@ -2138,5 +2154,345 @@ TEST_SUITE("PublicPlayer Interactive Paths")
                       "回调曲目数 " << snapshot.size() << " 与 trackCount " << player.trackCount()
                                     << " 不一致");
         CHECK_MESSAGE(consecutive, "回调里的索引不是 0..n-1 连续");
+    }
+
+    // #268 / A3：播放中删掉当前曲目**上方**的一条，音频必须继续流动。
+    // 这是「位置不是身份」的唯一直接证据：仍按 index 判任务身份时，压缩重排让
+    // cur->index 左移一位、而任务里记的曲目下标没变，shouldFillSilence() 判成
+    // 「任务不属于当前曲目」→ 整拍只写静音，状态却仍是 Playing，且没有任何错误日志。
+    TEST_CASE("removing a track above the current one keeps playback audible")
+    {
+        TempMediaDir temp("edita3");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        REQUIRE(writeAllBytes(temp.file("alpha.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("bravo.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("charlie.wav"), tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 3; }, 5000),
+                        "三曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        // 扫描顺序不承诺字典序（§3.5），按名字后缀定位真实下标。
+        const int alphaIndex   = trackIndexBySuffix(callbacks, "alpha");
+        const int bravoIndex   = trackIndexBySuffix(callbacks, "bravo");
+        const int charlieIndex = trackIndexBySuffix(callbacks, "charlie");
+        REQUIRE_MESSAGE(alphaIndex >= 0, "回调里认不出 alpha.wav");
+        REQUIRE_MESSAGE(bravoIndex >= 0, "回调里认不出 bravo.wav");
+        REQUIRE_MESSAGE(charlieIndex >= 0, "回调里认不出 charlie.wav");
+        // 与扫描顺序无关的构造：当前曲目取最大下标，被删的取最小下标 ⇒ 删除必然让
+        // 当前曲目的 index 左移，「上方一条」这个前提恒成立。
+        const int currentIndex = std::max(alphaIndex, std::max(bravoIndex, charlieIndex));
+        const int aboveIndex   = std::min(alphaIndex, std::min(bravoIndex, charlieIndex));
+        REQUIRE_MESSAGE(aboveIndex < currentIndex, "构造失败：当前曲目上方没有可删的条目");
+
+        player.setCurrentTrack(currentIndex);
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks, currentIndex]() {
+                return callbacks.last_track_index.load() == currentIndex;
+            }, 3000),
+            "setCurrentTrack 没有生效");
+
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        REQUIRE_MESSAGE(waitFor([&callbacks]() { return callbacks.last_position.load() > 0; }, 4000),
+                        "起播后位置没有推进");
+
+        const int positionBefore     = callbacks.position_change_count.load();
+        const uint64_t lastBefore    = callbacks.last_position.load();
+        const int stateBefore        = callbacks.state_change_count.load();
+        const int trackChangesBefore = callbacks.track_change_count.load();
+
+        player.removeTrack(aboveIndex);
+
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 2; }, 3000),
+                        "removeTrack 没有生效");
+        // R2：当前曲目没换，但它的下标左移了一位 ⇒ 必须补发 onTrackChanged，否则 UI 的
+        // 选中行会指着别人的名字。删的是当前曲目「上方」的一条，故新下标恰好是 currentIndex-1。
+        CHECK_MESSAGE(
+            waitFor(
+                [&callbacks, trackChangesBefore]() {
+                    return callbacks.track_change_count.load() == trackChangesBefore + 1;
+                },
+                3000),
+            "删掉当前曲目上方的条目后没有补发 onTrackChanged（R2）");
+        CHECK_MESSAGE(callbacks.last_track_index.load() == currentIndex - 1,
+                      "补发的下标是 " << callbacks.last_track_index.load() << "，期望 "
+                                      << (currentIndex - 1));
+        // 位置回调是二次投递的：删除前已排队的那些还会照常送达。先让它们排空，
+        // 再取基线，否则「本来就在路上的位置」会被误当作删除后仍在推进。
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        const int positionAfterRemove  = callbacks.position_change_count.load();
+        const uint64_t lastAfterRemove = callbacks.last_position.load();
+        const bool advanced            = waitFor(
+            [&callbacks, positionAfterRemove, lastAfterRemove]() {
+                return callbacks.position_change_count.load() > positionAfterRemove
+                    && callbacks.last_position.load() > lastAfterRemove;
+            },
+            1500);
+
+        player.stop();
+
+        CHECK_MESSAGE(lastBefore > 0, "删除前位置为 0，播放窗口没有建立");
+        CHECK_MESSAGE(advanced,
+                      "删除当前曲目上方的条目后位置不再推进：任务被误判成别的曲目（整拍静音）");
+        CHECK_MESSAGE(callbacks.state_change_count.load() == stateBefore,
+                      "删掉一条不相干的曲目不应产生任何状态变化");
+    }
+
+    // #268 / A4：播放中删掉当前曲目**下方**的一条 —— 当前曲目与它的下标都没变，
+    // 因此不得补发 onTrackChanged（R2 的反面），也不得有任何状态事件。
+    TEST_CASE("removing a track below the current one emits no track change")
+    {
+        TempMediaDir temp("edita4");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        REQUIRE(writeAllBytes(temp.file("alpha.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("bravo.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("charlie.wav"), tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 3; }, 5000),
+                        "三曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        const int alphaIndex   = trackIndexBySuffix(callbacks, "alpha");
+        const int bravoIndex   = trackIndexBySuffix(callbacks, "bravo");
+        const int charlieIndex = trackIndexBySuffix(callbacks, "charlie");
+        REQUIRE_MESSAGE(alphaIndex >= 0, "回调里认不出 alpha.wav");
+        REQUIRE_MESSAGE(bravoIndex >= 0, "回调里认不出 bravo.wav");
+        REQUIRE_MESSAGE(charlieIndex >= 0, "回调里认不出 charlie.wav");
+        const int currentIndex = std::min(alphaIndex, std::min(bravoIndex, charlieIndex));
+        const int belowIndex   = std::max(alphaIndex, std::max(bravoIndex, charlieIndex));
+        REQUIRE_MESSAGE(currentIndex < belowIndex, "构造失败：当前曲目下方没有可删的条目");
+
+        player.setCurrentTrack(currentIndex);
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks, currentIndex]() {
+                return callbacks.last_track_index.load() == currentIndex;
+            }, 3000),
+            "setCurrentTrack 没有生效");
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        REQUIRE_MESSAGE(waitFor([&callbacks]() { return callbacks.last_position.load() > 0; }, 4000),
+                        "起播后位置没有推进");
+
+        const int trackChangesBefore = callbacks.track_change_count.load();
+        const int stateChangesBefore = callbacks.state_change_count.load();
+
+        player.removeTrack(belowIndex);
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 2; }, 3000),
+                        "removeTrack 没有生效");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        player.stop();
+
+        CHECK_MESSAGE(callbacks.track_change_count.load() == trackChangesBefore,
+                      "当前曲目没换、下标也没变，不应补发 onTrackChanged");
+        CHECK_MESSAGE(callbacks.last_track_index.load() == currentIndex,
+                      "当前曲目下标被改成了 " << callbacks.last_track_index.load());
+        CHECK_MESSAGE(callbacks.state_change_count.load() == stateChangesBefore,
+                      "删掉一条不相干的曲目不应产生任何状态变化");
+    }
+
+    // #268 / A5：播放中删掉当前曲目 —— 载荷先到（R1），随后是曲目三连，状态不动。
+    TEST_CASE("removing the current track substitutes a successor without stopping")
+    {
+        TempMediaDir temp("edita5");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        REQUIRE(writeAllBytes(temp.file("alpha.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("bravo.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("charlie.wav"), tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 3; }, 5000),
+                        "三曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        // 取中间下标：删掉它之后一定还有后继可补位。
+        const int currentIndex = 1;
+        player.setCurrentTrack(currentIndex);
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks, currentIndex]() {
+                return callbacks.last_track_index.load() == currentIndex;
+            }, 3000),
+            "setCurrentTrack 没有生效");
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        REQUIRE_MESSAGE(waitFor([&callbacks]() { return callbacks.last_position.load() > 0; }, 4000),
+                        "起播后位置没有推进");
+
+        const size_t eventsBefore    = callbacks.eventSequence().size();
+        const int stateChangesBefore = callbacks.state_change_count.load();
+
+        player.removeTrack(currentIndex);
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 2; }, 3000),
+                        "removeTrack 没有生效");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks, stateChangesBefore]() {
+                return callbacks.track_change_count.load() > 0;
+            }, 3000),
+            "删掉当前曲目后没有补发 onTrackChanged");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        player.stop();
+
+        const std::vector<std::string> events = callbacks.eventSequence();
+        size_t playlistAt                     = events.size();
+        for (size_t i = eventsBefore; i < events.size(); ++i) {
+            if (events[i] == "playlist") {
+                playlistAt = i;
+                break;
+            }
+        }
+        REQUIRE_MESSAGE(playlistAt + 3 < events.size(), "删除后的回调序列不足四个事件");
+        CHECK_MESSAGE(events[playlistAt + 1] == "track", "PL 之后第一个事件不是 TC");
+        CHECK_MESSAGE(events[playlistAt + 2] == "duration", "TC 之后第一个事件不是 DC");
+        CHECK_MESSAGE(events[playlistAt + 3] == "position", "DC 之后第一个事件不是 PC");
+        CHECK_MESSAGE(callbacks.state_change_count.load() == stateChangesBefore,
+                      "Playing 下删当前曲目应保持 Playing，不得发 onStateChanged");
+        CHECK_MESSAGE(callbacks.last_state == soundbridge::PlayerState::Playing,
+                      "删除后状态不是 Playing");
+    }
+
+    // #268 / A6：逐条删到 0 —— 每次都发载荷，最后一次是空载荷 + Stopped。
+    TEST_CASE("removing every track ends in a stopped empty playlist")
+    {
+        TempMediaDir temp("edita6");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        REQUIRE(writeAllBytes(temp.file("alpha.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("bravo.wav"), tone));
+        REQUIRE(writeAllBytes(temp.file("charlie.wav"), tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 3; }, 5000),
+                        "三曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        const int stateChangesBefore = callbacks.state_change_count.load();
+
+        for (int remaining = 2; remaining >= 0; --remaining) {
+            const int playlistsBefore = callbacks.playlist_change_count.load();
+            player.removeTrack(0); // 每次都删当前曲目：覆盖「补位」与「置空」两条路径
+            REQUIRE_MESSAGE(
+                waitFor([&callbacks, playlistsBefore]() {
+                    return callbacks.playlist_change_count.load() == playlistsBefore + 1;
+                },
+                3000),
+                "第 " << (3 - remaining) << " 次删除没有发出列表载荷");
+            CHECK_MESSAGE(player.trackCount() == remaining,
+                          "删除后曲目数为 " << player.trackCount() << "，期望 " << remaining);
+            CHECK_MESSAGE(static_cast<int>(callbacks.playlistSnapshot().size()) == remaining,
+                          "载荷条数与剩余条数不一致");
+        }
+
+        const bool stopped
+            = waitFor([&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+                      3000);
+        player.stop();
+
+        CHECK_MESSAGE(stopped, "删到空之后状态没有回到 Stopped");
+        CHECK_MESSAGE(callbacks.playlistSnapshot().empty(), "最后一次载荷不是空列表");
+        CHECK_MESSAGE(callbacks.state_change_count.load() == stateChangesBefore + 1,
+                      "删到空只应产生一次状态事件（Stopped），实际多出 "
+                          << (callbacks.state_change_count.load() - stateChangesBefore - 1));
+    }
+
+    // #268 / A7：删到空之后再 addTrack 同一个路径 —— 能入列、能播放。
+    // uid 单调不复用（ADR 0018），历史失败集合不可能拦到新入列的条目。
+    TEST_CASE("a track can be re-added and played after the playlist was emptied")
+    {
+        TempMediaDir temp("edita7");
+        const std::vector<char> tone = makeToneWavBytes(10);
+        const std::string path       = temp.file("alpha.wav");
+        REQUIRE(writeAllBytes(path, tone));
+
+        MockPlayerCallbacks callbacks;
+        soundbridge::PlayerConfig config;
+        config.logDirectory = "./log";
+        soundbridge::Player player(&callbacks, config);
+        player.addMusicDirectory(temp.dir());
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 1; }, 5000),
+                        "单曲列表没有加载");
+        REQUIRE_MESSAGE(
+            waitFor([&callbacks]() { return callbacks.playlist_change_count.load() > 0; }, 3000),
+            "列表回调没有到达");
+
+        player.play();
+        if (!waitFor([&player]() { return player.state() == soundbridge::PlayerState::Playing; },
+                     4000)) {
+            skipCase("no usable audio device: play never reached Playing");
+            return;
+        }
+        player.removeTrack(0);
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 0; }, 3000),
+                        "删空失败");
+        REQUIRE_MESSAGE(
+            waitFor([&player]() { return player.state() == soundbridge::PlayerState::Stopped; },
+                    3000),
+            "删空后没有回到 Stopped");
+
+        const int playlistsBefore = callbacks.playlist_change_count.load();
+        const int tracksBefore    = callbacks.track_change_count.load();
+        player.addTrack(path);
+        REQUIRE_MESSAGE(waitFor([&player]() { return player.trackCount() == 1; }, 3000),
+                        "addTrack 没有入列");
+        CHECK_MESSAGE(
+            waitFor([&callbacks, playlistsBefore]() {
+                return callbacks.playlist_change_count.load() == playlistsBefore + 1;
+            }, 3000),
+            "addTrack 没有发出列表载荷");
+        CHECK_MESSAGE(
+            waitFor([&callbacks, tracksBefore]() {
+                return callbacks.track_change_count.load() == tracksBefore + 1;
+            }, 3000),
+            "空列表首发没有把新条目设为当前曲目");
+        CHECK_MESSAGE(callbacks.last_track_index.load() == 0, "首发曲目的下标不是 0");
+
+        player.play();
+        const bool playing = waitFor(
+            [&player]() { return player.state() == soundbridge::PlayerState::Playing; }, 4000);
+        player.stop();
+        CHECK_MESSAGE(playing, "删空后重新入列的曲目无法播放（被历史失败集合拦截？）");
     }
 }

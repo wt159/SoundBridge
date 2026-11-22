@@ -17,12 +17,14 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <sys/stat.h>
 // windows.h（经 Utf8Path.h 进来）把 ERROR 定义成宏（0），会打断本文件里
 // StreamDecoderState::ERROR 的枚举名。与 sdk/test/mocks/HttpMocks.hpp 同一处理：
 // push 后 undef，本 TU 内不再需要这个宏。
 #pragma push_macro("ERROR")
 #undef ERROR
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -120,6 +122,32 @@ std::basic_string<CharT> leadingPrefix(const std::basic_string<CharT> &path)
     return std::basic_string<CharT>();
 }
 
+// `addTrack` 的「传目录即丢弃」判据（契约 §4.1）。必须在队列线程调用。
+// Windows 走 `_wstat`：路径可能含非 ASCII，窄字符 API 会按 CP_ACP 解释而失效。
+bool pathIsDirectory(const std::string &path)
+{
+    if (path.empty()) {
+        return false;
+    }
+#ifdef _WIN32
+    const std::wstring wide = sdk_utils::toWideString(path.c_str());
+    if (wide.empty()) {
+        return false;
+    }
+    struct _stat info;
+    if (_wstat(wide.c_str(), &info) != 0) {
+        return false;
+    }
+    return (info.st_mode & _S_IFDIR) != 0;
+#else
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0) {
+        return false;
+    }
+    return S_ISDIR(info.st_mode);
+#endif
+}
+
 } // namespace
 
 std::string deriveMusicId(const std::string &path)
@@ -177,12 +205,12 @@ std::string deriveMusicId(const std::string &path)
 
 MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, AudioSpec &devSpec)
     : m_callback(callback)
-    , m_curIndex(0)
-    , m_selectIndex(0)
+    , m_count(0)
     , m_workQueue(wq)
     , m_devSpec(devSpec)
     , m_musicListProperties()
     , m_playbackMode(MusicPlaybackMode::Sequential)
+    , m_nextUid(1)
     , m_randomEngine(std::random_device {}())
 {
     m_musicListProperties.clear();
@@ -223,13 +251,28 @@ void MusicPlayList::setCurrentIndex(int index)
 {
     m_workQueue->asyncRunTask([this, index]() { _setCurrentIndex(index); });
 }
+void MusicPlayList::addTrack(const std::string &musicPath)
+{
+    LOG_INFO(LOG_TAG, "addTrack : %s", musicPath.data());
+    m_workQueue->asyncRunTask(&MusicPlayList::_addTrack, this, musicPath);
+}
+void MusicPlayList::removeTrack(int index)
+{
+    LOG_INFO(LOG_TAG, "removeTrack : %d", index);
+    m_workQueue->asyncRunTask(&MusicPlayList::_removeTrack, this, index);
+}
+void MusicPlayList::clearPlaylist()
+{
+    LOG_INFO(LOG_TAG, "clearPlaylist");
+    m_workQueue->asyncRunTask(&MusicPlayList::_clearPlaylist, this);
+}
 void MusicPlayList::updateList()
 {
     m_workQueue->asyncRunTask(&MusicPlayList::_updateList, this);
 }
 int MusicPlayList::getMusicCount()
 {
-    return m_curIndex.load();
+    return m_count.load();
 }
 
 void MusicPlayList::setPlaybackMode(MusicPlaybackMode mode)
@@ -244,24 +287,24 @@ MusicPlaybackMode MusicPlayList::playbackMode() const
 
 bool MusicPlayList::nextSync()
 {
-    if (m_curIndex.load() == 0 || m_selectMusicProperties == nullptr) {
+    if (m_count.load() == 0 || m_selectMusicProperties == nullptr) {
         return false;
     }
-    return selectTrack((m_selectMusicProperties->index + 1) % m_curIndex.load());
+    return selectTrack((m_selectMusicProperties->index + 1) % m_count.load());
 }
 
 bool MusicPlayList::previousSync()
 {
-    if (m_curIndex.load() == 0 || m_selectMusicProperties == nullptr) {
+    if (m_count.load() == 0 || m_selectMusicProperties == nullptr) {
         return false;
     }
-    return selectTrack((m_selectMusicProperties->index + m_curIndex.load() - 1)
-                       % m_curIndex.load());
+    return selectTrack((m_selectMusicProperties->index + m_count.load() - 1)
+                       % m_count.load());
 }
 
 bool MusicPlayList::setCurrentIndexSync(int index)
 {
-    if (m_curIndex.load() == 0) {
+    if (m_count.load() == 0) {
         return false;
     }
     if (index < 0 || static_cast<size_t>(index) >= m_musicListProperties.size()) {
@@ -278,11 +321,11 @@ void MusicPlayList::setTraceId(const std::string &traceId)
 
 bool MusicPlayList::advanceToNextTrack()
 {
-    if (m_curIndex.load() == 0 || m_selectMusicProperties == nullptr) {
+    if (m_count.load() == 0 || m_selectMusicProperties == nullptr) {
         return false;
     }
 
-    const size_t count        = m_curIndex.load();
+    const size_t count        = m_count.load();
     const size_t currentIndex = m_selectMusicProperties->index;
     switch (m_playbackMode.load()) {
     case MusicPlaybackMode::CurrentItemOnce:
@@ -327,24 +370,60 @@ bool MusicPlayList::advanceToNextTrack()
 
 bool MusicPlayList::skipToNextPlayable()
 {
-    if (m_curIndex.load() == 0 || m_selectMusicProperties == nullptr) {
+    if (m_count.load() == 0 || m_selectMusicProperties == nullptr) {
         return false;
     }
-    size_t count      = m_curIndex.load();
-    size_t startIndex = m_selectMusicProperties->index;
+    const size_t count      = m_musicListProperties.size();
+    const size_t startIndex = m_selectMusicProperties->index;
     // step 从 1 开始且最多 count-1：本曲已经在播/已失败，绕回它自己就是「同一曲重试第二次」，
     // 也会让两首坏曲互相跳过变成死循环（规格 8.2 / 实现清单 21）。
+    std::vector<size_t> order;
+    order.reserve(count > 0 ? count - 1 : 0);
     for (size_t step = 1; step < count; ++step) {
-        size_t index                 = (startIndex + step) % count;
+        order.push_back((startIndex + step) % count);
+    }
+    return selectFirstPlayable(order);
+}
+
+std::vector<size_t> MusicPlayList::seatingOrder(size_t p)
+{
+    const size_t count = m_musicListProperties.size();
+    std::vector<size_t> order;
+    if (count == 0) {
+        return order;
+    }
+    order.reserve(count);
+    if (m_playbackMode.load() == MusicPlaybackMode::Random) {
+        for (size_t index = 0; index < count; ++index) {
+            order.push_back(index);
+        }
+        std::shuffle(order.begin(), order.end(), m_randomEngine);
+        return order;
+    }
+    // Sequential / Loop / 单曲模式：从删除点起的环形顺序。单曲模式在补位语境下
+    // 退化为顺序补位序——「尾部即止」约束的是自动前进，不是「必须有当前曲目」。
+    for (size_t step = 0; step < count; ++step) {
+        order.push_back((p + step) % count);
+    }
+    return order;
+}
+
+bool MusicPlayList::selectFirstPlayable(const std::vector<size_t> &order)
+{
+    const size_t count = m_musicListProperties.size();
+    for (size_t index : order) {
+        if (index >= count) {
+            continue; // 防御：候选序由 seatingOrder 生成，正常情况下必然在范围内
+        }
         MusicPropertiesPtr candidate = m_musicListProperties.at(index);
-        if (isTrackFailed(candidate->index)) {
+        if (isTrackFailed(candidate->uid)) {
             continue;
         }
         if (!replacePlaybackTask(candidate)) {
-            markTrackFailed(candidate->index);
+            markTrackFailed(candidate->uid);
             continue;
         }
-        resetTrackProgressExcept(candidate->index);
+        resetTrackProgressExcept(candidate->uid);
         candidate->signalProperties.curPositionMs = 0;
         m_selectMusicProperties                   = candidate;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -353,24 +432,46 @@ bool MusicPlayList::skipToNextPlayable()
     return false;
 }
 
-void MusicPlayList::markTrackFailed(size_t index)
+void MusicPlayList::publishPlaylist()
 {
-    std::lock_guard<std::mutex> lock(m_failedMutex);
-    m_failedIndices.insert(index);
-    LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
-                       "track marked failed in this session index=%zu", index);
+    m_callback->updateMusicList(m_musicListProperties);
 }
 
-bool MusicPlayList::isTrackFailed(size_t index) const
+void MusicPlayList::markTrackFailed(uint64_t uid)
 {
     std::lock_guard<std::mutex> lock(m_failedMutex);
-    return m_failedIndices.find(index) != m_failedIndices.end();
+    m_failedUids.insert(uid);
+    LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
+                       "track marked failed in this session uid=%llu",
+                       static_cast<unsigned long long>(uid));
+}
+
+bool MusicPlayList::isTrackFailed(uint64_t uid) const
+{
+    std::lock_guard<std::mutex> lock(m_failedMutex);
+    return m_failedUids.find(uid) != m_failedUids.end();
 }
 
 void MusicPlayList::clearFailedTracks()
 {
     std::lock_guard<std::mutex> lock(m_failedMutex);
-    m_failedIndices.clear();
+    m_failedUids.clear();
+}
+
+uint64_t MusicPlayList::trackUidForTest(size_t index) const
+{
+    if (index >= m_musicListProperties.size() || m_musicListProperties[index] == nullptr) {
+        return 0;
+    }
+    return m_musicListProperties[index]->uid;
+}
+
+std::weak_ptr<MusicProperties> MusicPlayList::trackRefForTest(size_t index) const
+{
+    if (index >= m_musicListProperties.size()) {
+        return std::weak_ptr<MusicProperties>();
+    }
+    return std::weak_ptr<MusicProperties>(m_musicListProperties[index]);
 }
 
 void MusicPlayList::recordScanRejection(ErrorCode code)
@@ -404,9 +505,14 @@ void MusicPlayList::reportScanSummary()
 }
 void MusicPlayList::_addMusic(const std::string &musicPath)
 {
+    addMusicInternal(musicPath, false);
+}
+
+MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath, bool userInitiated)
+{
     auto openStart                       = std::chrono::steady_clock::now();
     MusicPropertiesPtr musicProperties   = std::make_shared<MusicProperties>();
-    musicProperties->index               = m_curIndex;
+    musicProperties->index               = m_musicListProperties.size();
     FileProperties &fileProperties       = musicProperties->fileProperties;
     SignalProperties &signalProperties   = musicProperties->signalProperties;
     ProcessProperties &processProperties = musicProperties->processProperties;
@@ -442,11 +548,15 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
                 // 伪清单 / 坏清单（#EXTM3U 起始但不满足 VOD 或 LIVE 正面特征集）：
                 // 明确拒绝不回退（规格 §9.1：防止空清单无限重试）。
                 delete urlSource;
-                recordScanRejection(ErrorCode::FileOpenFailed);
+                // 用户显式命令的失败不走批次汇总：一次 onError 已足够，也不留拒绝累计
+                // 去串进下一次目录扫描（契约 §4.1「失败三类」）。
+                if (!userInitiated) {
+                    recordScanRejection(ErrorCode::FileOpenFailed);
+                }
                 reportError(ErrorCode::FileOpenFailed,
                             "playlist content has neither VOD nor LIVE features",
-                            musicProperties);
-                return;
+                            musicProperties, userInitiated);
+                return nullptr;
             }
         } else {
             delete urlSource;
@@ -465,11 +575,13 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
                     extractorExtension = "m3u8";
                 } else {
                     delete icySource;
-                    recordScanRejection(ErrorCode::FileOpenFailed);
+                    if (!userInitiated) {
+                        recordScanRejection(ErrorCode::FileOpenFailed);
+                    }
                     reportError(ErrorCode::FileOpenFailed,
                                 "icy source native url open failed",
-                                musicProperties);
-                    return;
+                                musicProperties, userInitiated);
+                    return nullptr;
                 }
             } else {
                 source.reset(httpSource);
@@ -481,14 +593,20 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
         source.reset(new FileSource(musicPath.c_str()));
     }
     if (source == nullptr) {
-        recordScanRejection(ErrorCode::FileOpenFailed);
-        reportError(ErrorCode::FileOpenFailed, "new DataSource failed", musicProperties);
-        return;
+        if (!userInitiated) {
+            recordScanRejection(ErrorCode::FileOpenFailed);
+        }
+        reportError(ErrorCode::FileOpenFailed, "new DataSource failed", musicProperties,
+                    userInitiated);
+        return nullptr;
     }
     if (source->initCheck() != OK) {
-        recordScanRejection(ErrorCode::FileOpenFailed);
-        reportError(ErrorCode::FileOpenFailed, "FileSource initCheck failed", musicProperties);
-        return;
+        if (!userInitiated) {
+            recordScanRejection(ErrorCode::FileOpenFailed);
+        }
+        reportError(ErrorCode::FileOpenFailed, "FileSource initCheck failed", musicProperties,
+                    userInitiated);
+        return nullptr;
     }
     processProperties.source = source;
     // 规格 5.4 H3：拒绝的唯一出口是 createExtractor 返回空，错误码按「扩展名是否注册」分，
@@ -503,9 +621,11 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
                                                    : ErrorCode::ExtractorUnsupported;
         const char *detail   = extensionRegistered ? "extractor rejected the file header"
                                                    : "createExtractor returned nullptr";
-        recordScanRejection(code);
-        reportError(code, detail, musicProperties);
-        return;
+        if (!userInitiated) {
+            recordScanRejection(code);
+        }
+        reportError(code, detail, musicProperties, userInitiated);
+        return nullptr;
     }
     auto openEnd = std::chrono::steady_clock::now();
     auto openMs
@@ -519,20 +639,113 @@ void MusicPlayList::_addMusic(const std::string &musicPath)
     signalProperties.durationMs    = signalProperties.spec.durationMs;
     signalProperties.dataSize      = 0;
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
+    musicProperties->uid = m_nextUid++;
     m_musicListProperties.push_back(musicProperties);
-    m_curIndex++;
-    if (m_selectMusicProperties == nullptr) {
+    // 计数是 size() 的镜像：删除会压缩重排，自增语义在这里必然失效（ADR 0018 §1）。
+    m_count.store(m_musicListProperties.size());
+    if (!userInitiated && m_selectMusicProperties == nullptr) {
         // 只登记「当前曲目」：ring / decoder 是播放任务的资源，在 play 时创建。
         // 扫描阶段（包括给下一首做预缓冲）不持有任何播放资源（规格 4.3 所有权清单）。
         m_selectMusicProperties = musicProperties;
         m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
     }
-    LOGI("this music fished, m_curIndex=%d", m_curIndex.load());
+    LOGI("this music fished, m_count=%d", static_cast<int>(m_count.load()));
+    return musicProperties;
+}
+
+void MusicPlayList::_addTrack(const std::string &musicPath)
+{
+    addTrackSync(musicPath);
+}
+
+bool MusicPlayList::addTrackSync(const std::string &musicPath)
+{
+    // 传目录即丢弃（契约 §4.1）：目标只是「单个文件」。目录判定在队列线程做，
+    // 调用者线程零文件系统访问（doc/buffering-switching-spec.md §5.1 的所有权清单）。
+    if (pathIsDirectory(musicPath)) {
+        LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
+                           "addTrack dropped: path is a directory (%s)", musicPath.c_str());
+        return false;
+    }
+    const bool wasEmpty      = m_musicListProperties.empty();
+    MusicPropertiesPtr added = addMusicInternal(musicPath, true);
+    if (added == nullptr) {
+        return false;
+    }
+    // 空列表首发时契约要求 PL 先于 TC（R1），所以「设为当前」必须排在发布之后。
+    publishPlaylist();
+    if (wasEmpty && m_selectMusicProperties == nullptr) {
+        m_selectMusicProperties = added;
+        m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
+    }
+    return true;
+}
+
+void MusicPlayList::_removeTrack(int index)
+{
+    removeTrackSync(index);
+}
+
+PlaylistEditOutcome MusicPlayList::removeTrackSync(int index)
+{
+    if (index < 0 || static_cast<size_t>(index) >= m_musicListProperties.size()) {
+        LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, currentTraceId(),
+                           "removeTrack dropped: index=%d out of range (size=%zu)", index,
+                           m_musicListProperties.size());
+        return PlaylistEditOutcome::Dropped;
+    }
+    const size_t position = static_cast<size_t>(index);
+    MusicPropertiesPtr removed = m_musicListProperties[position];
+    const bool isCurrent       = (removed == m_selectMusicProperties);
+
+    m_musicListProperties.erase(m_musicListProperties.begin() + position);
+    // compaction（ADR 0018 §1）：删除即压缩，不留空洞；index 恒等于位置。
+    for (size_t k = position; k < m_musicListProperties.size(); ++k) {
+        m_musicListProperties[k]->index = k;
+    }
+    m_count.store(m_musicListProperties.size());
+
+    // R1：载荷先发，随后同一命令引发的 TC 才有可解释的下标。
+    publishPlaylist();
+
+    if (!isCurrent) {
+        return PlaylistEditOutcome::RemovedOther;
+    }
+    if (m_musicListProperties.empty()) {
+        m_selectMusicProperties.reset();
+        return PlaylistEditOutcome::CurrentCleared;
+    }
+    // 补位不是 next（ADR 0018 §3）：只要列表非空就必须有当前曲目。
+    if (!selectFirstPlayable(seatingOrder(position))) {
+        m_selectMusicProperties.reset();
+        return PlaylistEditOutcome::CurrentCleared;
+    }
+    return PlaylistEditOutcome::CurrentReplaced;
+}
+
+void MusicPlayList::_clearPlaylist()
+{
+    clearPlaylistSync();
+}
+
+bool MusicPlayList::clearPlaylistSync()
+{
+    if (m_musicListProperties.empty()) {
+        // 幂等：零回调、零查询值变化（契约 §4.1）。
+        return false;
+    }
+    m_musicListProperties.clear();
+    m_count.store(0);
+    m_selectMusicProperties.reset();
+    // 列表已空，失败集合无意义；uid 不复用，留着只会无界增长（#263 §5）。
+    clearFailedTracks();
+    publishPlaylist();
+    return true;
 }
 
 bool MusicPlayList::selectTrack(size_t index)
 {
-    if (m_curIndex.load() == 0 || index >= m_musicListProperties.size()) {
+    if (m_count.load() == 0 || index >= m_musicListProperties.size()) {
         return false;
     }
 
@@ -542,7 +755,7 @@ bool MusicPlayList::selectTrack(size_t index)
     if (!replacePlaybackTask(next)) {
         return false;
     }
-    resetTrackProgressExcept(next->index);
+    resetTrackProgressExcept(next->uid);
     next->signalProperties.curPositionMs = 0;
     m_selectMusicProperties              = next;
     m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
@@ -590,7 +803,7 @@ bool MusicPlayList::startCurrentTask()
         std::lock_guard<std::mutex> lock(m_taskMutex);
         // 暂停后恢复、重复 play：同一个任务还活着就沿用，别把已经缓冲好的 PCM 扔掉。
         // 判据只认 MusicPlayerState 的投影（decoder 状态），不新增状态机。
-        if (m_currentTask != nullptr && m_currentTask->trackIndex == current->index
+        if (m_currentTask != nullptr && m_currentTask->trackUid == current->uid
             && m_currentTask->decoder != nullptr
             && m_currentTask->decoder->state() != StreamDecoderState::IDLE
             && m_currentTask->decoder->state() != StreamDecoderState::ERROR) {
@@ -708,7 +921,8 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         return false;
     }
 
-    PlaybackTaskPtr task = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->index);
+    PlaybackTaskPtr task
+        = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid, musicProperties);
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
         m_currentTask = task;
@@ -724,10 +938,10 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
     return true;
 }
 
-void MusicPlayList::resetTrackProgressExcept(size_t keepIndex)
+void MusicPlayList::resetTrackProgressExcept(uint64_t keepUid)
 {
     for (auto &item : m_musicListProperties) {
-        if (item == nullptr || item->index == keepIndex) {
+        if (item == nullptr || item->uid == keepUid) {
             continue;
         }
         item->signalProperties.curPositionMs = 0;
@@ -736,19 +950,24 @@ void MusicPlayList::resetTrackProgressExcept(size_t keepIndex)
 }
 
 void MusicPlayList::reportError(ErrorCode code, const std::string &detail,
-                                const MusicPropertiesPtr &musicProperties)
+                                const MusicPropertiesPtr &musicProperties, bool userInitiated)
 {
     int index = -1;
     std::string path;
     if (musicProperties != nullptr) {
-        index = static_cast<int>(musicProperties->index);
-        path  = musicProperties->fileProperties.fullPath;
+        // 用户显式命令失败时该条目从未入列，没有位置可言（契约 §4.1：index 固定 -1）。
+        if (!userInitiated) {
+            index = static_cast<int>(musicProperties->index);
+        }
+        path = musicProperties->fileProperties.fullPath;
     }
     std::string traceId = currentTraceId();
     LogPrintfWithTrace(SdkLogLevel::Error, LOG_TAG, traceId, "error=%d detail=%s index=%d path=%s",
                        static_cast<int>(code), detail.c_str(), index, path.c_str());
-    bool shouldNotify
-        = (m_selectMusicProperties == nullptr || musicProperties == m_selectMusicProperties);
+    // 批量扫描的降噪门槛（已有当前曲目时不逐文件报错）不适用于用户显式命令：
+    // 那条门槛会让一次 `addTrack` 的失败完全不可见（契约 §4.1「失败三类」）。
+    bool shouldNotify = userInitiated || m_selectMusicProperties == nullptr
+                        || musicProperties == m_selectMusicProperties;
     if (m_callback != nullptr && shouldNotify) {
         m_callback->onMusicPlayListError(code, detail, index, path);
     }
