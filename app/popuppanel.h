@@ -75,7 +75,7 @@ public:
 
     /* preferredRow ≥ 0 时把面板选中行放到 min(preferredRow, n-1)：列表编辑命令之后的
        第一次全量重建用（§8.9 选中落点），其余刷新传 -1 = 跟播放行。 */
-    void setTracks(const QStringList &names, int currentIndex, int preferredRow = -1);
+    void setTracks(const QStringList &names, int currentIndex, int preferredRow);
     void updateCurrentIndex(int index);
 
 signals:

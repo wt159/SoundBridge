@@ -1381,12 +1381,22 @@ void AppUiTests::d1_main_list_delete_removes_current_row()
 
     QListWidget *list = w->findChild<QListWidget *>("mListWidget");
     list->setCurrentRow(1);
+    /* 焦点必须在主列表上：焦点在其它控件时按 Delete 不得删曲目（§8.9 的作用视图）。 */
+    list->setFocus(Qt::OtherFocusReason);
+    QTest::qWait(10);
     /* QListWidget 不处理 Delete，事件上抛到 MainWindow（§8.9 的接线方式）。 */
     QTest::keyClick(list, Qt::Key_Delete);
 
     QCOMPARE(fake.countOf("removeTrack"), 1);
     QCOMPARE(fake.lastArgOf("removeTrack"), QString("1"));
     QCOMPARE(fake.countOf("clearPlaylist"), 0);
+
+    /* 作用视图之外零命令：焦点在播放键上按 Delete 不得删曲目（§8.9 的「作用视图」
+       只有主列表与面板列表两处）。 */
+    btnOf(w.get(), "btn_play")->setFocus(Qt::OtherFocusReason);
+    QTest::qWait(10);
+    QTest::keyClick(btnOf(w.get(), "btn_play"), Qt::Key_Delete);
+    QCOMPARE(fake.countOf("removeTrack"), 1);
 }
 
 void AppUiTests::d2_delete_without_selection_is_a_no_op()
@@ -1398,6 +1408,8 @@ void AppUiTests::d2_delete_without_selection_is_a_no_op()
     QTest::qWait(30);
 
     QListWidget *list = w->findChild<QListWidget *>("mListWidget");
+    list->setFocus(Qt::OtherFocusReason);
+    QTest::qWait(10);
 
     /* 空列表：零命令、不崩。 */
     QTest::keyClick(list, Qt::Key_Delete);
@@ -1502,6 +1514,18 @@ void AppUiTests::d5_cancel_restores_normal_state()
     QVERIFY(!confirm->isVisible());
     QVERIFY(clear->isVisible());
     QCOMPARE(fake.countOf("clearPlaylist"), 0);
+
+    /* 关闭即复位的另一条路径（§8.9：Esc / 点外 / 点条目 / 再点 btn_menu）：Esc 关面板后
+       重新打开必然是常态。 */
+    clear->click();
+    QVERIFY(confirm->isVisible());
+    QTest::keyClick(w->findChild<PlaylistPopup *>("mPlaylistPopup"), Qt::Key_Escape);
+    QTest::qWait(20);
+    QVERIFY(!w->findChild<PlaylistPopup *>("mPlaylistPopup")->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(w.get(), "btn_playList_clicked"));
+    QVERIFY(!confirm->isVisible());
+    QVERIFY(clear->isVisible());
+    QCOMPARE(fake.countOf("clearPlaylist"), 0);
 }
 
 void AppUiTests::d6_confirm_clears_once_and_closes_panel()
@@ -1576,6 +1600,8 @@ void AppUiTests::d8_selection_follows_removed_row_once()
 
     QListWidget *list = w->findChild<QListWidget *>("mListWidget");
     list->setCurrentRow(4);
+    list->setFocus(Qt::OtherFocusReason);
+    QTest::qWait(10);
     QTest::keyClick(list, Qt::Key_Delete);
     QCOMPARE(fake.lastArgOf("removeTrack"), QString("4"));
 

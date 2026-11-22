@@ -288,9 +288,10 @@ void PlaylistPopup::clearButtonClicked()
 
 void PlaylistPopup::confirmClearClicked()
 {
-    /* 只发一条命令，然后关面板；关面板经 hideEvent 复位确认态。 */
-    emit clearPlaylistRequested();
+    /* 先关面板再发命令：关面板经 hideEvent 复位确认态，也保证这个按钮不可能再被点到
+       ——§8.9 要求确认只发一次 `clearPlaylist()`。 */
     hide();
+    emit clearPlaylistRequested();
 }
 
 void PlaylistPopup::cancelClearClicked()
@@ -339,8 +340,10 @@ void PlaylistPopup::setTracks(const QStringList &names, int currentIndex, int pr
     }
     updateCurrentIndex(currentIndex);
     if (preferredRow >= 0 && m_list->count() > 0) {
-        m_list->setCurrentRow(qMin(preferredRow, m_list->count() - 1),
-                              QItemSelectionModel::ClearAndSelect);
+        const int target = qMin(preferredRow, m_list->count() - 1);
+        m_list->setCurrentRow(target, QItemSelectionModel::ClearAndSelect);
+        /* updateCurrentIndex 刚把视口滚到播放行；落点行也要可见，连删才看得见邻居。 */
+        m_list->scrollToItem(m_list->item(target), QAbstractItemView::EnsureVisible);
     }
     /* 确认态在面板开着时列表被改（例如刚用 Delete 删了一条）：条数要跟着变。 */
     if (m_confirm != nullptr && m_confirm->isVisible()) {

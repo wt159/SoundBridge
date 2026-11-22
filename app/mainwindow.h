@@ -73,8 +73,10 @@ private:
     QStringList mRenderedPlaylist;
     int mRenderedTrackIndex = -1;
     /* 列表编辑命令之后的选中落点（§8.9）：第一次全量重建把 currentRow 放到
-       min(删掉的行号, n-1)，用后清零；其余刷新仍取播放行。 */
-    int mPendingSelectRow = -1;
+       min(删掉的行号, n-1)，用后清零；其余刷新仍取播放行。
+       `mPendingSelectCount` 是删除后的预期条数，只有「恰好少一条」的重建才消费锚点。 */
+    int mPendingSelectRow   = -1;
+    int mPendingSelectCount = -1;
 
     /* Music list. */
     QListWidget *mListWidget;

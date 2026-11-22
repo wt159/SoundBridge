@@ -683,7 +683,7 @@ void MainWindow::btn_playList_clicked()
         mPlaylistPopup->hide();
         return;
     }
-    mPlaylistPopup->setTracks(viewState.playlist, viewState.currentTrackIndex);
+    mPlaylistPopup->setTracks(viewState.playlist, viewState.currentTrackIndex, -1);
     mPlaylistPopup->popup();
     LogPrintf(LogLevel::Debug, kTag, "panel popup visible=%d size=%dx%d pos=%d,%d",
               mPlaylistPopup->isVisible() ? 1 : 0, mPlaylistPopup->width(),
@@ -737,20 +737,35 @@ void MainWindow::panelClearPlaylistRequested()
 
 void MainWindow::requestRemoveTrack(int row)
 {
-    if (row < 0) {
+    /* 行号来自某次渲染的快照，命令执行时刻列表可能已经变短（面板上一次重建之后又删过）：
+       越界直接丢弃，也不记锚点——否则锚点会劫持之后某次重扫的 currentRow。 */
+    if (row < 0 || row >= m_commands->trackCount()) {
         return;
     }
-    /* 先记账再下发：命令返回时 SDK 已把列表改短，渲染帧随之到达，届时按这一行定选中。 */
-    mPendingSelectRow = row;
+    /* 先记账再下发：命令返回时 SDK 已把列表改短，渲染帧随之到达，届时按这一行定选中。
+       同时记下预期条数——只有「恰好少一条」的重建才消费锚点；命令被丢弃（条数没变）
+       或期间发生了重扫（条数任意变）都让锚点作废，不做错误落点。 */
+    mPendingSelectRow   = row;
+    mPendingSelectCount = m_commands->trackCount() - 1;
     m_commands->removeTrack(row);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     /* 主列表的 Delete（§8.9）：`QListWidget` 默认不处理该键，事件自然上抛到这里。
-       不用 `QShortcut`——它依赖窗口激活，offscreen 下判据会退化成「测快捷键有没有注册」。 */
+       不用 `QShortcut`——它依赖窗口激活，offscreen 下判据会退化成「测快捷键有没有注册」。
+
+       只有焦点在主列表（或其 viewport）时才生效：§8.9 的「作用视图」只有两处列表，
+       焦点在播放键 / 复选框 / 进度条上时按 Delete 不该删掉一条曲目。 */
     if (event->key() == Qt::Key_Delete) {
-        const int row = mListWidget != nullptr ? mListWidget->currentRow() : -1;
+        QWidget *focused     = QApplication::focusWidget();
+        const bool listFocus = mListWidget != nullptr
+            && (focused == mListWidget || focused == mListWidget->viewport());
+        if (!listFocus) {
+            QMainWindow::keyPressEvent(event);
+            return;
+        }
+        const int row = mListWidget->currentRow();
         if (row >= 0) {
             requestRemoveTrack(row);
         }
@@ -891,8 +906,9 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
 
     const bool playlistChanged = (mRenderedPlaylist != viewState.playlist);
     const bool trackChanged    = (mRenderedTrackIndex != index);
-    /* 本帧的列表编辑落点（两个视图共用，§8.9）：-1 = 本帧不是「删完那一帧」。 */
-    int selectionAnchor = -1;
+    /* 本帧的列表编辑落点（两个视图共用，§8.9）：-1 = 本帧不是「删完那一帧」。
+       值是未钳制的删除行，各视图按自己的条数取 min(p, n-1)。 */
+    int editAnchorRow = -1;
     if (playlistChanged) {
         mListWidget->setUpdatesEnabled(false);
         mListWidget->clear();
@@ -933,13 +949,18 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
            其余刷新仍按播放行。播放标记与加粗不受影响——它们由 kRolePlaying 与播放
            下标决定，与 currentRow 解耦，连删才不会退化成「删当前播放行」。 */
         if (playlistChanged && mPendingSelectRow >= 0) {
-            const int target = mListWidget->count() > 0
-                                   ? qMin(mPendingSelectRow, mListWidget->count() - 1)
-                                   : -1;
-            mPendingSelectRow = -1;
-            if (target >= 0) {
-                mListWidget->setCurrentRow(target, QItemSelectionModel::ClearAndSelect);
-                selectionAnchor = target;
+            const int pendingRow = mPendingSelectRow;
+            const int expected   = mPendingSelectCount;
+            mPendingSelectRow   = -1;
+            mPendingSelectCount = -1;
+            /* 条数不是「恰好少一条」⇒ 这次重建不是本命令的结果（命令被丢弃或期间重扫），
+               不做落点，避免选中跳到与编辑无关的行。 */
+            if (mListWidget->count() == expected) {
+                editAnchorRow = pendingRow;
+                if (pendingRow >= 0 && mListWidget->count() > 0) {
+                    mListWidget->setCurrentRow(qMin(pendingRow, mListWidget->count() - 1),
+                                               QItemSelectionModel::ClearAndSelect);
+                }
             }
         }
     }
@@ -956,7 +977,7 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
        删完那一帧把同一个落点交给面板，连删才删的是邻居而不是播放行（§8.9）。 */
     if (mPlaylistPopup != nullptr && mPlaylistPopup->isVisible()) {
         if (playlistChanged) {
-            mPlaylistPopup->setTracks(viewState.playlist, index, selectionAnchor);
+            mPlaylistPopup->setTracks(viewState.playlist, index, editAnchorRow);
         } else if (trackChanged) {
             mPlaylistPopup->updateCurrentIndex(index);
         }
