@@ -560,6 +560,9 @@
 - 研究结论（[#224](https://github.com/wt159/SoundBridge/issues/224)，快照见 [`docs/research/app-ui-test-feasibility.md`](../docs/research/app-ui-test-feasibility.md)）：QtTest + offscreen 本机可用（4 例 / 72 ms），但 `MainWindow` 没有状态注入缝，拆库/加渲染入口是一次 app 层 API 改动，且新增目标违反「14 个 ctest 目标」纪律。
 - 毕业条件（三条同时满足才考虑引入）：① 给 `MainWindow` 一个不暴露 `Player` 的只读渲染入口；② CI 实测 Windows `qtbase` 含 `Qt5Test.dll`、Linux 装齐 `libqt5test5`；③ 明确新目标对目标数 / `TIMEOUT` 纪律的例外与预算。
 
+> **落地更新（2026-11-22，地图 [#248](https://github.com/wt159/SoundBridge/issues/248)）**：上列三条毕业条件**全部命中**，本节由「边界」转为「底座」。① 渲染入口与命令口见 §9.7.1 与 ADR [0016](../docs/adr/0016-app-ui-test-injection-seams.md)；② 双端能力取证见 [`docs/research/app-ui-test-ci-capability.md`](../docs/research/app-ui-test-ci-capability.md)（Windows 已实测、Linux 元数据可证，runner 实跑仍未验证）；③ 第 15 个 ctest 目标的 `TIMEOUT` 与纪律例外见 ADR [0017](../docs/adr/0017-app-ui-test-host-and-target-budget.md)。**上列三条原文保留为定稿时点的准入判据，不删改**；现行状态以 §9.7 为准。
+
+
 ### 9.6 落地状态（2026-11-21）
 
 | 判据 | 现状 | 处置 |
@@ -576,6 +579,84 @@
 **落地更新（2026-11-21，[#228](https://github.com/wt159/SoundBridge/issues/228)）**：上表的 `UI-V2` / `UI-P6`（最小尺寸）由「不满足」转为**满足**——`960×540` 与 `1200×720` 两档实测无裁切、无重叠，`960×540` 下列表出现滚动条（`UI-V2` 的滚动条要求）。上表保留时点原样，不改。
 
 **落地更新（2026-11-21，地图 [#235](https://github.com/wt159/SoundBridge/issues/235)）**：`UI-H1` / `UI-H2` / `UI-H3` 退役（§8.3 注记），`UI-V8` 作废（§7 更正四）。新增的 `UI-F*` / `UI-VOL*` / `UI-M*` 共 13 条判据中，A 类 6 条（`UI-F1` / `UI-F4` / `UI-VOL1` / `UI-VOL2` / `UI-M1` / `UI-M5`）由 §9.2 的机器核对与 `MusicId` / `PcmGain` 两个单测套件承担，B 类 7 条进 §9.3 冒烟步骤 13–17。三控件的代码实现走图外执行票，与本规格同批交付。
+
+## 9.7 自动化测试底座（2026-11-22，地图 #248）
+
+本节是「哪条判据由什么判」的唯一索引。裁决见 ADR [0016](../docs/adr/0016-app-ui-test-injection-seams.md)（注入缝）与 ADR [0017](../docs/adr/0017-app-ui-test-host-and-target-budget.md)（宿主与目标纪律）。§9.5 的三条毕业条件已全部命中，本节落地后 §9.5 的「首版无自动化 UI 测试」不再成立。
+
+### 9.7.1 目标与两条接缝
+
+| 项 | 值 |
+|---|---|
+| ctest 目标名 | `sdk_app_ui_tests`（可执行 `AppUiTests`） |
+| 注册位置 | `app/CMakeLists.txt`，`app_core` 之后；根 `CMakeLists.txt` 第 6 行 `include(CTest)` 已开启 `add_test`，`-R sdk_` 仍命中 |
+| 链接 | `app_core` + `Qt5::Widgets` + `Qt5::Test` + `sdk` |
+| `TIMEOUT` | `120`（沿用坏输入四段档，**不新增第四档**） |
+| `ENVIRONMENT` | `QT_QPA_PLATFORM=offscreen`、`SDL_AUDIODRIVER=dummy` |
+| 目标数 | 14 → 15，一次显式例外（ADR 0017） |
+
+两条接缝：
+
+1. **命令口** `PlayerCommandPort`（`app/playerport.h`）：纯虚接口，17 个方法与 `PlayerController` 同名同签名（`playPause` / `nextTrack` / `previousTrack` / `selectTrack` / `seekSeconds` / `setPlaybackMode` / `setAutoSkipOnError` / `setVolume` / `setMuted` / `addMusicDirectory` / 六个只读状态与 `viewState()`），由 `PlayerController` 实现。测试注入记录型 fake，断言「点哪个控件 → 下发哪条命令、几次」。
+2. **渲染入口** `MainWindow::renderPlayerViewState(const PlayerViewState &)`：由 `private slots` 提升为 `public slots`，**不改名**（`SLOT(renderPlayerViewState(PlayerViewState))` 连接不变）。测试直接调用它注入一帧状态。
+
+构造注入 `MainWindow(const AppUiPorts &ports = AppUiPorts(), QWidget *parent = nullptr)`，`AppUiPorts` 两个字段：
+
+| 字段 | 语义 | 为空时 |
+|---|---|---|
+| `PlayerCommandPort *player` | 命令口替身 | `nullptr` ⇒ 自建 `PlayerController`（生产路径） |
+| `QString musicDirectory` | 曲库根 | 空 ⇒ `applicationDirPath() + "/../../music"`（现状） |
+
+**不变量**：`soundbridge::Player` 公开面零改动，`SOUNDBRIDGE_ABI_VERSION` 保持 2；`PlayerController` 的构造时机不改——注入时根本不构造它，测试进程不拉起 SDL。
+
+### 9.7.2 判据分级（在册 57 条）
+
+分级三档：**自动**（进程内机器判定）、**半自动**（需 dummy 音频、真实临时文件或日志捕获，但判定值仍是机器可读）、**人工**（人眼 / 人耳，或平台限制）。
+
+| 区 | 判据 | 分级 | 判别式 |
+|---|---|---|---|
+| S | `UI-S1`–`UI-S5`、`UI-S8` | 自动 | 注入 `PlayerViewState`（状态 / 时长 / 空列表）→ 断言 `btn_play->isChecked()`、`mNowPlayingSubtitle->text()`、标题与时长标签、滑块 `maximum()` |
+| S | `UI-S6`–`UI-S7` | 自动 | 对滑块做按下 / 移动 / 释放：按住期间断言位置标签不变；释放后 fake 口收到 `seekSeconds()` |
+| L | `UI-L1`–`UI-L5`、`UI-L7` | 自动 | 注入 `playlist` / `trackIds` → 断言行文本、选中与播放标记的 `QBrush`、`scrollToItem` 后目标行落在 `visualItemRect` 可见区、`findChild<QListWidget*>()` 计数为 1 |
+| L | `UI-L6` | 半自动 | 真实临时目录（存在 / 不存在两态）+ 日志捕获：空列表 + Warning，且无窗口弹出 |
+| T | `UI-T1`–`UI-T5`、`UI-T7` | 自动 | 点击控件 → fake 口调用序列与次数；`UI-T5` 断言 tooltip 文案循环；`UI-T7` 断言 `setAutoSkipOnError` 全程只被调用一次 |
+| T | `UI-T6` | 自动 | 临时 `QSettings` ini + 销毁重建 `MainWindow`，断言模式与勾选恢复 |
+| E | `UI-E1`、`UI-E3`、`UI-E5`、`UI-E7` | 自动 | 调 `handlePlayerError(...)` 的 `autoSkip=true` 分支 / 注入带错误 subtitle 的状态 → 断言 ` - SKIPPED`、` AT 00:03`、`N FILES CANNOT BE PLAYED` 形态，且未创建任何顶层窗口 |
+| E | `UI-E2` | 自动（文案）+ 人工（呈现） | 六个字段由纯函数断言；`QMessageBox` 的呈现永久人工（§9.7.5） |
+| E | `UI-E4`、`UI-E6` | 自动 | 四个不可恢复错误码不带 ` AT `；六个文案两两不同且逐字一致（表驱动） |
+| P | `UI-P1`–`UI-P3`、`UI-P5`、`UI-P6` | 自动 | 清空 / 预置临时 ini（含 `playback/mode=99`）→ 窗口尺寸与居中、非法值回退并回写、键名集合、最小尺寸下无重叠且列表可滚动 |
+| P | `UI-P4` | 人工 | 需无 CJK 字体环境，CI 无法稳定模拟（§9.7.5） |
+| V | `UI-V1`、`UI-V2`、`UI-V5`、`UI-V6`、`UI-V7`、`UI-V9`、`UI-V10` | 自动 | 几何断言（两栏顺序、`mapTo` 不重叠、无裁切、滚动条可见）、`icon()` 非空且像素尺寸正确、qss 选择器扫描、qrc 文件存在、浮层 `geometry()` 不越界且空间不足翻转、`windowFlags() & Qt::Popup` 与 Esc / 焦点回归 |
+| V | `UI-V3` | 人工 | 判据本身是「目测可读」，且明确不以色值为判据（§9.7.5） |
+| V | `UI-V4` | 半自动 | 断言选中 / 播放 / 播放且选中三种 `QBrush` 两两可区分，不判「好看」 |
+| F | `UI-F1`–`UI-F4` | 自动 | `isCheckable()` 与 qss 两条图标分支；收藏后重建断言 ini `library/favorites` 含 id；切曲 `checked` 序列；空 id 禁用且点击不写 |
+| VOL | `UI-VOL1`–`UI-VOL2` | 自动 | 既有单测承担（`MusicPlayerVolume` 2 例、`PcmGain` 6 例），本目标不重复 |
+| VOL | `UI-VOL3`–`UI-VOL4` | 半自动 | 持久化值与 `volume` / `muted` 状态全自动；「输出音量一致」用 `PcmGain` 数学 + ring 采样取证，**不做人耳判断** |
+| M | `UI-M1`–`UI-M5` | 自动 | `btn_menu->isEnabled()` 两态、面板条目数与加粗字重、点第 3 行 → `selectTrack(2)` + 面板关闭 + 主列表同步、`next` 后高亮行在视口内 |
+
+合计：自动 50 条、半自动 4 条、人工 3 条（`UI-E2` 计入「自动（文案）+ 人工（呈现）」，只在其人工半边计数）。
+
+### 9.7.3 环境与隔离
+
+1. **offscreen 插件必须随测试 exe 部署**。2026-11-22 实测：把 `platforms/qoffscreen.dll` 拷到 exe 同目录后，`SoundBridge.exe` 才能在 `QT_QPA_PLATFORM=offscreen` 下建窗并写出 `render state=` 日志；缺它时进程停在 `Could not find the Qt platform plugin "offscreen"` 的致命对话框上，不返回、不写日志，`timeout` 只能看到退出码 `124`。`windeployqt` 的默认部署不含 offscreen，必须显式拷。
+2. **`QMessageBox` 在 Windows + offscreen 下必崩**（栈 `QMessageBox::showEvent → qt_getWindowsSystemMenu`，插件未实现 `nativeInterface()` 得到空指针）；`app/mainwindow.cpp` 的错误路径正踩这条。任何会弹模态框的用例不得在 offscreen 下执行。
+3. **QSettings 隔离**：测试 `main()` 先 `QSettings::setDefaultFormat(QSettings::IniFormat)`，再 `QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, <tmp>/pid-N)`。只有 `IniFormat` 下 `setPath` 才生效；Windows 默认的 `NativeFormat` 会写注册表。
+4. **曲库与日志**：曲库走注入的临时目录；日志目录用 `sb_test::processId()` 派生，禁止固定名——这是 `ctest -j4` 的前提。
+5. **字体**：offscreen 下 `QFontDatabase` 报 `Cannot find font directory`，`res.qrc` 的捆绑字体仍可加载；断言不得依赖像素宽度或文本像素度量。
+
+### 9.7.4 纪律与「能红」
+
+- 目标数 14 → 15 是**显式例外**，写进 `sdk/test/AGENTS.md` 的「CTest 分组与并行」、`sdk/test/CMakeLists.txt` 注释与本规格；后续任何新增目标仍需另开例外。
+- 覆盖率分母不受影响：`scripts/coverage/run_linux.sh` 只 `lcov --extract` `sdk/**` 业务源（排除 `sdk/test`、`sdk/3rdparty`），app 源天然不进分母，33% 门禁与其语义不变；**不得把 `app/**` 加入 extract 列表**。
+- 「能红」验证：每条新增用例至少做一次变异（改控件文本 / 勾选 / 命令名），确认断言失败，再 `git checkout HEAD -- <file>` 还原。无法变红的断言视为无效断言。
+
+### 9.7.5 永久人工清单
+
+| 判据 | 为什么不能自动 |
+|---|---|
+| `UI-E2`（弹窗字段与呈现） | Windows + offscreen 下 `QMessageBox` 必崩；文案由纯函数自动断言，弹窗呈现永久人工 |
+| `UI-V3`（深色主题可读性） | 判据本身是「目测可读」，且明确不以特定色值为判据 |
+| `UI-P4`（无 CJK 字体环境） | 需在无字体机器上跑，CI 无法稳定模拟 |
 
 ## 10. 界外
 

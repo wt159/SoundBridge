@@ -97,6 +97,11 @@ ctest --test-dir build -R sdk_media_smoke --output-on-failure
 `ctest -R sdk_` 共 14 个目标：7 个 `TestSdkSuite` 分组 + 7 个 `UnitTests` 分组
 （快集 / 坏输入四段 / 边解边播 / 交互）。`sdk-windows.yml` 用 `ctest -j4` 跑。
 
+**目标数例外（2026-11-22，地图 [#248](https://github.com/wt159/SoundBridge/issues/248) / ADR 0017）**：
+14 → 15 一次性显式例外已批准，第 15 个目标 `sdk_app_ui_tests`（app 层 UI 自动化，
+`TIMEOUT 120`，offscreen + dummy 音频）注册在 `app/CMakeLists.txt`（`app_core` 之后），
+随其执行票落地；此后任何新增目标仍需另开例外，不自动延展。
+
 **并行前提：每个测试进程写出去的路径必须带进程号**（`fixtures/TestProcess.hpp` 的
 `sb_test::processId()`）。反例：曾经四个 `UnitTests` 进程共用 `./log/unittest_<秒级时间戳>.log`，
 同一秒启动就撞名字，先打开的那个轮转时另一个 `open` 直接 EIO。
