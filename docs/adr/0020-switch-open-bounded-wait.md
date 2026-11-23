@@ -8,7 +8,7 @@
 
 探针后关闭（ADR [0019](0019-datasource-open-close-lease.md)）把本地文件的 `open()` 从入列推迟到每次切歌前。`replacePlaybackTask()` 在控制线程（`WorkQueue` 串行线程）上同步调用 `FileSource::acquire()`，后者执行 `_wfopen` + `_fseeki64(SEEK_END)`（`sdk/extractor/FileSource.cpp:84-94`），**没有任何超时参数**。
 
-研究（[#286](https://github.com/wt159/SoundBridge/issues/286)，证据 `research/switch-open-blocking-facts` `17ee918ba`）给出三条硬事实：
+研究（[#286](https://github.com/wt159/SoundBridge/issues/286)，证据 [`docs/research/switch-open-blocking-facts.md`](../../docs/research/switch-open-blocking-facts.md)，归档自 `research/switch-open-blocking-facts` `17ee918ba`）给出三条硬事实：
 
 1. **不存在「单次 open 超时」**：`CreateFileW` / `open(2)` 都没有超时参数；阻塞上限只由挂载 / 注册表层决定，且可能是无上限（NFS `hard` 无限重试）。
 2. **不能可靠取消**：Windows `CancelSynchronousIo` 可对「尚未返回句柄的 `CreateFileW`」发取消请求，但只是标记取消、异步生效、依赖驱动；POSIX 上普通信号 / `EINTR` / `pthread_cancel` 均无效，只有 `SIGKILL`（杀进程）。
@@ -99,3 +99,5 @@ Pending 重开失败：一次 `onError(FileOpenFailed, index≥0, path)`、`mark
 - 若真机实测显示 50 ms 等待在主流 SSD 上频繁超时（例如杀软实时扫描常态 >50 ms），应重新评估阈值，而不是放宽控制预算。
 - 若连续跳播在慢介质上的等待被证明不可接受，另开 ADR 评估并行 IO 池与请求取消语义（后者仍受「open 不可取消」约束）。
 - 若将来 `addMusicDir` 的扫描并行化落地（ADR 0019 反悔条件 ③），IO 执行器是否复用给探测路径，需另裁。
+
+**归档注记（2026-11-23）**：取证快照已 `cherry-pick -x` 进 master（`docs/research/switch-open-blocking-facts.md`），仍是时点材料。其中「SYN 重传默认次数（21 s 为推算）」「离线映射盘是否与 UNC 同链」「`pthread_cancel` 对 `TASK_KILLABLE` 的实际行为」三项**未验证**；本 ADR 的决策只依赖「没有单次 open 超时」与「无法可靠取消」两条已核实事实，不依赖这三项成立。
