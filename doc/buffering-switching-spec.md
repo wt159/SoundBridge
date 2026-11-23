@@ -162,6 +162,7 @@ ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 把一次切歌拆成 `
 5. **§5.6 的适用范围**：§5.6「不新增后台线程、不 detach」只约束**解码任务 join** 的策略，不约束 ADR 0020 的 IO 执行器。执行器只做 `acquire()`，不 join 任何解码线程；退场限时 200 ms 后 detach 的是执行器自身（ADR 0020 决策 5）。
 6. **失败与过期**：晚到结果按代际 + uid 双守卫丢弃（ADR 0020 决策 3）；失败语义仍按 [`player-state-contract.md`](player-state-contract.md) §4.1。
 7. **不预取（2026-11-23，[#288](https://github.com/wt159/SoundBridge/issues/288)）**：等待期句柄预算维持「当前 + 退役保活」≤ 2，**不引入预取槽**（裁决与反悔条件见 ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 决策 6）；出声延迟的可感知代价由 UI 层 `SWITCHING` 文案兜底（[`doc/app-ui-spec.md`](app-ui-spec.md) §2.7），不是静默。
+8. **双预算（2026-11-23，[#288](https://github.com/wt159/SoundBridge/issues/288) / [#290](https://github.com/wt159/SoundBridge/issues/290)，预算不是门禁）**：控制面响应 **≤ 100 ms**——`stop` / `pause` / `seek` 在 in-flight open 期间最坏 50 ms（等待窗口）+ 控制队列既有延迟内生效，是硬保证，由线程模型（ADR 0020）结构性成立；切歌到出声 **≤ 300 ms**——允许超窗（慢介质上等待 open 不可取消，#286），但超窗必须可见（`SWITCHING`，150 ms 迟滞），且旧曲继续出声不是静默。两者**不是同一常量的复用**，也**不与 §2 的首播门槛 300 ms（`prefillMs` 等待上限）共用语义**——首播是 `start()` 到设备首写，切歌出声含重开与收尾。数值可断言性见 [`doc/observability-contract.md`](observability-contract.md) §5.2；真机慢盘的出声预算属待验证条目。
 
 ### 5.2 时序
 
