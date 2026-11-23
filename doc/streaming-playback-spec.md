@@ -133,6 +133,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 - **构造租约**（实现补记，2026-11-22）：`FileSource` 构造成功即持有 1 个租约，以保持既有「构造即可读」的直连用法（测试 fixture、诊断工具）不变；探测结束对同一次持有调用 `release()` 即归零关闭。`acquire()` 仍只在 `0 → 1` 时真正打开。
 - 播放前 `acquire()` 由 `SourceLease` 构造触发，发生在 `replacePlaybackTask` 内、`decoder->start()` **与 `retireCurrentTask()` 之前**（后者是 #276 的硬要求：失败时旧任务不得被退役）；任务建成后接管该租约。本节只规定「失败时不得 `start()`，任务不入 `m_currentTask`」，失败的上报与状态语义见 [`player-state-contract.md`](player-state-contract.md) §4.1。
 
+> **重开执行线程（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#287](https://github.com/wt159/SoundBridge/issues/287)）**：ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 起，`acquire()` 可能在专用 IO 执行器线程执行（控制线程有界等待 50 ms，超时转 pending）；`release()` 仍在任务析构 / 控制线程。`FileSource` 的 `m_openRefs` 与 `m_lock` 已覆盖这对跨线程调用，**零读窗口**与**关闭晚于 join** 两条不变量不变。上文「发生在 `replacePlaybackTask` 内、`decoder->start()` 与 `retireCurrentTask()` 之前」的次序不变：`begin` 阶段在 IO 执行器完成 `acquire()`，`commit` 阶段才退役旧任务并 `start()` 新解码器；失败仍不 `start()`、不入 `m_currentTask`。
+
 **不变量**
 
 1. **零读窗口**：关闭期间不得出现 `readAt`。m4a / asf / ape / mkv 的 FFmpeg AVIO 缓存 `ctx->size` 快照与 `eof_reached`（取证见 [`docs/research/datasource-reopen-facts.md`](../docs/research/datasource-reopen-facts.md)），关闭后继续读会得到旧长度或假 EOF，且**不报错**——是静默截断，不是崩溃。

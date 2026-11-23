@@ -151,6 +151,17 @@
 
 **播放期重开失败时的窗口**：`acquire()` 失败**不进入**切换窗口——旧任务未被退役、新任务未建立，`m_currentTask` 不变，设备队列不清空。语义见 [`player-state-contract.md`](player-state-contract.md) §4.1 的「播放期重开失败」条。
 
+**切歌的两阶段与净空时点（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#287](https://github.com/wt159/SoundBridge/issues/287)）**
+
+ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 把一次切歌拆成 `begin`（提交重开请求 + 有界等待 50 ms）与 `commit`（退役旧任务、建 ring / decoder、发布选中项、清设备队列）。§5.1 的所有权表与 §5.2 的解码次序**一字不动**，本节只补充等待期的边界：
+
+1. **等待期**：`m_switching` 保持 true，旧任务继续出声；新 ring / decoder 尚未建立，句柄预算仍为「当前 + 退役保活」。
+2. **净空时点**：`endSegmentSwitch(true)` 的 `clearQueue()` 延后到 commit。等待期旧曲仍在播，提前净空会截断它；commit 与消费拍同处一条控制线程，「切换后净空」与「切换前净空」仍等价（§3.2）。
+3. **返回语义**：`nextSync()` / `previousSync()` / `setCurrentIndexSync()` / `skipToNextPlayable()` 的 `bool` 表示「是否接受了切换意图」，Pending 也返回 true；调用方用 `switchPending()` 判断是否已 commit。公开面不变。
+4. **自动跳轨**：候选循环在 Pending 失败后从下一个候选继续；一次用户命令只产生一个最终结果（切到某曲，或候选耗尽失败），中间候选不产生可见的切换事件。
+5. **§5.6 的适用范围**：§5.6「不新增后台线程、不 detach」只约束**解码任务 join** 的策略，不约束 ADR 0020 的 IO 执行器。执行器只做 `acquire()`，不 join 任何解码线程；退场限时 200 ms 后 detach 的是执行器自身（ADR 0020 决策 5）。
+6. **失败与过期**：晚到结果按代际 + uid 双守卫丢弃（ADR 0020 决策 3）；失败语义仍按 [`player-state-contract.md`](player-state-contract.md) §4.1。
+
 ### 5.2 时序
 
 1. 旧 decoder：`requestStop()` 只置 `m_stopRequest` / `m_abortDecode`，**不 join**；

@@ -183,6 +183,21 @@ void clearPlaylist();
 | 扫描汇总 | **不进** `m_scanRejects`：`reportScanSummary` 只谈入列期，播放期失败已有逐条 `onError` |
 | 无当前任务时 | 与今天 `selectTrack` 返回 `false` 等价：`endSegmentSwitch(false)` 保留设备队列、播放状态不变 |
 
+**等待期（pending switch）的对外语义（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#287](https://github.com/wt159/SoundBridge/issues/287)）**
+
+重开可能超过控制线程的等待窗口（ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md)：50 ms）。超窗后切歌进入 **pending**，上表各条不变，本节只补充等待期的对外可见行为。
+
+| 维度 | 裁定 |
+|---|---|
+| 状态 | 等待期**不新增状态值**，也不发中间状态事件：`Playing` 仍 `Playing`、`Paused` 仍 `Paused`、`Stopped` 仍 `Stopped` |
+| 当前曲目 | 仍是旧曲：`onTrackChanged` / `onDurationChanged` **只在 commit 时**按既有次序发出；等待期不发任何「目标曲」事件，因此失败时无需撤回 |
+| 音频 | 旧任务继续出声（`acquire()` 在退役之前，与上表同源）；设备队列的净空延后到 commit，见 [`buffering-switching-spec.md`](buffering-switching-spec.md) §5.1 的注记 |
+| `play()` | 等待期只记「就绪后起播」意图，**不取消**切换；commit 后按 `_play()` 既有路径起播。重开失败则丢弃意图并只报一次错，**不回退**去播旧曲 |
+| `stop` / `clearPlaylist` | 立即执行既有停止路径，不等重开；晚到的结果丢弃 |
+| `seek` | 维持既有 `m_switching` 丢弃语义，不新增分支 |
+| 失败 | 与上表逐字一致：一次 `onError(FileOpenFailed, index≥0, path)`、`markTrackFailed`、不重试、状态不变 |
+| 公开面 | `PlayerCallbacks` 一字不动、无新回调、`SOUNDBRIDGE_ABI_VERSION` 保持 2；pending 只是内部时序 |
+
 ## 5. 查询与事件的真相源（对应「单一真相源：查询与事件的一致性」）
 
 - **唯一权威**是内部 `MusicPlayerState`（状态）与消费端累计值 `segmentBaseBytes + m_readPos`（位置），标称时长由提取器 init 期给出。对外 `state()` / `duration()` / `position()` 是它们的实时投影；`onStateChanged` 等事件是**变更通知**，允许滞后于查询但不得丢失（停机期除外）。
