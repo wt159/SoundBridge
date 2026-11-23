@@ -16,6 +16,10 @@ namespace {
 // 仅供测试（ADR 0010）：见 FileSource.h 的例外边界。默认 0，生产路径零开销。
 std::atomic<uint32_t> g_readDelayMs(0);
 
+// 仅供测试（ADR 0011 / 地图 #285）：注入 open 延迟，模拟慢介质上的切歌重开。
+// 与 g_readDelayMs 同一纪律：默认 0、只影响 acquire() 的调用线程、测完必须归零。
+std::atomic<uint32_t> g_openDelayMs(0);
+
 // 进程级句柄预算（规格 observability-contract.md §5.1，L2 只记录不设阈值）。
 // 维护点只在 acquire/release 的 0↔1 边界与析构，全部发生在控制线程。
 std::atomic<int> g_openHandles(0);
@@ -171,6 +175,12 @@ status_t FileSource::mapOpenErrno(int err)
 
 status_t FileSource::acquire()
 {
+    // 仅供测试（#285 / ADR 0020）：慢介质模拟。延迟在拿锁之前——卡住的 open
+    // 本来就不该影响别的读者（真实场景里读的是已打开句柄）。
+    const uint32_t openDelayMs = g_openDelayMs.load(std::memory_order_acquire);
+    if (openDelayMs > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(openDelayMs));
+    }
     // 与 readAt 共用 m_lock：控制线程打开/关闭时不会撕裂正在进行的读。
     // 关闭晚于 join 由租约与声明顺序保证（规格 §4.5 不变量 3/4），这里只做串行化。
     std::lock_guard<std::mutex> lock(m_lock);
@@ -221,6 +231,11 @@ void FileSource::resetHandleStatsForTest()
 void FileSource::setReadDelayForTest(uint32_t ms)
 {
     g_readDelayMs.store(ms, std::memory_order_release);
+}
+
+void FileSource::setOpenDelayForTest(uint32_t ms)
+{
+    g_openDelayMs.store(ms, std::memory_order_release);
 }
 
 bool FileSource::isOpen() const

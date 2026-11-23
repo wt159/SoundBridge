@@ -175,6 +175,26 @@ bool pathIsDirectory(const std::string &path)
 
 } // namespace
 
+// pending 切歌的请求状态（ADR 0020）。IO 线程只写 lease / status 两个字段，
+// 控制线程在 commit 时读；两者之间由 runBounded 的完成标志或 WorkQueue 回投
+// 任务建立 happens-before（互斥量与队列锁）。
+struct MusicPlayList::PendingSwitch {
+    uint64_t generation = 0;
+    uint64_t uid        = 0;
+    MusicPropertiesPtr properties;
+    std::shared_ptr<SourceLease> lease;
+    sdk_utils::status_t status = sdk_utils::UNKNOWN_ERROR;
+    SwitchOrigin origin        = SwitchOrigin::User;
+    // 自动跳过 / 段末前进的剩余候选（order 是候选下标序，nextCandidate 是下一个要试的）。
+    std::vector<size_t> order;
+    size_t nextCandidate = 0;
+    std::chrono::steady_clock::time_point begin;
+    // 指标标签在提交时抄下来：等待期 traceId 可能已被后续命令刷新。
+    std::string traceId;
+    std::string path;
+    int index = -1;
+};
+
 std::string deriveMusicId(const std::string &path)
 {
     if (path.empty()) {
@@ -237,6 +257,9 @@ MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, Aud
     , m_playbackMode(MusicPlaybackMode::Sequential)
     , m_nextUid(1)
     , m_randomEngine(std::random_device {}())
+    , m_openExecutor(new SwitchOpenExecutor())
+    , m_switchPending(false)
+    , m_switchGeneration(0)
 {
     m_musicListProperties.clear();
     LOG_INFO(LOG_TAG, "MusicPlayList construct");
@@ -244,6 +267,14 @@ MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, Aud
 
 MusicPlayList::~MusicPlayList()
 {
+    // ADR 0020 决策 5：先作废在途切换（结果回投后会被弱引用丢弃），再给执行器
+    // 最多 200 ms 收尾；仍卡在 open() 里则 detach。**不允许**为了「无线程泄漏」
+    // 改成无限 join——退出会被 SMB 60 s / NFS 无限重试顶住。
+    // notify=false：回调对象可能已半析构，只作废不通知。
+    cancelPendingSwitch(false);
+    if (m_openExecutor != nullptr) {
+        m_openExecutor->shutdown(std::chrono::milliseconds(200));
+    }
     // 析构是「join 必须由发起线程完成」的唯一例外（规格 4.4「析构例外」）：
     // 这里同样只 join、不 detach，销毁顺序是 decoder 先于 ring（见 PlaybackTask）。
     stopCurrentTask();
@@ -352,45 +383,40 @@ bool MusicPlayList::advanceToNextTrack()
 
     const size_t count        = m_count.load();
     const size_t currentIndex = m_selectMusicProperties->index;
+    // 段末前进与自动跳过共用同一个候选循环（ADR 0020）：Pending 也算「已接受」，
+    // 失败时由 settlePendingFailure 从剩余候选继续。
+    std::vector<size_t> order;
     switch (m_playbackMode.load()) {
     case MusicPlaybackMode::CurrentItemOnce:
         return false;
     case MusicPlaybackMode::CurrentItemInLoop:
-        return selectTrack(currentIndex);
+        order.push_back(currentIndex);
+        break;
     case MusicPlaybackMode::Sequential:
         for (size_t index = currentIndex + 1; index < count; ++index) {
-            if (selectTrack(index)) {
-                return true;
-            }
+            order.push_back(index);
         }
-        return false;
+        break;
     case MusicPlaybackMode::Loop:
         for (size_t step = 1; step <= count; ++step) {
-            size_t index = (currentIndex + step) % count;
-            if (selectTrack(index)) {
-                return true;
-            }
+            order.push_back((currentIndex + step) % count);
         }
-        return false;
+        break;
     case MusicPlaybackMode::Random: {
-        std::vector<size_t> candidates;
-        candidates.reserve(count);
         for (size_t index = 0; index < count; ++index) {
             if (count > 1 && index == currentIndex) {
                 continue;
             }
-            candidates.push_back(index);
+            order.push_back(index);
         }
-        std::shuffle(candidates.begin(), candidates.end(), m_randomEngine);
-        for (size_t index : candidates) {
-            if (selectTrack(index)) {
-                return true;
-            }
+        std::shuffle(order.begin(), order.end(), m_randomEngine);
+        if (order.empty() && count == 1) {
+            order.push_back(currentIndex);
         }
-        return count == 1 ? selectTrack(currentIndex) : false;
+        break;
     }
     }
-    return false;
+    return tryCandidates(order, 0, SwitchOrigin::EndOfStream);
 }
 
 bool MusicPlayList::skipToNextPlayable()
@@ -407,7 +433,9 @@ bool MusicPlayList::skipToNextPlayable()
     for (size_t step = 1; step < count; ++step) {
         order.push_back((startIndex + step) % count);
     }
-    return selectFirstPlayable(order);
+    // 失败终态由调用方决定（解码错误落 Paused、设备错误落 Stopped），候选循环本身
+    // 只负责接受意图与续做。
+    return selectFirstPlayable(order, SwitchOrigin::AutoSkip);
 }
 
 std::vector<size_t> MusicPlayList::seatingOrder(size_t p)
@@ -433,10 +461,17 @@ std::vector<size_t> MusicPlayList::seatingOrder(size_t p)
     return order;
 }
 
-bool MusicPlayList::selectFirstPlayable(const std::vector<size_t> &order)
+bool MusicPlayList::selectFirstPlayable(const std::vector<size_t> &order, SwitchOrigin origin)
+{
+    return tryCandidates(order, 0, origin);
+}
+
+bool MusicPlayList::tryCandidates(const std::vector<size_t> &order, size_t from,
+                                  SwitchOrigin origin)
 {
     const size_t count = m_musicListProperties.size();
-    for (size_t index : order) {
+    for (size_t i = from; i < order.size(); ++i) {
+        const size_t index = order.at(i);
         if (index >= count) {
             continue; // 防御：候选序由 seatingOrder 生成，正常情况下必然在范围内
         }
@@ -444,14 +479,21 @@ bool MusicPlayList::selectFirstPlayable(const std::vector<size_t> &order)
         if (isTrackFailed(candidate->uid)) {
             continue;
         }
-        if (!replacePlaybackTask(candidate)) {
+        const SwitchStart start = beginSwitch(candidate, origin);
+        if (start == SwitchStart::Failed) {
             markTrackFailed(candidate->uid);
             continue;
         }
-        resetTrackProgressExcept(candidate->uid);
-        candidate->signalProperties.curPositionMs = 0;
-        m_selectMusicProperties                   = candidate;
-        m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
+        if (start == SwitchStart::Pending) {
+            // 等待期失败后从下一个候选继续（ADR 0020 决策 4）；一次用户命令
+            // 只产生一个最终结果，中间候选不产生可见的切换事件。
+            if (m_pendingSwitch != nullptr) {
+                m_pendingSwitch->order         = order;
+                m_pendingSwitch->nextCandidate = i + 1;
+            }
+            return true;
+        }
+        publishSelection(candidate);
         return true;
     }
     return false;
@@ -758,6 +800,15 @@ PlaylistEditOutcome MusicPlayList::removeTrackSync(int index)
     MusicPropertiesPtr removed = m_musicListProperties[position];
     const bool isCurrent       = (removed == m_selectMusicProperties);
 
+    // pending 目标被删：作废在途切换（ADR 0020 决策 3——commit 守卫的 uid 校验
+    // 是第二道防线）。若作废的是补位切换，「列表非空必有当前曲目」的不变量由
+    // 本次删除的补位序重新建立（见下面的 !isCurrent 分支）。
+    bool pendingSeatCancelled = false;
+    if (m_pendingSwitch != nullptr && m_pendingSwitch->uid == removed->uid) {
+        pendingSeatCancelled = (m_pendingSwitch->origin == SwitchOrigin::SeatReplacement);
+        cancelPendingSwitch();
+    }
+
     m_musicListProperties.erase(m_musicListProperties.begin() + position);
     // compaction（ADR 0018 §1）：删除即压缩，不留空洞；index 恒等于位置。
     for (size_t k = position; k < m_musicListProperties.size(); ++k) {
@@ -769,6 +820,17 @@ PlaylistEditOutcome MusicPlayList::removeTrackSync(int index)
     publishPlaylist();
 
     if (!isCurrent) {
+        if (pendingSeatCancelled && !m_musicListProperties.empty()
+            && (m_selectMusicProperties == nullptr
+                || findTrackByUid(m_selectMusicProperties->uid) == nullptr)) {
+            // 被作废的补位 pending 意味着旧当前曲目已删、新落点未落地：重新补位
+            //（可能同步 commit，也可能又转 pending），与 isCurrent 分支同构。
+            if (selectFirstPlayable(seatingOrder(position), SwitchOrigin::SeatReplacement)) {
+                return PlaylistEditOutcome::CurrentReplaced;
+            }
+            m_selectMusicProperties.reset();
+            return PlaylistEditOutcome::CurrentCleared;
+        }
         return PlaylistEditOutcome::RemovedOther;
     }
     if (m_musicListProperties.empty()) {
@@ -776,7 +838,7 @@ PlaylistEditOutcome MusicPlayList::removeTrackSync(int index)
         return PlaylistEditOutcome::CurrentCleared;
     }
     // 补位不是 next（ADR 0018 §3）：只要列表非空就必须有当前曲目。
-    if (!selectFirstPlayable(seatingOrder(position))) {
+    if (!selectFirstPlayable(seatingOrder(position), SwitchOrigin::SeatReplacement)) {
         m_selectMusicProperties.reset();
         return PlaylistEditOutcome::CurrentCleared;
     }
@@ -790,6 +852,9 @@ void MusicPlayList::_clearPlaylist()
 
 bool MusicPlayList::clearPlaylistSync()
 {
+    // 清空是终态命令：在途切换作废（ADR 0020 决策 3）。不经播放器的直接调用
+    //（测试）也要保证门闩被清、晚到结果被代际挡住。
+    cancelPendingSwitch();
     if (m_musicListProperties.empty()) {
         // 幂等：零回调、零查询值变化（契约 §4.1）。
         return false;
@@ -812,14 +877,18 @@ bool MusicPlayList::selectTrack(size_t index)
     MusicPropertiesPtr next = m_musicListProperties.at(index);
     // 切歌窗口：旧任务只置取消位并移入退役槽（不 join，旧 ring 保活到回收），
     // 新任务用新的 ring，所以上一首的 PCM 不可能流进下一首（规格 §5.1 / 4.1 切歌行）。
-    if (!replacePlaybackTask(next)) {
+    // ADR 0020：重开可能超窗转 pending——此时「意图已接受」但尚未 commit，
+    // 选中项与当前任务都保持旧值，发布留给 onSwitchOpenCompleted。
+    switch (beginSwitch(next, SwitchOrigin::User)) {
+    case SwitchStart::Failed:
         return false;
+    case SwitchStart::Pending:
+        return true;
+    case SwitchStart::Committed:
+        publishSelection(next);
+        return true;
     }
-    resetTrackProgressExcept(next->uid);
-    next->signalProperties.curPositionMs = 0;
-    m_selectMusicProperties              = next;
-    m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
-    return true;
+    return false;
 }
 
 void MusicPlayList::_next()
@@ -875,6 +944,9 @@ bool MusicPlayList::startCurrentTask()
 
 void MusicPlayList::stopCurrentTask()
 {
+    // stop 是终态命令：在途切换一并作废（ADR 0020 决策 3）——否则晚到的 IO 结果
+    // 会在设备已关之后重建任务。通知播放器清门闩。
+    cancelPendingSwitch();
     // stop 是终态：先回收退役任务，再回收当前任务，两个都同步 join。
     joinRetiredTask();
     PlaybackTaskPtr task;
@@ -961,24 +1033,34 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         return false;
     }
 
-    // 切歌开销：旧任务退役（只置取消位，不 join）到新任务 start() 完成的那段时间。
-    // 与 init 只读扫描耗时同构——只记录，不进首播判据、不设阈值（规格 4.3 / 11）。
-    const auto switchStart = std::chrono::steady_clock::now();
-
-    // 先回收上一个退役任务，再重开：否则「当前 + 上一个退役 + 新任务」会让窗口峰值瞬时到 3
-    // （#277 判据 D3 实测打红）。与既有切歌相比，join 被提前了几行——代价相同（旧线程通常
-    // 已退出，join 立即返回），收益是峰值保持在 2。retireCurrentTask 内的同一次调用随后
-    // 变成空操作。
-    joinRetiredTask();
-
+    // play-from-stop 的重开（首播、暂停后任务已死的恢复）仍在本线程同步执行：
+    // 这是调用方自己的命令在等自己的 open，不在 ADR 0020 的「切歌重开」范围内
+    // （切歌路径一律走 beginSwitch，见决策 1；慢盘上首播等待属于既有行为）。
     // 重开在退役之前（#276 / 规格 player-state-contract.md §4.1「播放期重开失败」）：
-    // acquire() 失败时旧任务未被退役，当前曲目继续播放、设备队列不清空——
-    // 否则会留下「解码器已停、状态仍是 Playing」的静音窗口。
+    // acquire() 失败时旧任务未被退役，当前曲目继续播放、设备队列不清空。
     SourceLease lease(processProperties.source);
     if (!lease.valid()) {
         reportPlaybackOpenFailure(musicProperties, lease.status());
         return false;
     }
+    std::shared_ptr<SourceLease> sharedLease = std::make_shared<SourceLease>(std::move(lease));
+    return installSwitchTask(musicProperties, sharedLease, currentTraceId());
+}
+
+// 「租约已到手」到任务接管的公共尾部（ADR 0020 决策 2）：同步 commit 与 pending
+// commit 两条出口共用，防止漂移。lease 必须已 valid；失败上报归调用方。
+bool MusicPlayList::installSwitchTask(const MusicPropertiesPtr &musicProperties,
+                                      std::shared_ptr<SourceLease> &lease,
+                                      const std::string &traceId)
+{
+    // 切换收尾开销：旧任务退役（只置取消位，不 join）到新任务 start() 完成的那段时间。
+    // pending 路径上不含等待 open 的部分——等待期已由 switch_open_ms 单独记录（#290）。
+    const auto switchStart = std::chrono::steady_clock::now();
+
+    // 先回收上一个退役任务（#277 判据 D3：窗口峰值保持在 2），再退役旧任务。
+    // pending 路径上这一次 join 在回投时执行：等待期旧任务与在途 open 并存不占
+    // 额外句柄（#286：卡住的 open 不持有文件句柄）。
+    joinRetiredTask();
 
     // 切歌软取消（规格 §5）：旧任务只 abort 并移入退役槽，不 join；
     // 新任务立即启动，join 交给退役线程退出后的消费拍，或下一次切歌 / stop / 析构。
@@ -990,14 +1072,15 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
         = std::make_shared<AudioStreamDecoder>(ring.get(), m_devSpec);
     // start() 内部先 stop/join 自己的旧线程（本实例刚建，无旧线程），再起一个新解码线程。
     // ring 的 reset() 在新解码线程的第一件事里做（规格 4.4：只有解码线程能 reset）。
-    sdk_utils::status_t ret = decoder->start(processProperties.extractor.get());
+    sdk_utils::status_t ret = decoder->start(musicProperties->processProperties.extractor.get());
     if (ret != OK || decoder->state() == StreamDecoderState::ERROR) {
         decoder->stop();
+        // 租约不移动：随调用方的 state / 局部量析构 release（失败路径不占句柄）。
         return false;
     }
 
     PlaybackTaskPtr task = std::make_shared<PlaybackTask>(ring, decoder, musicProperties->uid,
-                                                          musicProperties, std::move(lease));
+                                                          musicProperties, std::move(*lease));
     {
         std::lock_guard<std::mutex> lock(m_taskMutex);
         m_currentTask = task;
@@ -1008,12 +1091,231 @@ bool MusicPlayList::replacePlaybackTask(const MusicPropertiesPtr &musicPropertie
                               switchEnd - switchStart)
                               .count();
     Metrics::RecordTiming("track_switch_ms", static_cast<uint64_t>(switchMs),
-                          MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+                          MetricTags { traceId, musicProperties->fileProperties.fullPath,
                                        static_cast<int>(musicProperties->index) });
     // 切歌完成边界的句柄预算快照（observability-contract.md §5.1，L2 只记录）。
-    recordHandleGauges(MetricTags { currentTraceId(), musicProperties->fileProperties.fullPath,
+    recordHandleGauges(MetricTags { traceId, musicProperties->fileProperties.fullPath,
                                     static_cast<int>(musicProperties->index) });
     return true;
+}
+
+// 提交一次切歌重开请求并做有界等待（ADR 0020 决策 1）。
+MusicPlayList::SwitchStart MusicPlayList::beginSwitch(const MusicPropertiesPtr &musicProperties,
+                                                      SwitchOrigin origin)
+{
+    if (musicProperties == nullptr) {
+        return SwitchStart::Failed;
+    }
+    ProcessProperties &processProperties = musicProperties->processProperties;
+    if (processProperties.extractor == nullptr) {
+        reportError(ErrorCode::ExtractorInitFailed, "extractor is nullptr", musicProperties);
+        return SwitchStart::Failed;
+    }
+
+    // 新意图顶替旧 pending：旧状态立即失效（代际在下面递增），晚到的旧结果会在
+    // 守卫处被丢弃；旧租约随最后一个引用释放。在途请求无法取消（#286）——执行器
+    // 串行，新请求要等旧系统调用返回才开始（ADR 0020「负向代价」已登记）。
+    m_pendingSwitch.reset();
+    ++m_switchGeneration;
+
+    // 先回收上一个退役任务：acquire 成功后新旧租约短暂并存，峰值保持在 2（#277 D3）。
+    joinRetiredTask();
+
+    std::shared_ptr<PendingSwitch> state = std::make_shared<PendingSwitch>();
+    state->generation = m_switchGeneration;
+    state->uid        = musicProperties->uid;
+    state->properties = musicProperties;
+    state->origin     = origin;
+    state->begin      = std::chrono::steady_clock::now();
+    // 指标标签在提交时抄下来：等待期 traceId 可能已被后续命令刷新（ADR 0020）。
+    state->traceId    = currentTraceId();
+    state->path       = musicProperties->fileProperties.fullPath;
+    state->index      = static_cast<int>(musicProperties->index);
+
+    // 有界等待：open 在 IO 执行器线程上执行，控制线程至多等 kSwitchOpenWaitMs。
+    // job 只写 lease / status；回投与 commit 都在控制队列上做。捕获一律用弱引用：
+    // 目标析构后 job 不得再碰 MusicPlayList 的任何成员（决策 5）。
+    std::weak_ptr<PendingSwitch> weakState = state;
+    // shared_ptr 临时量立刻转存为弱引用：弱引用只延长控制块引用，不延长寿命。
+    std::weak_ptr<MusicPlayList> weakSelf = shared_from_this();
+    SwitchOpenExecutor::WaitResult wait    = m_openExecutor->runBounded(
+        std::chrono::milliseconds(kSwitchOpenWaitMs), [weakState, weakSelf]() {
+            std::shared_ptr<PendingSwitch> s = weakState.lock();
+            if (s == nullptr) {
+                return; // 状态已作废：不打开、不回投，栈引用释放时租约为空
+            }
+            const auto openStart = std::chrono::steady_clock::now();
+            SourceLease lease(s->properties->processProperties.source);
+            const auto openMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - openStart)
+                                    .count();
+            // 切歌 open 段单独计时（#290，L2 只记录不设阈值）：等待窗口与收尾拆开看。
+            Metrics::RecordTiming("switch_open_ms", static_cast<uint64_t>(openMs),
+                                  MetricTags { s->traceId, s->path, s->index });
+            s->lease  = std::make_shared<SourceLease>(std::move(lease));
+            s->status = s->lease->status();
+            // 结果回投控制队列。lock 失败 = MusicPlayList 已在析构：结果丢弃，
+            // 租约随 s 的栈引用在函数尾释放（决策 5：不碰已析构对象）。
+            std::shared_ptr<MusicPlayList> self = weakSelf.lock();
+            if (self == nullptr) {
+                return;
+            }
+            self->postSwitchOpenCompleted(weakState);
+        });
+
+    if (wait == SwitchOpenExecutor::WaitResult::Stopped) {
+        // 执行器已停止（只发生在析构竞态）：按重开失败处理，旧任务未动。
+        reportPlaybackOpenFailure(musicProperties, sdk_utils::UNKNOWN_ERROR);
+        return SwitchStart::Failed;
+    }
+    if (wait == SwitchOpenExecutor::WaitResult::Completed) {
+        // 50 ms 内拿到结果：同步 commit（SSD 常态路径，行为与既有切歌一致）。
+        if (state->lease == nullptr || !state->lease->valid()) {
+            reportPlaybackOpenFailure(musicProperties,
+                                      state->lease != nullptr ? state->lease->status()
+                                                              : sdk_utils::UNKNOWN_ERROR);
+            return SwitchStart::Failed;
+        }
+        if (commitSwitch(state)) {
+            return SwitchStart::Committed;
+        }
+        // commitSwitch 内部失败（decoder start 等）：与同步路径一致不上报，记账归调用方。
+        return SwitchStart::Failed;
+    }
+
+    // 超窗（ADR 0020 决策 1/2）：意图已接受，控制线程立即交还；commit 由 IO 结果
+    // 回投触发。等待期旧任务继续出声、门闩由播放器保持；作废走 cancelPendingSwitch。
+    Metrics::RecordCount("switch_open_pending_total", 1,
+                         MetricTags { state->traceId, state->path, state->index });
+    m_pendingSwitch = state;
+    m_switchPending.store(true);
+    return SwitchStart::Pending;
+}
+
+// 把 IO 结果投回控制队列（IO 执行器线程调用）。
+void MusicPlayList::postSwitchOpenCompleted(const std::weak_ptr<PendingSwitch> &state)
+{
+    if (m_workQueue == nullptr) {
+        return;
+    }
+    std::weak_ptr<MusicPlayList> weakSelf = shared_from_this();
+    m_workQueue->asyncRunTask([weakSelf, state]() {
+        // 双弱引用判活：MusicPlayList 已析构或状态已作废都静默丢弃（ADR 0020 决策 5）。
+        std::shared_ptr<MusicPlayList> self = weakSelf.lock();
+        std::shared_ptr<PendingSwitch> s    = state.lock();
+        if (self == nullptr || s == nullptr) {
+            return;
+        }
+        self->onSwitchOpenCompleted(s);
+    });
+}
+
+// pending 切换的 commit 出口：双守卫后走公共收尾（ADR 0020 决策 2/3）。
+bool MusicPlayList::commitSwitch(const std::shared_ptr<PendingSwitch> &state)
+{
+    // 代际仍是当前值。
+    if (state->generation != m_switchGeneration) {
+        return false;
+    }
+    // 目标条目仍在列表中、仍是同一条目（指针相等；uid 不复用，指针校验是第二道防线）。
+    MusicPropertiesPtr stillThere = findTrackByUid(state->uid);
+    if (stillThere == nullptr || stillThere != state->properties) {
+        return false;
+    }
+    return installSwitchTask(state->properties, state->lease, state->traceId);
+}
+
+// IO 结果回投的处理（控制队列线程）：守卫、提交或失败结算。
+void MusicPlayList::onSwitchOpenCompleted(const std::shared_ptr<PendingSwitch> &state)
+{
+    // 双守卫（ADR 0020 决策 3）：只认「仍是当前 pending、代际未变」的结果。
+    // 过期结果静默丢弃；租约随 state 的最后一个引用析构 release。
+    if (m_pendingSwitch != state || state->generation != m_switchGeneration) {
+        return;
+    }
+    m_pendingSwitch.reset();
+    m_switchPending.store(false);
+
+    const bool openOk = state->lease != nullptr && state->lease->valid();
+    if (openOk && commitSwitch(state)) {
+        // 发布选中项（TC/DC/PC）：与同步路径同一次序——发布先于 settlement 通知。
+        publishSelection(state->properties);
+        if (m_callback != nullptr) {
+            // 延后的净空 / 起播由播放器在 settlement 里补齐（决策 2/3）。
+            m_callback->onPendingSwitchSettled(SwitchSettlement::Committed, state->origin);
+        }
+        return;
+    }
+    if (openOk) {
+        // open 成功但 commit 内部失败（decoder start 等）：与同步路径一致不上报。
+        settlePendingFailure(state);
+        return;
+    }
+    // open 失败：按 #276 语义上报（一次 onError、记账），再续做 / 终态。
+    reportPlaybackOpenFailure(state->properties,
+                              state->lease != nullptr ? state->lease->status()
+                                                      : sdk_utils::UNKNOWN_ERROR);
+    settlePendingFailure(state);
+}
+
+// pending 失败后的候选续做与终态通知（ADR 0020 决策 4）。
+void MusicPlayList::settlePendingFailure(const std::shared_ptr<PendingSwitch> &state)
+{
+    // 自动跳轨 / 补位从下一个候选继续；中间候选不产生可见的切换事件，一次命令
+    // 最多一个最终结果。注意：等待期发生过的 compaction 会让候选下标漂移，
+    // tryCandidates 的越界防御与 commit 的 uid 守卫兜底（最坏是跳错一首，不崩溃）。
+    if (state->nextCandidate < state->order.size()
+        && tryCandidates(state->order, state->nextCandidate, state->origin)) {
+        return; // 新候选已接受（同步 commit 或又转 pending）
+    }
+    if (state->origin == SwitchOrigin::SeatReplacement) {
+        // 与同步 CurrentCleared 一致：补位耗尽，当前曲目置空；播放器落 Stopped。
+        m_selectMusicProperties.reset();
+    }
+    if (m_callback != nullptr) {
+        m_callback->onPendingSwitchSettled(SwitchSettlement::Failed, state->origin);
+    }
+}
+
+// 发布「已切到这条」：位置归零、重置其他条目进度、回调 TC（同步与 pending 共用）。
+void MusicPlayList::publishSelection(const MusicPropertiesPtr &musicProperties)
+{
+    resetTrackProgressExcept(musicProperties->uid);
+    musicProperties->signalProperties.curPositionMs = 0;
+    m_selectMusicProperties                         = musicProperties;
+    m_callback->putMusicPlayListCurBuf(m_selectMusicProperties);
+}
+
+// 作废 pending 并通知播放器清门闩（ADR 0020 决策 3）。notify=false 用于析构：
+// 回调对象可能已半析构，只作废、只递增代际，不通知。
+void MusicPlayList::cancelPendingSwitch(bool notify)
+{
+    if (m_pendingSwitch == nullptr) {
+        return;
+    }
+    const SwitchOrigin origin = m_pendingSwitch->origin;
+    // 代际递增：晚到的 IO 结果在 onSwitchOpenCompleted 守卫处被静默丢弃。
+    ++m_switchGeneration;
+    m_pendingSwitch.reset();
+    m_switchPending.store(false);
+    if (notify && m_callback != nullptr) {
+        m_callback->onPendingSwitchSettled(SwitchSettlement::Cancelled, origin);
+    }
+}
+
+MusicPropertiesPtr MusicPlayList::findTrackByUid(uint64_t uid) const
+{
+    for (const MusicPropertiesPtr &entry : m_musicListProperties) {
+        if (entry != nullptr && entry->uid == uid) {
+            return entry;
+        }
+    }
+    return nullptr;
+}
+
+bool MusicPlayList::switchPending() const
+{
+    return m_switchPending.load();
 }
 
 void MusicPlayList::resetTrackProgressExcept(uint64_t keepUid)

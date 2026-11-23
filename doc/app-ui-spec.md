@@ -129,6 +129,24 @@
 
 **注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：本表原本只描述「启动时无曲目」。列表编辑能力落地后，列表可能在**运行期**被删空，期望与本表逐字相同（标题 `—`、`IDLE`、`00:00`、播放按钮 `unchecked`），并且多一条：**面板若可见必须关闭**（§8.9）——否则会出现 §8.6 声明不存在的「空面板」。
 
+### 2.7 切歌等待的呈现（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#289](https://github.com/wt159/SoundBridge/issues/289)）
+
+切歌重开可能超过控制线程的等待窗口（ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md)）。等待期 `PlayerState` 保持原值（SDK 契约，见 [`player-state-contract.md`](player-state-contract.md) §4.1 等待期小节），没有状态回调可依；可见性由 UI 层独自承担——**计时在 UI 线程、不引入 SDK 事件、不依赖真实慢盘**（可判定性由注入延迟保证，`FileSource::setOpenDelayForTest` 只在 SDK 级测试用，UI 判据用替身驱动）。
+
+| 维度 | 裁定 |
+|---|---|
+| 文案 | `SWITCHING`（§1.4 全大写英文风格，不引入中文文案） |
+| 触发 | 切歌命令（下一首 / 上一首 / 选中）提交起计时，> **150 ms** 未收到换曲结果才上屏。150 ms 迟滞是刻意的：SSD 常态切换亚毫秒级，迟滞保证「正常切换不闪烁临时文案」 |
+| 成功撤回 | `onTrackChanged` 到达（UI 侧经 app 层内部信号 `trackSwitchSettled`，**不是**新增 SDK 回调；含同曲重播——TC 就是结果到达的唯一事实）。随后的状态渲染帧恢复状态文案 |
+| 失败撤回 | `onError` 到达：错误文案覆盖 `SWITCHING`（**错误优先于一切已到达的结果**；与 `UI-S3`「错误 subtitle 在切歌后消失」不冲突——TC 到达时既有清除逻辑不变） |
+| 新命令 | 重新计时（重启 150 ms）；已上屏的 `SWITCHING` 保留——仍在切歌中 |
+| 清空撤回 | 列表清空 / 无当前曲目：渲染帧发现空列表（清空不产生 TC）即撤回，回落状态文案 |
+| 停止终态 | EOS 段末等无 TC 的停止：无活跃守卫（UI 命令不存在），不需处理；候选循环的失败已有 `onError` 撤回 |
+| 优先级 | `SWITCHING` 覆盖错误文案（等待期上屏时）；`onError` 到达则撤回切换中、显示错误——「用户主动操作的最新反馈」优先 |
+| 边界 | 候选循环中间态（前一候选失败 → 后一候选继续）不重显示 `SWITCHING`：一次命令一个最终结果，中间错误文案持续显示到最终结果到达 |
+
+判据：`UI-S9` / `UI-S10`（§2.6）。不新增锚点（复用 `mNowPlayingSubtitle`）；计时器用真实 `QTimer`，判据窗口 60 ms / 260 ms 两侧留 90 ms 以上余量，不依赖像素度量。
+
 ### 2.6 判据
 
 | 编号 | 输入/前置 | 期望 | 类 |
@@ -141,6 +159,8 @@
 | `UI-S6` | 播放中按住滑块拖到中点不松手 | 滑块停在中点；位置标签仍显示播放位置 | B |
 | `UI-S7` | 松手 | seek 到滑块值；随后位置回调更新标签 | B |
 | `UI-S8` | 空列表 | 标题 `—`、`IDLE`、`00:00`、播放按钮 unchecked | B |
+| `UI-S9` | 切歌命令 → 150 ms → 超窗 → TC | 迟滞半边：150 ms 内 subtitle 不变；超窗后 `SWITCHING`；TC 到达（含同曲重播）撤回恢复状态文案；新命令重新计时 | B |
+| `UI-S10` | 切换中 + 清空 / 错误 | 清空（渲染帧发现空列表）回落 `IDLE`；错误到达覆盖 `SWITCHING`（错误优先于已到达的状态） | B |
 
 ## 3. 列表与曲目选择
 
@@ -601,6 +621,9 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 | 18 | 5 首素材，主列表点第 3 行后按 `Delete` | 第 3 首被移除，列表变 4 条；播放不中断（删的是当前曲目时前进一首，`position` 继续前进）；`currentRow` 落在第 3 行（原第 4 首） | `UI-D1`、`UI-D8` |
 | 19 | 打开面板按 `Delete` ×2 | 每次移除一行，面板保持打开；列表不空时 `btn_menu` 保持可用 | `UI-D3` |
 | 20 | 点 `CLEAR` → `CANCEL` → 再点 `CLEAR` → 确认 | 第一次无变化；第二次清空后列表为空、出现 `IDLE`、`btn_menu` 变为禁用、**面板自动关闭** | `UI-D4`、`UI-D5`、`UI-D6`、`UI-D7` |
+| 21 | 本机 SSD 上连续点下一首数次 | 全程不出现 `SWITCHING`（本地盘切换亚毫秒级，迟滞不闪烁）；文案直接 `NOW PLAYING`（#285 / #289） | `UI-S9`（SSD 快路径人工半边） |
+
+**注（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285)）**：步骤 21 为本图新增，是「切换中」呈现的人工观察项（自动判据已覆盖迟滞与撤回逻辑，本步骤只观察常态路径不闪烁）。慢盘路径（`SWITCHING` 实际出现）不在本机可验，属「待验证」，验证环境 = 真机网盘 / 机械盘（见 #290 的判据落点）。
 
 **注（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：步骤 18–20 为本图新增。步骤 18 的「播放不中断」指 `onStateChanged` 不出现相邻重复、`position` 持续前进；删到空时的期望与步骤 1 的空列表形态一致，见 §2.5 的注。
 
@@ -686,6 +709,7 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 |---|---|---|---|
 | S | `UI-S1`–`UI-S5`、`UI-S8` | 自动 | 注入 `PlayerViewState`（状态 / 时长 / 空列表）→ 断言 `btn_play->isChecked()`、`mNowPlayingSubtitle->text()`、标题与时长标签、滑块 `maximum()` |
 | S | `UI-S6`–`UI-S7` | 自动 | 对滑块做按下 / 移动 / 释放：按住期间断言位置标签不变；释放后 fake 口收到 `seekSeconds()` |
+| S | `UI-S9`–`UI-S10` | 自动 | 点击切歌按钮 → 真实 `QTimer` 两侧断言 `mNowPlayingSubtitle->text()`（60 ms 原文案 / 260 ms `SWITCHING`）；替身发 `trackSwitchSettled` / 清空帧 / `emitError` → 断言撤回目标文案（§2.7） |
 | L | `UI-L1`–`UI-L5`、`UI-L7` | 自动 | 注入 `playlist` / `trackIds` → 断言行文本、选中与播放标记的 `QBrush`、`scrollToItem` 后目标行落在 `visualItemRect` 可见区、`findChild<QListWidget*>()` 计数为 1 |
 | L | `UI-L6` | 半自动 | 真实临时目录（存在 / 不存在两态）+ 日志捕获：空列表 + Warning，且无窗口弹出 |
 | T | `UI-T1`–`UI-T5`、`UI-T7` | 自动 | 点击控件 → fake 口调用序列与次数；`UI-T5` 断言 tooltip 文案循环；`UI-T7` 断言 `setAutoSkipOnError` 全程只被调用一次 |
@@ -709,6 +733,8 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 **注记（2026-11-22，执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）**：上表 `S` 行判别式「按住期间断言位置标签不变」与判据表 `UI-S6` 行「位置标签仍显示播放位置」相互矛盾。实现取判据表 + §6 渲染契约：按住滑块期间**滑块值**冻结、位置标签随状态帧继续更新（`s6` 用例断言 `value()==40` 且标签为 `01:00`）。§9.3 步骤 5 的「拖动中标签不动」按「标签不跟随拖动位置」解释，与此相容。三处原文均保留，本注记只在裁决处引用。
 
 **注记（2026-11-22，地图 [#260](https://github.com/wt159/SoundBridge/issues/260)）**：上表新增 `D` 区 8 条，全部为自动分级。在册总数 **57 → 65**，自动 **50 → 58**，半自动 4、人工 3 不变。本小节标题「（在册 57 条）」与上表之后的「合计」行保留时点原文，实际计数以本注记为准。`D` 区的判别式全部落在既有 `sdk_app_ui_tests`（第 15 个目标），不新增 ctest 目标——ADR [0017](../docs/adr/0017-app-ui-test-host-and-target-budget.md) 的一次性例外已用掉。
+
+**注记（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / 执行票 [#289](https://github.com/wt159/SoundBridge/issues/289)）**：上表新增 `S` 区 `UI-S9`–`UI-S10` 两行，全部为自动分级。在册总数 **65 → 67**，自动 **58 → 60**，半自动 4、人工 3 不变（合计行与标题计数保留时点原文）。判据落在既有 `sdk_app_ui_tests`，不新增 ctest 目标；不新增锚点（复用 `mNowPlayingSubtitle`）。
 
 ### 9.7.3 环境与隔离
 
@@ -755,6 +781,17 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 5. **确认只发一次**：`btn_confirmClear` 先 `hide()` 再 `emit`，隐藏后按钮不可能再被点到，`clearPlaylist()` 必然一条；关面板经 `hideEvent` 复位确认态，Esc / 点外 / 点条目 / 再点 `btn_menu` 四条路径共用它（`d5` 覆盖 CANCEL 与 Esc 两条）。
 6. **「能红」取证**：四轮变异各红一次——禁用主列表 `Delete` 分支（`d1` / `d8` 红）、`CLEAR` 直接发命令（`d4` / `d6` 红）、去掉空列表关面板（`d7` 红）、面板删完顺手关闭（`d3` 红），每轮后 `git checkout HEAD -- <file>` 还原并复跑全绿。
 
+### 9.7.8 切歌等待呈现的落地状态（2026-11-23，执行票 [#289](https://github.com/wt159/SoundBridge/issues/289)）
+
+`UI-S9` / `UI-S10` 随本票落地，判据真源仍是 §9.7.2 的 `S` 行；以下是实现侧口径：
+
+1. **用例规模**：测试函数 62 → 64（判据函数 61 → 63，新增 `s9` / `s10`），进程内合计 65 例；仍进第 15 个目标 `sdk_app_ui_tests`，不新增 ctest 目标、不动 `TIMEOUT 120`。
+2. **计时器**：真实 `QTimer`（150 ms 单发，`MainWindow` 子对象）。不引假时钟——两侧断言留 90 ms 以上余量（60 ms / 260 ms），ci 时钟抖动不吃掉判据；代价是每用例约 500 ms，两个用例共约 1 s，总耗时仍在预算内。
+3. **撤回信号**：`PlayerController` 新增 app 层内部 Qt 信号 `trackSwitchSettled()`（`onTrackChanged` 时发射，先于状态帧）；`FakeCommandPort` 加同签名信号 + `emitSwitchSettled()` 驱动。**不是**新增 SDK 回调——`PlayerCallbacks` 虚函数口零改动，与票面「ABI / 接口」条款一致。
+4. **撤回三条路**：`trackSwitchSettled`（TC 反映，含同曲重播）；`handlePlayerError`（错误优先于已到达的状态，撤回后立即回写状态文案）；渲染帧发现空列表 / 无当前曲目（清空不产生 TC）。
+5. **错误路径不弹窗**：`s10` 的 `emitError` 走 `autoSkip=true` 分支（只打日志），offscreen 安全（§9.7.3 纪律 2）。
+6. **「能红」取证**：两个用例各含至少一条可红断言；删守卫启动 / 撤回分支后用例必红（见 #289 resolution）。
+
 ## 10. 界外
 
 - SDK 公开契约与 `PlayerViewState` 结构调整（含删除 `artist` / `album` 死字段）。
@@ -791,4 +828,6 @@ Clear all <n> tracks?   [CLEAR]  [CANCEL]    确认态（未发任何命令）
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 定稿前修正）：`UI-VOL2` 原文的「非 S16 格式不被误改」与 ADR 0013 的格式分派表自相矛盾——S32 / FLT32 / U8 / S8 是**要改**的，只有未识别格式才直通。改为逐格式表述，§8.5 补一条采样格式说明，§9.2 的 `UI-A11` / `UI-A12` 两行同步补上新增用例类别。因规格与实现同批交付、本节尚未合入 `master`，此处直接改单元格而不是挂更正注记。
 - 2026-11-21（地图 [#235](https://github.com/wt159/SoundBridge/issues/235) 收口后审计）：§8 标题改为「占位控件与转正控件」并加读法导语——原标题覆盖不了 §8.4–§8.8。`UI-A7` 补「读取侧丢空串 / 悬挂条目保留」、`UI-A8` 补「钳制后回写修正值 / 类型错误取默认 100」、`UI-A11` / `UI-A12` 由类别枚举改为「套件 + 例数 + 逐例要点」：原写法是局部枚举，会被读成完整清单（#242 / #243 的裁定里有、核对清单里看不见的条目据此补齐）。
 - 2026-11-22（地图 [#248](https://github.com/wt159/SoundBridge/issues/248) 执行票 [#257](https://github.com/wt159/SoundBridge/issues/257) 落地）：§9.7 全量判据自动化随 PR [#258](https://github.com/wt159/SoundBridge/pull/258) 落地（54 个测试函数、第 15 个目标 `sdk_app_ui_tests`，双端 CI 绿）。§9.7.2 追加注记登记 `S` 行判别式与判据表 `UI-S6` 行的矛盾及实取口径；新增 §9.7.6 落地状态。既有行一字未改。
+- 2026-11-22（地图 [#260](https://github.com/wt159/SoundBridge/issues/260) 执行票 [#269](https://github.com/wt159/SoundBridge/issues/269) 落地）：`D` 区 8 条判据 + `UI-A13` + 冒烟 18–20 + §8.9 + §9.7.7；测试函数 54 → 62，锚点 19 → 23。
+- 2026-11-23（地图 [#285](https://github.com/wt159/SoundBridge/issues/285) 执行票 [#289](https://github.com/wt159/SoundBridge/issues/289) 落地）：新增 §2.7「切歌等待的呈现」与判据 `UI-S9` / `UI-S10`；§9.3 加冒烟步骤 21（SSD 快路径不闪烁，人工）；§9.7.2 加注记（65 → 67，自动 58 → 60）；§9.7.8 落地状态。在册 65 条时点计数照旧，测试函数 62 → 64，不新增锚点与 ctest 目标。
 - 2026-11-22（地图 [#260](https://github.com/wt159/SoundBridge/issues/260) 收口）：新增播放列表编辑能力（删除单条 / 清空）。§1.3 增 4 个锚点（`btn_clear` / `mPanelConfirm` / `btn_confirmClear` / `btn_cancelClear`）；§1.4 增编辑文案；§2.5 增「运行期删空」注；§8.6 增注说明「不做」中的增删清空已部分解除；新增 §8.9（入口、选中落点、确认条三态、空列表不变量、与 `GLOSSARY.md` 的冲突登记）；§9.1 增 `D` 区，§9.2 增 `UI-A13`，§9.3 增步骤 18–20，§9.7.2 增 `D` 行与计数注记（57 → 65，自动 50 → 58）；§10 增定向解除注记。ADR [0018](../docs/adr/0018-playlist-edit-contract.md) 同批落地。既有行一字未改。

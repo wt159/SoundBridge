@@ -116,6 +116,15 @@ private:
     /* 音量写盘去抖（规格 §6.1）。 */
     QTimer *mVolumeSaveTimer;
 
+    /* 切歌等待的「切换中」呈现（地图 #285 / #289）：切歌命令提交起计时，
+       超过 150 ms 未收到换曲结果才上屏 `SWITCHING`；撤回三条路——
+       `trackSwitchSettled` 信号（TC 反映，含同曲重播）、错误信号（错误优先）、
+       渲染帧发现列表清空。等待期 `PlayerState` 保持原值（SDK 契约），
+       本计时纯 UI 层，不引入 SDK 事件。 */
+    QTimer *mSwitchGuardTimer = nullptr;
+    bool mSwitchingActive     = false;
+    int mSwitchFromIndex      = -1;
+
     std::string mAppDir;
     std::string mLogDir;
 
@@ -144,6 +153,10 @@ protected:
 
     /* 列表编辑的统一下发点（主列表 Delete 与面板 Delete 共用）。 */
     void requestRemoveTrack(int row);
+
+    /* 「切换中」守卫（#289）：四个切歌命令槽的公共启动点 / 撤回公共尾部。 */
+    void beginSwitchGuard();
+    void clearSwitchGuard();
 
 protected:
 private slots:
@@ -195,5 +208,11 @@ private slots:
 
     void handlePlayerError(int code, const QString &detail, int trackIndex, const QString &path,
                            const QString &traceId, bool autoSkipEnabled);
+
+    /* 切歌计时器超窗（#289）：上屏 `SWITCHING`。 */
+    void switchGuardTimeout();
+
+    /* SDK 换曲结果到达（TC 反映，PlayerController 转发的 Qt 信号半边）：撤回。 */
+    void playerTrackSwitchSettled();
 };
 #endif // MAINWINDOW_H

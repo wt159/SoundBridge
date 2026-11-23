@@ -179,6 +179,22 @@
 - `reportScanSummary` 的既有文案与聚合键（`ErrorCode`）**不变**；成因拆分以一条**追加**的汇总日志表达（`scan summary causes <cause>=<n> ...`，仅在有打开失败时输出），不改既有那行。
 - 判据可断言的部分：`1000` 条入列后 `datasource_open_peak == 1`、切歌窗口内 `datasource_open_handles <= 2`。成因文案只能人工看日志，**不作为门禁**。
 
+### 5.2 切歌 open 段与等待期的口径（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#290](https://github.com/wt159/SoundBridge/issues/290)）
+
+切歌重开经专用 IO 执行器（ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md)）后，等待窗口与收尾是两段，需要分开看。沿用 §5.1 模式：**不新增主表行、只加小节；只记录、不设阈值**（措辞按 §3.1）；`switch_open_ms` / `switch_open_pending_total` 与 `open_file_ms` / `track_switch_ms` 同属「代码已记录但 CI 不可见」（L2），O2 的既有裁决（不实现可见性）对它们同样适用。
+
+| 量 | 单位 | 取数点 / 落点 | 判不判 | CI 可见性 |
+|---|---|---|---|---|
+| `switch_open_ms` | ms | IO 执行器 job 内单独计时：`acquire()` 进入 → 返回（**不含**等待窗口与 commit 收尾）；`Metrics::RecordTiming`，标签 `traceId` / 路径 / 下标 | 只记录 | **不可见**（L2） |
+| `switch_open_pending_total` | count | `beginSwitch` 超窗（> 50 ms）时记 1，标签同上；控制面「有界等待生效了」的计数 | 只记录 | **不可见**（L2） |
+
+- **`track_switch_ms` 口径不变**：两阶段化后同步 commit 与 pending commit 共用同一收尾出口（`installSwitchTask`），取数窗口仍按上面 2026-11-16 时点注记的口径——「旧任务退役 → 新任务 `start()` 返回」。pending 路径上等待期不计入（已由 `switch_open_ms` 单独覆盖），两量相加不等于端到端切歌耗时，禁止跨量相减或换算（§5 既有规则）。
+- **介质分类不做**：本图不实测（无网络盘 / 机械盘环境），分类只能依赖目标介质的现场数据——与前提矛盾。两个指标带路径标签，将来若需分类由日志面事后聚合，不新增运行时自适应逻辑。
+- **等待期命令响应延迟不单独设指标**：控制面预算由线程模型保证（`kSwitchOpenWaitMs = 50` 是常量不是测量值），等待期内的命令在控制队列上照常排队执行，其延迟就是既有 WorkQueue 的延迟，不重复计量。
+- **确定性判据（自动化）**：`FileSource::setOpenDelayForTest(uint32_t ms)` 注入慢 open——落在 `acquire()` 入口、拿锁**之前**（对生产开销严格为 0：原子读一个默认为 0 的静态值），进程级生效、默认 0、只在测试显式设置。`sdk_unit_tests` 的 `MusicPlayList Pending Switch` 组 8 例用它驱动 pending 路径：50 ms 等待窗与 300 ms 注入延迟两侧断言，判据不依赖真实慢盘。
+- **真机慢盘判据（人工 / 待验证，验证环境 = 真机网盘或机械盘）**：切歌到出声 ≤ 300 ms 的预算在慢介质上**无自动化入口**（本机不实测，图内四裁之一）；登记为待验证，取证依赖真实慢盘上的 `switch_open_pending_total` 与日志时间戳，不作为门禁。
+- **数值来源（预算，不是门禁）**：控制面 100 ms / 出声 300 ms 在 [`doc/buffering-switching-spec.md`](buffering-switching-spec.md) §5 与 ADR 0020 登记；`150 ms` 是 UI 迟滞常量（[`doc/app-ui-spec.md`](app-ui-spec.md) §2.7），**不与首播门槛 300 ms 复用同一常量**——首播是 `AudioStreamDecoder::start()` 起算到设备首次 `write()`，切歌出声窗口含重开与收尾，两者不是同一个量。
+
 ## 6. 跨素材峰值差判据的状态（含一处事实更正）
 
 ### 6.1 更正

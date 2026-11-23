@@ -135,6 +135,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 > **重开执行线程（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#287](https://github.com/wt159/SoundBridge/issues/287)）**：ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 起，`acquire()` 可能在专用 IO 执行器线程执行（控制线程有界等待 50 ms，超时转 pending）；`release()` 仍在任务析构 / 控制线程。`FileSource` 的 `m_openRefs` 与 `m_lock` 已覆盖这对跨线程调用，**零读窗口**与**关闭晚于 join** 两条不变量不变。上文「发生在 `replacePlaybackTask` 内、`decoder->start()` 与 `retireCurrentTask()` 之前」的次序不变：`begin` 阶段在 IO 执行器完成 `acquire()`，`commit` 阶段才退役旧任务并 `start()` 新解码器；失败仍不 `start()`、不入 `m_currentTask`。
 
+> **不预取（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#288](https://github.com/wt159/SoundBridge/issues/288)）**：本节租约模型的持有者维持两个（当前任务 + 退役保活任务），**不引入预取槽**——句柄预算推理、`datasource_open_peak` 判据（`<= 2`）与本节的计数语义全部不变。预取裁决与反悔条件见 ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 决策 6。测试缝：`FileSource::setOpenDelayForTest(ms)` 注入慢 open（`acquire()` 入口、拿锁之前、原子读默认 0 的静态值，生产开销严格为 0；见 `doc/observability-contract.md` §5.2）。
+
 **不变量**
 
 1. **零读窗口**：关闭期间不得出现 `readAt`。m4a / asf / ape / mkv 的 FFmpeg AVIO 缓存 `ctx->size` 快照与 `eof_reached`（取证见 [`docs/research/datasource-reopen-facts.md`](../docs/research/datasource-reopen-facts.md)），关闭后继续读会得到旧长度或假 EOF，且**不报错**——是静默截断，不是崩溃。

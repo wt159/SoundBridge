@@ -190,6 +190,7 @@ void clearPlaylist();
 | 维度 | 裁定 |
 |---|---|
 | 状态 | 等待期**不新增状态值**，也不发中间状态事件：`Playing` 仍 `Playing`、`Paused` 仍 `Paused`、`Stopped` 仍 `Stopped` |
+| `Stopped` 起点 | `next()` / `previous()` / `setCurrentTrack()` 从 `Stopped` 同样接受切换意图并可转 pending（源码核对 2026-11-23：`_next` 等三处一律走 `beginSwitch`，不因无旧任务而走旁路）。等待期保持 `Stopped`——无旧曲可继续出声，静默属预期而非缺陷；既有「`Stopped` 起点必须显式 `play()` 才出声」语义不变，pending 只把 `play()` 的生效时刻推迟到 commit |
 | 当前曲目 | 仍是旧曲：`onTrackChanged` / `onDurationChanged` **只在 commit 时**按既有次序发出；等待期不发任何「目标曲」事件，因此失败时无需撤回 |
 | 音频 | 旧任务继续出声（`acquire()` 在退役之前，与上表同源）；设备队列的净空延后到 commit，见 [`buffering-switching-spec.md`](buffering-switching-spec.md) §5.1 的注记 |
 | `play()` | 等待期只记「就绪后起播」意图，**不取消**切换；commit 后按 `_play()` 既有路径起播。重开失败则丢弃意图并只报一次错，**不回退**去播旧曲 |
