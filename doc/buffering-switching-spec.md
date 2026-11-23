@@ -161,6 +161,7 @@ ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 把一次切歌拆成 `
 4. **自动跳轨**：候选循环在 Pending 失败后从下一个候选继续；一次用户命令只产生一个最终结果（切到某曲，或候选耗尽失败），中间候选不产生可见的切换事件。
 5. **§5.6 的适用范围**：§5.6「不新增后台线程、不 detach」只约束**解码任务 join** 的策略，不约束 ADR 0020 的 IO 执行器。执行器只做 `acquire()`，不 join 任何解码线程；退场限时 200 ms 后 detach 的是执行器自身（ADR 0020 决策 5）。
 6. **失败与过期**：晚到结果按代际 + uid 双守卫丢弃（ADR 0020 决策 3）；失败语义仍按 [`player-state-contract.md`](player-state-contract.md) §4.1。
+7. **不预取（2026-11-23，[#288](https://github.com/wt159/SoundBridge/issues/288)）**：等待期句柄预算维持「当前 + 退役保活」≤ 2，**不引入预取槽**（裁决与反悔条件见 ADR [0020](../docs/adr/0020-switch-open-bounded-wait.md) 决策 6）；出声延迟的可感知代价由 UI 层 `SWITCHING` 文案兜底（[`doc/app-ui-spec.md`](app-ui-spec.md) §2.7），不是静默。
 
 ### 5.2 时序
 

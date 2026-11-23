@@ -162,6 +162,12 @@ MainWindow::MainWindow(const AppUiPorts &ports, QWidget *parent)
     mVolumeSaveTimer->setInterval(400);
     connect(mVolumeSaveTimer, SIGNAL(timeout()), this, SLOT(persistVolumeState()));
 
+    /* 切歌等待守卫（#289）：150 ms 迟滞，超窗才上屏 SWITCHING。 */
+    mSwitchGuardTimer = new QTimer(this);
+    mSwitchGuardTimer->setSingleShot(true);
+    mSwitchGuardTimer->setInterval(150);
+    connect(mSwitchGuardTimer, SIGNAL(timeout()), this, SLOT(switchGuardTimeout()));
+
     connect(mVolumePopup, SIGNAL(volumeChanged(int)), this, SLOT(volumeSliderChanged(int)));
     connect(mVolumePopup, SIGNAL(mutedChanged(bool)), this, SLOT(muteToggled(bool)));
     connect(mPlaylistPopup, SIGNAL(trackActivated(int)), this, SLOT(panelTrackActivated(int)));
@@ -197,6 +203,8 @@ MainWindow::MainWindow(const AppUiPorts &ports, QWidget *parent)
         connect(m_signalSource,
                 SIGNAL(errorOccurred(int, QString, int, QString, QString, bool)), this,
                 SLOT(handlePlayerError(int, QString, int, QString, QString, bool)));
+        connect(m_signalSource, SIGNAL(trackSwitchSettled()), this,
+                SLOT(playerTrackSwitchSettled()));
     }
 
     /* Remove focus */
@@ -624,11 +632,13 @@ void MainWindow::btn_play_clicked()
 void MainWindow::btn_next_clicked()
 {
     m_commands->nextTrack();
+    beginSwitchGuard();
 }
 
 void MainWindow::btn_previous_clicked()
 {
     m_commands->previousTrack();
+    beginSwitchGuard();
 }
 
 void MainWindow::btn_favorite_clicked()
@@ -723,6 +733,7 @@ void MainWindow::muteToggled(bool muted)
 void MainWindow::panelTrackActivated(int index)
 {
     m_commands->selectTrack(index);
+    beginSwitchGuard();
 }
 
 void MainWindow::panelTrackRemoveRequested(int index)
@@ -748,6 +759,35 @@ void MainWindow::requestRemoveTrack(int row)
     mPendingSelectRow   = row;
     mPendingSelectCount = m_commands->trackCount() - 1;
     m_commands->removeTrack(row);
+}
+
+/* 切歌等待守卫（#289）：从命令提交起计时，超过 150 ms 未收到换曲结果才上屏。
+   被新命令取代 = 重启计时（已上屏的 SWITCHING 保留——仍在切歌中）。 */
+void MainWindow::beginSwitchGuard()
+{
+    mSwitchFromIndex = m_commands->currentTrackIndex();
+    mSwitchGuardTimer->start();
+}
+
+void MainWindow::clearSwitchGuard()
+{
+    mSwitchGuardTimer->stop();
+    mSwitchingActive = false;
+}
+
+void MainWindow::switchGuardTimeout()
+{
+    /* 等待期 PlayerState 保持原值（SDK 契约，ADR 0020）：不会出现状态回调帮我们
+       收尾，只能靠本计时器上屏。直接改 label——后续渲染帧由 mSwitchingActive
+       叠加保持同一文案。 */
+    mSwitchingActive = true;
+    mNowPlayingSubtitle->setText(QStringLiteral("SWITCHING"));
+}
+
+void MainWindow::playerTrackSwitchSettled()
+{
+    /* TC 反映（含同曲重播）：撤回，随后的状态渲染帧恢复 subtitle。 */
+    clearSwitchGuard();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
@@ -789,6 +829,7 @@ void MainWindow::listWidgetCliked(QListWidgetItem *item)
               clickedIndex, m_commands->currentTrackIndex(), selectedCount,
               item ? item->isSelected() : -1, item ? item->data(kRolePlaying).toBool() : -1);
     m_commands->selectTrack(clickedIndex);
+    beginSwitchGuard();
 }
 
 void MainWindow::durationSliderReleased()
@@ -876,7 +917,17 @@ void MainWindow::renderPlayerViewState(PlayerViewState viewState)
         mAutoSkipCheck->setChecked(viewState.autoSkipOnError);
         mAutoSkipCheck->blockSignals(false);
     }
-    mNowPlayingSubtitle->setText(viewState.subtitle);
+
+    /* 切歌等待的撤回判定（#289）：列表清空 / 无当前曲目（清空不产生 TC）。
+       TC 反映走 trackSwitchSettled 信号（同曲重播也撤回，帧推断做不到）。 */
+    if ((mSwitchGuardTimer->isActive() || mSwitchingActive)
+        && (viewState.playlist.isEmpty() || viewState.currentTrackIndex < 0)) {
+        clearSwitchGuard();
+    }
+    /* subtitle 上屏：切换中优先于已到达的状态文案。错误到达时 handlePlayerError
+       先撤回守卫，本处自然回落到错误文案（错误优先于一切已到达的结果）。 */
+    mNowPlayingSubtitle->setText(mSwitchingActive ? QStringLiteral("SWITCHING")
+                                                  : viewState.subtitle);
 
     /* 收藏态（§8.4）：键来自 TrackInfo::id；切曲瞬间允许一帧残留，下一次渲染校正。 */
     mCurrentTrackId.clear();
@@ -1026,6 +1077,13 @@ void MainWindow::handlePlayerError(int codeValue, const QString &detail, int tra
                                    const QString &path, const QString &traceId,
                                    bool autoSkipEnabled)
 {
+    /* 错误优先（#289）：撤回「切换中」，错误文案覆盖等待期文案。 */
+    const bool wasSwitching = mSwitchingActive;
+    clearSwitchGuard();
+    if (wasSwitching) {
+        mNowPlayingSubtitle->setText(m_commands->viewState().subtitle);
+    }
+
     const QString message = buildErrorMessageBoxText(codeValue, detail, trackIndex, path, traceId);
     const QString title   = "Playback Error";
 

@@ -47,6 +47,9 @@ signals:
     void viewStateChanged(PlayerViewState viewState);
     void errorOccurred(int code, const QString &detail, int trackIndex, const QString &path,
                        const QString &traceId, bool autoSkipEnabled);
+    /* 换曲结果到达（onTrackChanged 的 Qt 信号半边，地图 #285 / #289）：切歌等待
+       的撤回触发。app 层内部接缝——SDK 回调口（PlayerCallbacks）零改动。 */
+    void trackSwitchSettled();
 
 protected:
     void onStateChanged(soundbridge::PlayerState state) override;

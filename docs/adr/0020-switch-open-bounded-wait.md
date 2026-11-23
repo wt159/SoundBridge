@@ -68,6 +68,22 @@ Pending 重开失败：一次 `onError(FileOpenFailed, index≥0, path)`、`mark
 
 这是对「open 不可取消」的显式让步，必须写进规格而不是留作实现细节：**不允许**为了「无线程泄漏」而无限 join，否则退出会被 SMB 60 s / NFS 无限重试顶住。此条**只**适用于 IO 执行器；解码线程的 join 策略（`buffering-switching-spec.md` §5.6「不新增后台线程、不 detach」）一字不动。
 
+### 6. 预取：不做（2026-11-23，[预取裁决票](https://github.com/wt159/SoundBridge/issues/288)）
+
+切歌到出声的 300 ms 预算不做预取优化。理由：
+
+1. **收益在本机不可证**：本图四裁之一是「不在本机实测」（两块 NVMe、无网络盘）。SSD 上 open 亚毫秒级，pending 路径常态不发生，预取带来的收益没有可测的证据面。
+2. **代价是常驻的**：一个预取槽意味着第三个租约持有者（`doc/streaming-playback-spec.md` §4.5 的预算推理从「当前 + 退役保活 ≤ 2」变成 ≤ 3，`datasource_open_peak` 的既有判据 `<= 2` 要改写）、一套失效规则（删除 / 重排 / 清空 / stop / 当前曲变化）、一条失败静默与否的裁决。全部是永久复杂度。
+3. **等待期可见性已兜底**：慢介质的代价已被 ADR 0020 从「静音/假死」降为「旧曲继续出声 + UI 显示 `SWITCHING`」（`doc/app-ui-spec.md` §2.7，迟滞 150 ms）——用户可感知、可等待，不是坏状态。
+4. **票面给的「条件式」判据全部依赖介质现场数据**（入列期 `open_file_ms` 分类、首次切歌实测），与「不实测」矛盾；运行时自适应分类是纯记录维度，撑不起「要不要做」的拍板（见 `doc/observability-contract.md` §5.2「介质分类不做」）。
+
+**反悔条件**（出现其一即重开新票，不在本 ADR 上打补丁）：
+
+- `switch_open_pending_total` 在真实用户环境**常态化**出现（不设数值比例阈值——沿用 #104「不设数值阈值」的永久口径），且伴随用户可感知的换歌延迟反馈；
+- 真机慢盘上实测「切歌到出声 > 300 ms」且不可接受（验证环境 = 真机网盘 / 机械盘，见 `doc/observability-contract.md` §5.2 的待验证条目）。
+
+届时需一并重新裁决：槽位形态（单槽 / 双向双槽）、槽内容物（`SourceLease` + uid）、触发点、失效规则、失败是否静默、`datasource_open_peak` 判据的「稳态 / 切歌窗口」拆分。**不预裁**——时机未到的预裁会成为无人验证的规格。
+
 ## 考虑过的替代方案
 
 **(a) 纯异步零等待：控制线程永不等待，每次切歌都两阶段。** 否决：`nextSync()` 与 `skipToNextPlayable()` 的同步发布（`putMusicPlayListCurBuf`、`lastCurrentIndex` 立即更新）是既有内部契约与大量判据的前提（`test_playlist.cpp` / `test_playlist_advance.cpp`）；纯异步会把「是否已切」变成时序问题，测试与调用方全部要改写，而收益只是省掉 SSD 上 50 ms 以内的等待。

@@ -55,6 +55,10 @@ public:
         emit errorOccurred(code, detail, trackIndex, path, traceId, autoSkipEnabled);
     }
 
+    /* 换曲结果驱动（#289）：等价 PlayerController::onTrackChanged 的信号半边
+       （TC 在替身里不隐式发生，由测试显式发射）。 */
+    void emitSwitchSettled() { emit trackSwitchSettled(); }
+
     void addMusicDirectory(const std::string &path) override
     {
         calls.append(FakeCall{"addMusicDirectory", {QString::fromStdString(path)}});
@@ -133,6 +137,8 @@ signals:
     void viewStateChanged(PlayerViewState viewState);
     void errorOccurred(int code, const QString &detail, int trackIndex, const QString &path,
                        const QString &traceId, bool autoSkipEnabled);
+    /* 与 PlayerController 同签名（#289）：切歌等待的撤回信号。 */
+    void trackSwitchSettled();
 
 private:
     int m_volume = 100;

@@ -81,6 +81,9 @@ protected:
     // #276：播放期重开失败仅上报，不动设备与状态机（旧任务仍在播）。
     virtual void onPlaybackOpenFailed(ErrorCode code, const std::string &detail, int index,
                                       const std::string &path);
+    // ADR 0020 决策 2/3/4：pending 切换的终态。只在控制队列线程被调用（列表层
+    // 全部经 WorkQueue 回投）；门闩与设备收尾的次序见各分支注释。
+    virtual void onPendingSwitchSettled(SwitchSettlement settlement, SwitchOrigin origin);
 
 private:
     void updatePlayState(MusicPlayerState state);
@@ -119,7 +122,6 @@ private:
     // 再 open 就会拿到「Audio subsystem is not initialized」。
     std::shared_ptr<IAudioDevice> m_replacedAudioDev;
     AudioSpec m_devSpec;
-    std::shared_ptr<MusicPlayList> m_musicList;
     MusicPlayerListener *m_listener;
     std::atomic<MusicPlayerState> m_state;
     MusicPropertiesPtr m_curMusicProperties;
@@ -160,13 +162,22 @@ private:
     // 初值 Stopped 从未对外发过，首播失败 / skip 失败时仍必须通知一次。
     bool m_stateNotified;
     MusicPlayerState m_lastReportedState;
+    // ADR 0020 决策 3：等待期 play 只记「就绪后起播」意图；commit 兑现、失败丢弃。
+    // 不兑现就等于「点了下一首、又点了播放，结果继续播上一首」的静默违背意图。
+    std::atomic<bool> m_pendingPlayIntent;
+    // 等待期自动跳轨失败的终态（pending 落地时写、settlement Failed 读）：
+    // 解码错误路径落 Paused、设备错误路径落 Stopped——与两条同步路径逐字一致。
+    std::atomic<MusicPlayerState> m_pendingSkipTerminal;
+    // 声明在 m_musicList 之前：逆序析构时 MusicPlayList 先亡、控制队列后亡——
+    // 切歌执行器的晚到回投以 weak_ptr 判活（self 存活 ⇒ 队列对象存活），
+    // 不会把完成任务投进已析构的 WorkQueue（ADR 0020 决策 5 的退场安全）。
     WorkQueue m_workQueue;
+    std::shared_ptr<MusicPlayList> m_musicList;
     WorkQueue::TaskID m_consumerTaskID;
 };
 
 MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     : m_audioDev(nullptr)
-    , m_musicList(nullptr)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
     , m_pendingAdd(0)
@@ -185,7 +196,10 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     , m_positionEpoch(0)
     , m_stateNotified(false)
     , m_lastReportedState(MusicPlayerState::StoppedState)
+    , m_pendingPlayIntent(false)
+    , m_pendingSkipTerminal(MusicPlayerState::PausedState)
     , m_workQueue()
+    , m_musicList(nullptr)
     , m_consumerTaskID(WorkQueue::TaskID_Error)
 {
     SdkLogConfig logConfig;
@@ -251,7 +265,13 @@ void MusicPlayer::Impl::play()
     if (isShuttingDown()) {
         return;
     }
-
+    if (m_musicList != nullptr && m_musicList->switchPending()) {
+        // ADR 0020 决策 3：等待期 play 只记「就绪后起播」意图——不能作用于旧任务
+        //（那会变成「点了下一首、又点了播放，结果继续播上一首」），也不取消切换。
+        // commit 时兑现、失败丢弃（见 onPendingSwitchSettled）。
+        m_pendingPlayIntent.store(true);
+        return;
+    }
     m_workQueue.asyncRunTask([this]() {
         // 用户主动播放 = 新的播放会话：上次因坏数据失败的曲目可以重新尝试
         m_musicList->clearFailedTracks();
@@ -615,7 +635,13 @@ void MusicPlayer::Impl::_next()
         m_switching.store(false);
         return;
     }
-    endSegmentSwitch(m_musicList->nextSync());
+    const bool accepted = m_musicList->nextSync();
+    if (accepted && m_musicList->switchPending()) {
+        // ADR 0020 决策 2：等待期门闩保持 true（旧曲继续出声），净空与收尾由
+        // onPendingSwitchSettled 在 commit / 失败 / 作废时补齐。
+        return;
+    }
+    endSegmentSwitch(accepted);
 }
 
 void MusicPlayer::Impl::_previous()
@@ -632,7 +658,12 @@ void MusicPlayer::Impl::_previous()
         m_switching.store(false);
         return;
     }
-    endSegmentSwitch(m_musicList->previousSync());
+    const bool accepted = m_musicList->previousSync();
+    if (accepted && m_musicList->switchPending()) {
+        // 同 _next：等待期门闩保持 true，收尾延后到 settlement。
+        return;
+    }
+    endSegmentSwitch(accepted);
 }
 
 void MusicPlayer::Impl::_setCurrentIndex(int index)
@@ -649,7 +680,12 @@ void MusicPlayer::Impl::_setCurrentIndex(int index)
         m_switching.store(false);
         return;
     }
-    endSegmentSwitch(m_musicList->setCurrentIndexSync(index));
+    const bool accepted = m_musicList->setCurrentIndexSync(index);
+    if (accepted && m_musicList->switchPending()) {
+        // 同 _next：等待期门闩保持 true，收尾延后到 settlement。
+        return;
+    }
+    endSegmentSwitch(accepted);
 }
 
 void MusicPlayer::Impl::_addTrack(const std::string &path)
@@ -690,6 +726,14 @@ void MusicPlayer::Impl::_removeTrack(int index)
     // CurrentReplaced：补位已完成（新任务已建、TC/DC/PC 已由列表层发出）。
     // 只有 Playing 需要把新任务接进本次播放会话——与 auto-skip 成功路径完全同构；
     // Paused / Stopped 一律不调 _play()：那会把暂停变成擅自恢复播放（#264 §2）。
+    if (m_musicList->switchPending()) {
+        // ADR 0020 决策 2/4：补位重开进入等待期——旧任务继续出声；Playing 的接管
+        //（净空 + _play）记为 play 意图，延后到 onPendingSwitchSettled(Committed)。
+        if (m_state.load() == MusicPlayerState::PlayingState) {
+            m_pendingPlayIntent.store(true);
+        }
+        return;
+    }
     if (m_state.load() == MusicPlayerState::PlayingState) {
         if (m_audioDev != nullptr) {
             // 队列里可能还压着被删曲目最多 256 KB 的 PCM（≈1.5 s），
@@ -943,6 +987,14 @@ void MusicPlayer::Impl::consumeAudioData()
                 if (!isShuttingDown() && currentTrackIs(guardUid)) {
                     if (!m_musicList->advanceToNextTrack()) {
                         _stop();
+                        m_switching.store(false);
+                        return;
+                    }
+                    if (m_musicList->switchPending()) {
+                        // ADR 0020 决策 4：段末前进进入等待期——门闩保持 true；
+                        // 终态由 onPendingSwitchSettled 决定（Committed 继续播 /
+                        // Failed 落 Stopped，与同步路径逐字一致）。
+                        return;
                     }
                 }
                 m_switching.store(false);
@@ -1010,7 +1062,13 @@ void MusicPlayer::Impl::handleDecodeError(const MusicPropertiesPtr &cur)
             m_switching.store(false);
             return;
         }
-        bool advanced = (m_musicList != nullptr) && m_musicList->skipToNextPlayable();
+        const bool advanced = (m_musicList != nullptr) && m_musicList->skipToNextPlayable();
+        if (advanced && m_musicList->switchPending()) {
+            // ADR 0020 决策 4：候选重开进入等待期——门闩保持 true；失败终态落
+            // Paused（与同步路径一致），由 onPendingSwitchSettled 落地。
+            m_pendingSkipTerminal.store(MusicPlayerState::PausedState);
+            return;
+        }
         m_switching.store(false);
         if (advanced) {
             _play();
@@ -1098,6 +1156,55 @@ void MusicPlayer::Impl::onPlaybackOpenFailed(ErrorCode code, const std::string &
     }
 }
 
+// ADR 0020 决策 2/3/4：pending 切换的终态。只在控制队列线程被调用（列表层的
+// 回投全部经 WorkQueue）；同步路径不产生本事件——同步出口当场 endSegmentSwitch。
+void MusicPlayer::Impl::onPendingSwitchSettled(SwitchSettlement settlement, SwitchOrigin origin)
+{
+    // play 意图无论终态都只兑现一次：commit 兑现（决策 3），失败 / 作废丢弃。
+    const bool playIntent = m_pendingPlayIntent.exchange(false);
+    switch (settlement) {
+    case SwitchSettlement::Committed: {
+        if (isShuttingDown()) {
+            return;
+        }
+        // TC 已由 publishSelection 发出（putMusicPlayListCurBuf 已清 m_switching）。
+        // 这里补齐延后的净空（决策 2）与起播。AutoSkip 的设备已在错误路径
+        // stop+close，队列必空；isOpen 守卫避免对已关闭设备清队列。
+        const bool needPlay = playIntent || origin == SwitchOrigin::AutoSkip
+            || (origin == SwitchOrigin::SeatReplacement
+                && m_state.load() == MusicPlayerState::PlayingState);
+        if ((origin == SwitchOrigin::User || origin == SwitchOrigin::SeatReplacement
+             || playIntent)
+            && m_audioDev != nullptr && m_audioDev->isOpen()) {
+            m_audioDev->clearQueue();
+        }
+        if (needPlay) {
+            _play();
+        }
+        break;
+    }
+    case SwitchSettlement::Failed:
+        // 失败不改当前曲目、不清设备队列（#276）；门闩在这里清——同步路径由
+        // endSegmentSwitch(false) 清，pending 路径没有这一次调用。
+        m_switching.store(false);
+        if (origin == SwitchOrigin::AutoSkip) {
+            updatePlayState(m_pendingSkipTerminal.load());
+        } else if (origin == SwitchOrigin::EndOfStream) {
+            // 与同步 EOS 前进失败逐字一致：落 Stopped。
+            _stop();
+        } else if (origin == SwitchOrigin::SeatReplacement) {
+            // 与同步 CurrentCleared 一致：补位耗尽，终态 Stopped。
+            _stopAfterPlaylistEmptied();
+        }
+        // User：不改播放状态（与 endSegmentSwitch(false) 一致）。
+        break;
+    case SwitchSettlement::Cancelled:
+        // stop / clearPlaylist / 删除目标曲目作废：零设备动作，只清门闩。
+        m_switching.store(false);
+        break;
+    }
+}
+
 void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &detail, int index,
                                              const std::string &path)
 {
@@ -1157,7 +1264,14 @@ void MusicPlayer::Impl::onMusicPlayListError(ErrorCode code, const std::string &
             m_switching.store(false);
             return;
         }
-        if (m_musicList->skipToNextPlayable()) {
+        const bool advanced = m_musicList->skipToNextPlayable();
+        if (advanced && m_musicList->switchPending()) {
+            // 等待期：门闩保持 true；失败终态落 Stopped（与同步路径一致）。
+            m_pendingSkipTerminal.store(MusicPlayerState::StoppedState);
+            return;
+        }
+        m_switching.store(false);
+        if (advanced) {
             _play();
         } else {
             LogPrintfWithTrace(SdkLogLevel::Warning, LOG_TAG, m_traceId,

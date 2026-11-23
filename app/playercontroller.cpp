@@ -220,8 +220,11 @@ void PlayerController::onStateChanged(soundbridge::PlayerState state)
 
 void PlayerController::onTrackChanged(int index)
 {
-    m_currentTrackIndex    = index;
-    m_errorSubtitleActive  = false;
+    m_currentTrackIndex   = index;
+    m_errorSubtitleActive = false;
+    // 撤回信号先于状态帧：主窗口先清「切换中」，随后到达的渲染帧恢复状态文案
+    // （同曲重播也撤回——TC 就是结果到达的唯一事实，#289）。
+    emit trackSwitchSettled();
     publishViewState();
 }
 

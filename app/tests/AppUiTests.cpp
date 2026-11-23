@@ -1,6 +1,6 @@
 // AppUiTests —— app 层 UI 判据自动化（地图 #248 / 执行票 #257）。
 //
-// 判据真源：doc/app-ui-spec.md §9.7.2（在册 65 条：自动 58 / 半自动 4 / 人工 3）。
+// 判据真源：doc/app-ui-spec.md §9.7.2（在册 67 条：自动 60 / 半自动 4 / 人工 3）。
 // 本文件按判据编号命名用例；`UI-VOL1` / `UI-VOL2` 由既有 MusicPlayerVolume +
 // PcmGain 单测承担，本目标不重复（§9.7.2）；永久人工三条（UI-E2 呈现半边 /
 // UI-V3 / UI-P4）不写用例（§9.7.5）。
@@ -143,7 +143,7 @@ class AppUiTests : public QObject {
     Q_OBJECT
 
 private slots:
-    // ---- S 区（状态，8 条）----
+    // ---- S 区（状态，10 条）----
     void s1_play_pause_stop_checked_and_subtitle();
     void s2_stopped_keeps_title_and_duration();
     void s3_error_subtitle_clears_on_track_change();
@@ -152,6 +152,8 @@ private slots:
     void s6_dragging_slider_freezes_position_value();
     void s7_release_seeks_and_position_updates();
     void s8_empty_list_defaults();
+    void s9_switching_subtitle_hysteresis_and_settle();
+    void s10_switching_subtitle_cleared_by_empty_and_error();
 
     // ---- L 区（列表，7 条，含半自动 UI-L6）----
     void l1_list_rows_match_injected_playlist();
@@ -421,6 +423,84 @@ void AppUiTests::s8_empty_list_defaults()
     QCOMPARE(w->findChild<QLabel *>("mDurationLabel")->text(), QString("00:00"));
     QCOMPARE(w->findChild<QLabel *>("mPositionLabel")->text(), QString("00:00"));
     QCOMPARE(btnOf(w.get(), "btn_play")->isChecked(), false);
+}
+
+// UI-S9（#289）：切歌命令 150 ms 内 subtitle 不变（迟滞）；超窗 SWITCHING；
+// TC 到达（含同曲重播）撤回恢复状态文案；新命令重新计时。
+void AppUiTests::s9_switching_subtitle_hysteresis_and_settle()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+
+    fake.state.playlist             = (QStringList() << "A" << "B");
+    fake.state.trackIds             = (QStringList() << "id-a" << "id-b");
+    fake.state.currentTrackIndex    = 0;
+    fake.state.title                = "A";
+    fake.state.subtitle             = "NOW PLAYING";
+    fake.state.playerState          = static_cast<int>(soundbridge::PlayerState::Playing);
+    inject(w.get(), &fake);
+
+    QLabel *subtitle = w->findChild<QLabel *>("mNowPlayingSubtitle");
+    btnOf(w.get(), "btn_next")->click();
+    QCOMPARE(fake.countOf("nextTrack"), 1);
+    /* 迟滞半边：150 ms 内保持原文案。 */
+    QTest::qWait(60);
+    QCOMPARE(subtitle->text(), QString("NOW PLAYING"));
+    /* 超窗（累计 260 ms > 150 ms）：SWITCHING 上屏。 */
+    QTest::qWait(200);
+    QCOMPARE(subtitle->text(), QString("SWITCHING"));
+    /* TC 到达（同曲重播也发 TC）：撤回，状态帧恢复状态文案。 */
+    fake.emitSwitchSettled();
+    inject(w.get(), &fake);
+    QCOMPARE(subtitle->text(), QString("NOW PLAYING"));
+    /* 新命令取代旧计时：重新计满 150 ms 才上屏，不会立即切换文案。 */
+    btnOf(w.get(), "btn_next")->click();
+    QCOMPARE(fake.countOf("nextTrack"), 2);
+    QTest::qWait(60);
+    QCOMPARE(subtitle->text(), QString("NOW PLAYING"));
+    QTest::qWait(200);
+    QCOMPARE(subtitle->text(), QString("SWITCHING"));
+}
+
+// UI-S10（#289）：清空列表的渲染帧撤回（清空不产生 TC，渲染帧发现空列表）；
+// 错误到达覆盖切换中（错误优先于已到达的状态；autoSkip 路径不弹窗，offscreen 安全）。
+void AppUiTests::s10_switching_subtitle_cleared_by_empty_and_error()
+{
+    FakeCommandPort fake;
+    std::unique_ptr<MainWindow> w(makeWindow(&fake));
+    m_lastWindow = w.get();
+
+    fake.state.playlist             = (QStringList() << "A" << "B");
+    fake.state.trackIds             = (QStringList() << "id-a" << "id-b");
+    fake.state.currentTrackIndex    = 0;
+    fake.state.title                = "A";
+    fake.state.subtitle             = "NOW PLAYING";
+    fake.state.playerState          = static_cast<int>(soundbridge::PlayerState::Playing);
+    inject(w.get(), &fake);
+
+    QLabel *subtitle = w->findChild<QLabel *>("mNowPlayingSubtitle");
+    btnOf(w.get(), "btn_next")->click();
+    QTest::qWait(200);
+    QCOMPARE(subtitle->text(), QString("SWITCHING"));
+
+    /* 清空撤回：空列表渲染帧（播放器清空后落 Stopped，无 TC）。 */
+    fake.state.playlist.clear();
+    fake.state.trackIds.clear();
+    fake.state.currentTrackIndex = -1;
+    fake.state.subtitle          = "IDLE";
+    fake.state.playerState       = static_cast<int>(soundbridge::PlayerState::Stopped);
+    inject(w.get(), &fake);
+    QCOMPARE(subtitle->text(), QString("IDLE"));
+
+    /* 错误覆盖：重新进入切换中，错误到达撤回守卫并显示错误文案。 */
+    btnOf(w.get(), "btn_next")->click();
+    QTest::qWait(200);
+    QCOMPARE(subtitle->text(), QString("SWITCHING"));
+    fake.state.subtitle = "FILE CANNOT BE OPENED - SKIPPED";
+    fake.emitError(static_cast<int>(soundbridge::ErrorCode::FileOpenFailed), "open failed", 0,
+                   "a.wav", "trace-x", true);
+    QCOMPARE(subtitle->text(), QString("FILE CANNOT BE OPENED - SKIPPED"));
 }
 
 // ============ L 区 ============

@@ -45,6 +45,11 @@ public:
     // 的读生效（头部与格式探测的小读不受影响）、不得照抄成通例。
     static void setReadDelayForTest(uint32_t ms);
 
+    // 仅供测试（ADR 0011 / 地图 #285 / ADR 0020）：注入 open 延迟，模拟慢介质上
+    // 的切歌重开（本机只有 NVMe，无网络盘 / 机械盘可实测）。与 setReadDelayForTest
+    // 同一纪律：默认 0（零生产开销）、只影响 acquire() 的调用线程、测完必须归零。
+    static void setOpenDelayForTest(uint32_t ms);
+
 private:
     std::string getExtensionName(const std::string &filename);
 

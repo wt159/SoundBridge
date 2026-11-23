@@ -22,6 +22,7 @@ add_subdirectory(${SDK_ROOT_DIR}/extractor)
 set(SDK_LEGACY_SOURCES
     MusicPlayList.cpp
     MusicPlayer.cpp
+    SwitchOpenExecutor.cpp
     LogApi.cpp
     ErrorCode.cpp
     Metrics.cpp
