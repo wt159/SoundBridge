@@ -16,6 +16,7 @@ sdk/test/log/**
 .cocoindex_code/
 .codegraph/
 build-coverage/
+build-asan/
 __pycache__/
 *.pyc
 ui_shot_*.png
