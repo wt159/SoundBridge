@@ -130,3 +130,25 @@ TEST_SUITE("AudioStreamDecoder format trust policy")
         CHECK(decoder.m_srcSpec.bitsPerSample == 32);
     }
 }
+
+// 票 #304：stop() 必须在 join 之后清空**未被消费**的 seek 槽。槽里残留目标时
+// cancelRequested() 会一直为真（#59 单槽语义：槽内有值即取消信号），IDLE 任务会被
+// 报成仍在取消中。判据刻意不启解码线程、不依赖真实素材：写槽 → stop() → 槽回到 -1。
+TEST_SUITE("AudioStreamDecoder seek slot contract")
+{
+    TEST_CASE("stop clears an unconsumed seek slot")
+    {
+        AudioRingBuffer ring(8192);
+        AudioSpec devSpec = makeDeviceSpec();
+        DecoderHarness decoder(&ring, devSpec);
+
+        decoder.setPendingSeekForTest(4200);
+        // 前置断言：槽确实被写进去了。钩子或内存序失效时这条先红，
+        // 不会让后面的「已清空」变成空判。
+        CHECK(decoder.pendingSeekMsForTest() == 4200);
+
+        decoder.stop();
+
+        CHECK(decoder.pendingSeekMsForTest() == -1);
+    }
+}
