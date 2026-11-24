@@ -819,9 +819,14 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         const int errorsBeforePrevious = listener.error_count.load();
         const int changesBeforePrevious = listener.index_change_count.load();
         player.previous();
-        waitFor([&listener, changesBeforePrevious]() {
-            return listener.index_change_count.load() > changesBeforePrevious;
-        }, 2000);
+        // #305（#302 决议）：守卫必须宽于被测链路预算（#140 先例），且返回值不能丢。
+        // previous() 经 WorkQueue 异步生效，冷启动下 2 s 会被击穿；返回值一旦丢弃，
+        // 超时就会被后面的环形语义断言误报成「索引不对」（#296 首轮误诊的来源）。
+        CHECK_MESSAGE(waitFor([&listener, changesBeforePrevious]() {
+                          return listener.index_change_count.load() > changesBeforePrevious;
+                      },
+                      15000),
+                      "等待索引回绕超时（15000 ms）：previous() 未在窗口内产生索引变更");
         const int indexAfterPrevious = listener.last_current_index.load();
 
         player.setCurrentIndex(2);
