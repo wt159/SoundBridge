@@ -837,9 +837,13 @@ TEST_SUITE("MusicPlayer Interactive Paths")
         const int errorsBeforeNext = listener.error_count.load();
         const int changesBeforeNext = listener.index_change_count.load();
         player.next();
-        waitFor([&listener, changesBeforeNext]() {
-            return listener.index_change_count.load() > changesBeforeNext;
-        }, 2000);
+        // #311（接 #305）：与 previous() 那处同规格——守卫宽于被测链路预算（#140 先例），
+        // 返回值不能丢。丢弃时超时会被后面的 `indexAfterNext == 0` 误报成「回绕失败」。
+        CHECK_MESSAGE(waitFor([&listener, changesBeforeNext]() {
+                          return listener.index_change_count.load() > changesBeforeNext;
+                      },
+                      15000),
+                      "等待索引回绕超时（15000 ms）：next() 未在窗口内产生索引变更");
         const int indexAfterNext = listener.last_current_index.load();
         const int trackCount      = player.getMusicCount();
         player.stop();
