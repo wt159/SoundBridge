@@ -16,6 +16,21 @@ if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTE
     set(COVERAGE_ENABLED TRUE)
 endif()
 
+# AddressSanitizer 取证通道（票 #298）：默认关，生产构建与 CI 零影响。
+# 只做插桩与链接，不改任何目标定义；用法见 docs/research/asan-core-channel.md。
+option(ENABLE_ASAN "Enable AddressSanitizer instrumentation (GCC/Clang, out-of-CI only)" OFF)
+
+if(ENABLE_ASAN)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "ENABLE_ASAN requires GCC or Clang (current: ${CMAKE_CXX_COMPILER_ID})")
+    endif()
+    message(STATUS "AddressSanitizer enabled (${CMAKE_CXX_COMPILER_ID})")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+endif()
+
 set(ROOT_DIR ${CMAKE_CURRENT_LIST_DIR})
 message(STATUS "CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 set(SDK_DIR ${CMAKE_CURRENT_LIST_DIR}/sdk)
