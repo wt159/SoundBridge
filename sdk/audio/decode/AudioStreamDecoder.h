@@ -93,6 +93,13 @@ public:
     // 首播门槛等待超时：记一次到点放行（规格 §2.3）。
     void notePrefillTimeout();
 
+    // 以下两个是 SDK 内部测试专用钩子（票 #304），不进 soundbridge::Player 公开 API。
+    // 用途：让「stop() 清空未消费 seek 槽」这条契约可以被确定性判据覆盖——不启解码线程、
+    // 不依赖真实素材，直接写槽再 stop。内存序按 AGENTS.md 测试钩子纪律：
+    // 写侧 release / 读侧 acquire，且只允许控制线程调用（解码线程绝不写）。
+    void setPendingSeekForTest(int64_t targetMs);
+    int64_t pendingSeekMsForTest() const;
+
     // 刻意不提供同步的 decodeNext()（#18）。它曾对三类 codec 有三套语义：
     // FLAC/Vorbis 每次调用新建解码器 → 只解首帧、返回「有进度」但内容每轮完全相同，
     // 通用路径又一次性解完整段。结果是 `while (ret != EOS)` 在 FLAC/OGG 上永不终止。

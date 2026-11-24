@@ -247,6 +247,11 @@ void AudioStreamDecoder::stop()
     }
     m_stopRequest.store(false);
     m_abortDecode.store(false);
+    // join 之后已无解码线程可消费该槽。残留值会让 cancelRequested() 永远为真，
+    // 因为「槽内有值」就是 #59 单槽语义下的取消信号（见 cancelRequested 注释）。
+    // start() 也会清槽，但那只覆盖「再次启动」；stop 之后、下次 start 之前若有人
+    // 读 cancelRequested()/canDecode()，残留值会把 IDLE 任务报成仍在取消中。
+    m_seekRequestMs.store(-1);
     m_state.store(StreamDecoderState::IDLE);
 }
 
@@ -356,6 +361,18 @@ void AudioStreamDecoder::noteDeviceWriteFailure()
 void AudioStreamDecoder::notePrefillTimeout()
 {
     m_prefillTimeouts.fetch_add(1, std::memory_order_relaxed);
+}
+
+// 测试专用钩子（票 #304）：只允许控制线程调用，写侧 release / 读侧 acquire
+// （AGENTS.md 测试钩子纪律）。生产路径的写槽仍在 seekToMs() / start() / stop()。
+void AudioStreamDecoder::setPendingSeekForTest(int64_t targetMs)
+{
+    m_seekRequestMs.store(targetMs, std::memory_order_release);
+}
+
+int64_t AudioStreamDecoder::pendingSeekMsForTest() const
+{
+    return m_seekRequestMs.load(std::memory_order_acquire);
 }
 
 void AudioStreamDecoder::noteHeldBytes(size_t bytes)
