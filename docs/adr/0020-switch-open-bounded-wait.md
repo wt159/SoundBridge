@@ -117,3 +117,4 @@ Pending 重开失败：一次 `onError(FileOpenFailed, index≥0, path)`、`mark
 - 若将来 `addMusicDir` 的扫描并行化落地（ADR 0019 反悔条件 ③），IO 执行器是否复用给探测路径，需另裁。
 
 **归档注记（2026-11-23）**：取证快照已 `cherry-pick -x` 进 master（`docs/research/switch-open-blocking-facts.md`），仍是时点材料。其中「SYN 重传默认次数（21 s 为推算）」「离线映射盘是否与 UNC 同链」「`pthread_cancel` 对 `TASK_KILLABLE` 的实际行为」三项**未验证**；本 ADR 的决策只依赖「没有单次 open 超时」与「无法可靠取消」两条已核实事实，不依赖这三项成立。
+- **注记（2026-11-25，地图 [扫描不阻塞控制面](https://github.com/wt159/SoundBridge/issues/313) 收口）**：决策 5 的 detach 让步，其适用范围已由 [ADR 0021](0021-scan-thread-model-and-handle-budget.md) 决策 7 **扩展为「两类 IO 线程」（切歌执行器、扫描执行器）**，理由同源（`open` 不可取消 + 线程只碰自有状态）。本 ADR 的六条决策、五条命令语义表、反悔条件与决策 6「不做预取」的结论**全部不变**；决策 6 反悔条件②的「切歌到出声 > 300 ms」仍为真机待验证项，未因 0021 闭环。
