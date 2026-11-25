@@ -17,6 +17,7 @@
 #include <doctest/doctest.h>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
