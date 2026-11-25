@@ -198,6 +198,7 @@ void clearPlaylist();
 | `seek` | 维持既有 `m_switching` 丢弃语义，不新增分支 |
 | 失败 | 与上表逐字一致：一次 `onError(FileOpenFailed, index≥0, path)`、`markTrackFailed`、不重试、状态不变 |
 | 公开面 | `PlayerCallbacks` 一字不动、无新回调、`SOUNDBRIDGE_ABI_VERSION` 保持 2；pending 只是内部时序 |
+- **2026-11-25 扫描期控制命令语义（[地图：扫描不阻塞控制面](https://github.com/wt159/SoundBridge/issues/313) 收口，ADR [0021](../docs/adr/0021-scan-thread-model-and-handle-budget.md)）**：扫描改为在专用线程进行、结果增量插入后，列表在扫描期是**逐步变长**的，本节各命令按此口径读：①`play()` 作用于**此刻已入列**的列表，后续插入**不打断播放、不改选中**；②首曲仍由「第一个插入成功者」登记（既有 `m_selectMusicProperties == nullptr` 守卫），一旦非空不再自动改选；③`next()` / `previous()` 的目标集合是**当前列表**，末条 clamp 语义不变（「末条」在扫描期是移动目标）；④`seek` / 音量 / 播放模式 / `stop` / `pause` 与平时**完全一致**，扫描不再使其延迟；⑤**不新增 `SCANNING` 状态**，`PlayerState` 三态取值集合与 `SOUNDBRIDGE_ABI_VERSION` 均不变，可见性由列表增长本身承担。扫描插入是 **append-only**，不改变既有条目的 index / uid，故 ADR 0020 pending 切换的 uid 校验不受影响。
 
 ## 5. 查询与事件的真相源（对应「单一真相源：查询与事件的一致性」）
 

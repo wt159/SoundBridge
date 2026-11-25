@@ -146,6 +146,8 @@ canonical 术语是 **「边解边播」**：一种数据供给契约，解码�
 
 > **更正注记（2026-11-22，收口后审计）**：不变量 3 的后半句「正确性由租约计数与 join 次序保证」仍然成立，前半句「`readAt` 的 `isOpen()` 检查在锁外」已不描述实现。双轴 code-review 发现锁外读 `m_fp` / `m_file` 与 `acquire()` / `release()` 的写入构成数据竞争，`isOpen()` 检查已移入 `m_lock` 临界区（`FileSource::readAt` 开头，注释标注 `code-review 2026-11-22`）。这处改动**只消除竞争**，不改次序保证：互斥量不阻止在零读窗口内调用 `readAt`，那仍由租约与 join 次序结构性排除。
 
+- **2026-11-25 扫描线程化（[地图：扫描不阻塞控制面](https://github.com/wt159/SoundBridge/issues/313) 收口，ADR [0021](../docs/adr/0021-scan-thread-model-and-handle-budget.md)）**：本节上文「WorkQueue 串行，因此**扫描期峰值句柄数 = 1**」的**理由已失效**——逐文件探测不再进入控制用 `WorkQueue`，改由一条专用扫描线程串行执行。数值在「扫描期无并发单条添加」情形下**仍为 1**（扫描线程同时只探测一个文件）；当扫描线程与控制线程各处理一条（扫描期用户单条 `addMusic` / `addTrack`）时，扫描窗口峰值上界为 **2**（扫描线程 1 + 控制线程 1）。「常驻句柄 O(1)」与「`getAudioSpec()` 之后立即 `release()`」两条结论不变。实现见 ADR 0021 决策 1–3，判据见 `observability-contract.md` §5.1。
+
 **界外**：网络源（`HttpSource` / `UrlSource` / `HlsExtractor`）的连接生命周期与重连语义、设备重开、重采样链路。
 
 ## 5. 判据（#48）

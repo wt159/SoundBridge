@@ -178,6 +178,7 @@
 - **失败成因分级**只落在文本面，不落在错误码面：`addMusicInternal` 的重开 / 打开失败按内部 `status_t` 映射为 `open failed: too many open files`（`NO_MEMORY`）、`open failed: permission denied`（`PERMISSION_DENIED`）、`open failed: not found`（`NO_INIT`）、`open failed`（其余）。对外错误码仍是既有的 `FileOpenFailed`，**不新增 `ErrorCode`**。
 - `reportScanSummary` 的既有文案与聚合键（`ErrorCode`）**不变**；成因拆分以一条**追加**的汇总日志表达（`scan summary causes <cause>=<n> ...`，仅在有打开失败时输出），不改既有那行。
 - 判据可断言的部分：`1000` 条入列后 `datasource_open_peak == 1`、切歌窗口内 `datasource_open_handles <= 2`。成因文案只能人工看日志，**不作为门禁**。
+- **2026-11-25 扫描窗口判据追加（[地图：扫描不阻塞控制面](https://github.com/wt159/SoundBridge/issues/313) 收口，ADR [0021](../docs/adr/0021-scan-thread-model-and-handle-budget.md)）**：上条「`1000` 条入列后 `datasource_open_peak == 1`」**原文保留、判定不变**（该用例不启扫描线程，仍是串行探测的正对照）。**追加**扫描窗口的构成与上界：扫描探测改由专用扫描线程串行执行（不进控制队列），无并发单条添加时峰值为 1；扫描线程与控制线程各处理一条时上界为 **2**（扫描线程 1 + 控制线程 1），对应判据 `CHECK(FileSource::peakOpenHandleCount() <= 2)`。取数点**不新增**，判据直接读进程内静态 gauge；`Metrics` 仍是 L2「只记录、CI 不可见」，§8.3 的 O2 裁决不变。
 
 ### 5.2 切歌 open 段与等待期的口径（2026-11-23，地图 [#285](https://github.com/wt159/SoundBridge/issues/285) / [#290](https://github.com/wt159/SoundBridge/issues/290)）
 
