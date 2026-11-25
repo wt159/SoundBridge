@@ -9,6 +9,7 @@
 #include "FileSource.h"
 #include "NonCopyable.hpp"
 #include "PlaybackMode.h"
+#include "ScanExecutor.h"
 #include "SwitchOpenExecutor.h"
 #include "WorkQueue.hpp"
 #include <atomic>
@@ -194,6 +195,9 @@ public:
     // 控制线程等待 open 的上限（ADR 0020 决策 1）：100 ms 控制预算的一半留给
     // 「退役旧任务 + 建 decoder + 清设备队列」，stop 恰逢等待起点时最坏 50 ms 生效。
     static const int kSwitchOpenWaitMs = 50;
+    // 扫描回投背压（ADR 0021 决策 3）：控制队列中「已回投未插入」的条数上限。
+    // 目的不是防阻塞（单条插入 O(1)），而是防千条结果一次性涌入把 10 ms 消费节拍挤后。
+    static const size_t kScanInsertOutstandingMax = 8;
 private:
     MusicPlayListCallback *m_callback;
     // 条目数镜像（恒等于 m_musicListProperties.size()），只在队列线程写、任意线程读。
@@ -213,6 +217,10 @@ public:
 
     void addMusic(const std::string &musicPath);
     void addMusicWithNotify(const std::string &musicPath, std::function<void()> onDone);
+    // 目录扫描（ADR 0021 决策 1/2/5）：提交请求即返回。遍历与逐文件探测都在
+    // ScanExecutor 的线程上顺序执行，结果经控制队列按到达序增量插入。
+    // 第二次调用取消旧请求（后者胜）；被取消的请求不产汇总、零回调。
+    void scanDirectory(const std::string &rootPath);
     // 列表编辑（ADR 0018 / 契约 §4.1）：三个命令都是**纯入队**，调用者线程零文件系统访问。
     void addTrack(const std::string &musicPath);
     void removeTrack(int index);
@@ -291,6 +299,12 @@ private:
         Pending,   // 超窗：意图已接受，commit 由 IO 结果回投触发
     };
     struct PendingSwitch;
+    // 扫描请求（ADR 0021 决策 6）：每次 scanDirectory 一个，自带取消位、未完结果
+    // 计数与回投队列。请求指针只在控制线程读写；扫描线程只碰请求自身，不碰列表。
+    struct ScanRequest;
+    // 一次探测的自包含结果（ADR 0021 决策 5）：路径、已填好 extractor / spec /
+    // durationMs 的条目、成功与否 + 错误码 + detail + 成因 + 耗时。
+    struct ScanProbeOutcome;
     // 提交一次重开请求并做有界等待。origin 决定 pending 失败后的终态与候选续做。
     SwitchStart beginSwitch(const MusicPropertiesPtr &musicProperties, SwitchOrigin origin);
     // 建 ring / decoder、退役旧任务、发布选中项。同步与 pending 两条出口共用。
@@ -314,9 +328,33 @@ private:
     // 析构路径传 notify=false：回调对象可能已半析构，只作废不通知。
     void cancelPendingSwitch(bool notify = true);
     MusicPropertiesPtr findTrackByUid(uint64_t uid) const;
+    // 扫描（ADR 0021）：控制线程提交 / 取消；扫描线程只跑 runScanRequest。
+    void cancelScan();
+    std::shared_ptr<ScanRequest> currentScan() const;
+    static void runScanRequest(const std::weak_ptr<MusicPlayList> &weakSelf,
+                               const std::shared_ptr<ScanRequest> &request);
+    // 只读文件系统与 ExtractorFactory，不碰任何列表成员（ADR 0021 决策 5）。
+    static ScanProbeOutcome probeMusicFile(const std::string &musicPath);
+    // 把请求里的就绪结果按到达序取出并插入（只允许在控制线程执行）。
+    void onScanResultsReady(const std::shared_ptr<ScanRequest> &request);
+    // 全部结果落地后发一次汇总 + 列表载荷（只允许在控制线程执行）。
+    void maybeFinishScan(const std::shared_ptr<ScanRequest> &request);
+    // 把「有结果可取了」投回控制队列（扫描线程调用；目标析构则静默丢弃）。
+    static void postScanResultsReady(const std::weak_ptr<MusicPlayList> &weakSelf,
+                                     const std::shared_ptr<ScanRequest> &request);
+    // 仍是当前请求？（代际校验的唯一读点：scanDirectory 在调用线程写、控制线程读，
+    // 两者可能并发，必须经 m_scanMutex。）
+    bool isCurrentScan(const std::shared_ptr<ScanRequest> &request) const;
     // 入列的唯一实体：扫描与 addTrack 共用，差别只在「用户显式命令」这一路上的失败表达
     // 与拒绝累计（契约 §4.1 失败三类）。返回 nullptr 表示该条目没有进列表。
     MusicPropertiesPtr addMusicInternal(const std::string &musicPath, bool userInitiated);
+    // 把一次探测结果落成列表状态：index / uid / push_back / 计数 / 首曲登记 /
+    // 拒绝记账 / 上报全部在这里（ADR 0021 决策 5，只在控制线程执行）。
+    // request 为空表示不来自目录扫描（addMusic / addTrack），不记扫描拒绝。
+    MusicPropertiesPtr insertProbedTrack(const ScanProbeOutcome &outcome, bool userInitiated,
+                                         const std::shared_ptr<ScanRequest> &request);
+    // 请求级拒绝汇总（ADR 0021 决策 6）：数据源是请求自己的 rejects / causes。
+    void reportScanSummaryFor(const std::shared_ptr<ScanRequest> &request);
     // 补位序（ADR 0018 §1）：只算候选位置，不产生副作用。
     // Sequential / Loop / 单曲模式 → 从 p 起的环形顺序；Random → 剩余条目的随机全序。
     std::vector<size_t> seatingOrder(size_t p);
@@ -343,9 +381,11 @@ private:
     // 不改播放状态、不进扫描汇总。index 用条目在列表中的下标，不是 -1。
     void reportPlaybackOpenFailure(const MusicPropertiesPtr &musicProperties,
                                    sdk_utils::status_t status);
-    void recordScanRejection(ErrorCode code);
-    // 打开失败成因（#278）：与 m_scanRejects 同锁，只在入列期记账。
-    void recordScanRejectCause(const char *cause);
+    // 请求级拒绝记账（ADR 0021 决策 6）：只写进该请求自己的 rejects / causes，
+    // 扫描被废弃时随请求一起丢弃，不会串到下一批。
+    void recordScanRejection(const std::shared_ptr<ScanRequest> &request, ErrorCode code);
+    // 打开失败成因（#278）：与 rejects 同一个请求、同一把锁，只在入列期记账。
+    void recordScanRejectCause(const std::shared_ptr<ScanRequest> &request, const char *cause);
     std::string currentTraceId() const;
 
 private:
@@ -360,6 +400,16 @@ private:
     PlaybackTaskPtr m_retiredTask;
     // 切歌重开执行器（ADR 0020）：所有 acquire() 都在这条线程上执行。
     std::unique_ptr<SwitchOpenExecutor> m_openExecutor;
+    // 目录扫描执行器（ADR 0021 决策 1）：遍历与探测都在它的线程上，控制面零占用。
+    std::unique_ptr<ScanExecutor> m_scanExecutor;
+    // 当前扫描请求（控制线程读写）。回投结果先比对身份，不是当前请求即丢弃
+    //（ADR 0021 决策 6 的代际校验）。scanDirectory 跑在调用线程、clearPlaylist
+    // 跑在控制线程，两者可能并发 ⇒ 指针本身由 m_scanMutex 保护。
+    mutable std::mutex m_scanMutex;
+    std::shared_ptr<ScanRequest> m_scanRequest;
+    // 扫描请求代际：每次 scanDirectory 在 m_scanMutex 保护下递增，插入校验只认它
+    //（ADR 0021 决策 6「back 回投只携带请求的 shared_ptr 与结果」的判定依据）。
+    uint64_t m_scanGeneration = 0;
     // 等待期的请求状态。控制线程独占读写；IO 线程只写自己那一份结果，
     // 由 runBounded 的完成标志 / 回投任务建立可见性。
     std::shared_ptr<PendingSwitch> m_pendingSwitch;
@@ -372,9 +422,5 @@ private:
     // 压缩重排不会让「已知坏曲」漂移到别人头上；也不能按 TrackInfo::id——
     // id 不唯一，一条坏文件会毒化同路径的所有副本。
     std::set<uint64_t> m_failedUids;
-    mutable std::mutex m_rejectMutex;
-    std::map<ErrorCode, int> m_scanRejects;
-    // 打开失败的成因分布（#278）：只用于追加一条汇总日志，不改既有聚合键与文案。
-    std::map<std::string, int> m_scanRejectCauses;
 };
 }

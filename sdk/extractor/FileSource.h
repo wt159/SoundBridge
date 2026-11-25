@@ -50,6 +50,11 @@ public:
     // 同一纪律：默认 0（零生产开销）、只影响 acquire() 的调用线程、测完必须归零。
     static void setOpenDelayForTest(uint32_t ms);
 
+    // 仅供测试（地图 #313 → #322）：把**探测**放慢，用来制造确定性的「扫描中」窗口。
+    // 落点是构造期的首次打开（探测专属：播放任务复用既有对象、只走 acquire()），
+    // 与 setOpenDelayForTest 同一纪律：默认 0、只在测试设、测完必须归零。
+    static void setProbeDelayForTest(uint32_t ms);
+
 private:
     std::string getExtensionName(const std::string &filename);
 
