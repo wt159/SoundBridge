@@ -157,6 +157,7 @@ set(UNIT_TEST_SOURCES
     unit/test_playback_lifecycle.cpp
     unit/test_playlist.cpp
     unit/test_playlist_advance.cpp
+    unit/test_scan_thread.cpp
     unit/test_switch_pending.cpp
     unit/test_player.cpp
     unit/test_player_integration.cpp

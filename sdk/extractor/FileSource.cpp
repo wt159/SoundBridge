@@ -20,6 +20,11 @@ std::atomic<uint32_t> g_readDelayMs(0);
 // 与 g_readDelayMs 同一纪律：默认 0、只影响 acquire() 的调用线程、测完必须归零。
 std::atomic<uint32_t> g_openDelayMs(0);
 
+// 仅供测试（地图 #313 → #322）：注入**探测**延迟，用于制造确定性的「扫描中」窗口。
+// 落点是构造期的首次打开（探测专属）：播放任务复用条目已有的数据源对象，只走
+// acquire()，因此不会被本延迟影响。默认 0、测完必须归零。
+std::atomic<uint32_t> g_probeDelayMs(0);
+
 // 进程级句柄预算（规格 observability-contract.md §5.1，L2 只记录不设阈值）。
 // 维护点只在 acquire/release 的 0↔1 边界与析构，全部发生在控制线程。
 std::atomic<int> g_openHandles(0);
@@ -51,6 +56,10 @@ FileSource::FileSource(const char *filename)
     // 构造即持有一个租约（规格 streaming-playback-spec.md §4.5「构造租约」）：
     // 保持既有「构造即可读」的直连用法不变；探测路径在 getAudioSpec() 之后 release()，
     // 计数归零即关闭，条目不再常驻句柄。
+    const uint32_t probeDelayMs = g_probeDelayMs.load(std::memory_order_acquire);
+    if (probeDelayMs > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(probeDelayMs));
+    }
     std::lock_guard<std::mutex> lock(m_lock);
     if (openInternal() == OK) {
         m_openRefs.store(1);
@@ -236,6 +245,11 @@ void FileSource::setReadDelayForTest(uint32_t ms)
 void FileSource::setOpenDelayForTest(uint32_t ms)
 {
     g_openDelayMs.store(ms, std::memory_order_release);
+}
+
+void FileSource::setProbeDelayForTest(uint32_t ms)
+{
+    g_probeDelayMs.store(ms, std::memory_order_release);
 }
 
 bool FileSource::isOpen() const

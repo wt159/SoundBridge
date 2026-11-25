@@ -1,5 +1,6 @@
 #include "MusicPlayList.h"
 #include "ExtractorFactory.h"
+#include "FileSearch.h"
 #include "HttpSource.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
@@ -9,8 +10,10 @@
 #include "type_name.hpp"
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cwctype>
+#include <deque>
 #include <random>
 #include <sstream>
 #include <vector>
@@ -195,6 +198,56 @@ struct MusicPlayList::PendingSwitch {
     int index = -1;
 };
 
+// 一次探测的自包含结果（ADR 0021 决策 5）：扫描线程产出，控制线程消费。
+// 探测阶段只碰文件系统与 ExtractorFactory，列表状态（index / uid / 计数 /
+// 首曲登记 / 回调 / 拒绝记账）全部留到插入时做。
+struct MusicPlayList::ScanProbeOutcome {
+    std::string path;
+    MusicPropertiesPtr properties;
+    bool ok = false;
+    ErrorCode code = ErrorCode::FileOpenFailed;
+    std::string detail;
+    // 打开失败的成因（#278）；只在 initCheck 失败时非空，其余失败不记成因。
+    std::string cause;
+    uint64_t openMs = 0;
+};
+
+// 扫描请求（ADR 0021 决策 6）：每次 scanDirectory 生成一个。请求指针只在控制
+// 线程读写；扫描线程只碰请求自身，不碰列表成员。
+struct MusicPlayList::ScanRequest {
+    // 请求代际（ADR 0021 决策 6）：控制线程在插入前用它判定「仍是当前请求」。
+    uint64_t generation;
+    std::string rootPath;
+    // 控制线程置位；扫描线程在**每个文件边界**检查一次（决策 6）。
+    std::atomic<bool> cancelled;
+    // 已产出、尚未处理的结果数：归零且遍历结束 ⇒ 汇总点。
+    std::atomic<int> pending;
+    // 保护 ready / scanFinished，并承载背压等待（决策 3）。
+    std::mutex mutex;
+    std::condition_variable space;
+    // 已回投、待控制线程按到达序插入的结果。用队列而不是「把结果塞进投递任务」，
+    // 是因为 WorkQueue 是同刻时间戳无序的优先队列——串行产出 + 队列保序让
+    // 「到达序 == 扫描序」不依赖投递任务本身的调度次序。
+    // **ready.size() 就是决策 3 的「已回投未插入」条数**（outstandingInserts）：
+    // 不再另放一个原子镜像，避免两处真源分叉；读它一律持 mutex。
+    std::deque<ScanProbeOutcome> ready;
+    bool scanFinished = false;
+    // 汇总只发一次（只在控制线程读写）。
+    bool summaryReported = false;
+    // 请求级拒绝计数（ADR 0021 决策 6）：随请求一起丢弃，不会串到下一批。
+    // 控制线程写；测试线程可能直接调 reportScanSummary()，用锁兜住。
+    std::mutex rejectMutex;
+    std::map<ErrorCode, int> rejects;
+    std::map<std::string, int> causes;
+
+    ScanRequest()
+        : generation(0)
+        , cancelled(false)
+        , pending(0)
+    {
+    }
+};
+
 std::string deriveMusicId(const std::string &path)
 {
     if (path.empty()) {
@@ -258,6 +311,7 @@ MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, Aud
     , m_nextUid(1)
     , m_randomEngine(std::random_device {}())
     , m_openExecutor(new SwitchOpenExecutor())
+    , m_scanExecutor(new ScanExecutor())
     , m_switchPending(false)
     , m_switchGeneration(0)
 {
@@ -267,6 +321,13 @@ MusicPlayList::MusicPlayList(MusicPlayListCallback *callback, WorkQueue *wq, Aud
 
 MusicPlayList::~MusicPlayList()
 {
+    // ADR 0021 决策 7：先置取消位让扫描线程在每个文件边界退出，再有界等待 200 ms；
+    // 卡在 open() / read() 里的那一次不可取消，超时 detach（与 ADR 0020 决策 5 同依据）。
+    // 必须先于下面的 stopCurrentTask：扫描线程只回投结果，不碰任务槽。
+    cancelScan();
+    if (m_scanExecutor != nullptr) {
+        m_scanExecutor->shutdown(std::chrono::milliseconds(200));
+    }
     // ADR 0020 决策 5：先作废在途切换（结果回投后会被弱引用丢弃），再给执行器
     // 最多 200 ms 收尾；仍卡在 open() 里则 detach。**不允许**为了「无线程泄漏」
     // 改成无限 join——退出会被 SMB 60 s / NFS 无限重试顶住。
@@ -295,6 +356,56 @@ void MusicPlayList::addMusicWithNotify(const std::string &musicPath, std::functi
         }
     });
 }
+
+// 目录扫描（ADR 0021 决策 1/2/3/5/6）：调用线程（生产路径 = UI 线程）只做三件事：
+// 取消旧请求、建新请求、提交。遍历与探测全部在扫描线程上。
+void MusicPlayList::scanDirectory(const std::string &rootPath)
+{
+    LOG_INFO(LOG_TAG, "scanDirectory : %s", rootPath.data());
+    // 后者胜（决策 6）：与 ADR 0020 决策 3 对 next / previous 的处置同形。旧请求的
+    // 迟到结果在 onScanResultsReady 里按身份丢弃，不产生任何回调。
+    cancelScan();
+
+    std::shared_ptr<ScanRequest> request = std::make_shared<ScanRequest>();
+    request->rootPath                    = rootPath;
+    {
+        std::lock_guard<std::mutex> lock(m_scanMutex);
+        request->generation = ++m_scanGeneration;
+        m_scanRequest       = request;
+    }
+
+    std::weak_ptr<MusicPlayList> weakSelf = shared_from_this();
+    m_scanExecutor->submit([weakSelf, request]() { runScanRequest(weakSelf, request); });
+}
+
+// 取消在途扫描（决策 6）：只置位 + 唤醒背压等待，不触发汇总、不产生回调。
+// 幂等；没有在途请求时是空操作。
+void MusicPlayList::cancelScan()
+{
+    std::shared_ptr<ScanRequest> request;
+    {
+        std::lock_guard<std::mutex> lock(m_scanMutex);
+        request.swap(m_scanRequest);
+    }
+    if (request == nullptr) {
+        return;
+    }
+    request->cancelled.store(true);
+    request->space.notify_all();
+}
+
+bool MusicPlayList::isCurrentScan(const std::shared_ptr<ScanRequest> &request) const
+{
+    std::lock_guard<std::mutex> lock(m_scanMutex);
+    return m_scanRequest != nullptr && m_scanRequest->generation == request->generation;
+}
+
+std::shared_ptr<MusicPlayList::ScanRequest> MusicPlayList::currentScan() const
+{
+    std::lock_guard<std::mutex> lock(m_scanMutex);
+    return m_scanRequest;
+}
+
 void MusicPlayList::next()
 {
     m_workQueue->asyncRunTask([this]() { _next(); });
@@ -541,20 +652,36 @@ std::weak_ptr<MusicProperties> MusicPlayList::trackRefForTest(size_t index) cons
     return std::weak_ptr<MusicProperties>(m_musicListProperties[index]);
 }
 
-void MusicPlayList::recordScanRejection(ErrorCode code)
+void MusicPlayList::recordScanRejection(const std::shared_ptr<ScanRequest> &request,
+                                        ErrorCode code)
 {
-    std::lock_guard<std::mutex> lock(m_rejectMutex);
-    m_scanRejects[code] += 1;
+    if (request == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(request->rejectMutex);
+    request->rejects[code] += 1;
 }
 
+// 公开入口（测试用来断言「拒绝累计不外溢」）：报当前请求的汇总。没有在途请求时
+// 只记录句柄 gauge，不产生任何回调。
 void MusicPlayList::reportScanSummary()
+{
+    std::shared_ptr<ScanRequest> request = currentScan();
+    if (request == nullptr) {
+        recordHandleGauges(MetricTags(currentTraceId(), std::string(), -1));
+        return;
+    }
+    reportScanSummaryFor(request);
+}
+
+void MusicPlayList::reportScanSummaryFor(const std::shared_ptr<ScanRequest> &request)
 {
     std::map<ErrorCode, int> rejects;
     std::map<std::string, int> causes;
     {
-        std::lock_guard<std::mutex> lock(m_rejectMutex);
-        rejects.swap(m_scanRejects);
-        causes.swap(m_scanRejectCauses);
+        std::lock_guard<std::mutex> lock(request->rejectMutex);
+        rejects.swap(request->rejects);
+        causes.swap(request->causes);
     }
     // 句柄预算（observability-contract.md §5.1，L2 只记录不设阈值）：
     // 挂在这个边界上，千曲扫描不会产生 O(n) 条仪表日志。
@@ -589,30 +716,36 @@ void MusicPlayList::reportScanSummary()
     }
 }
 
-void MusicPlayList::recordScanRejectCause(const char *cause)
+void MusicPlayList::recordScanRejectCause(const std::shared_ptr<ScanRequest> &request,
+                                          const char *cause)
 {
-    if (cause == nullptr) {
+    if (request == nullptr || cause == nullptr) {
         return;
     }
-    std::lock_guard<std::mutex> lock(m_rejectMutex);
-    m_scanRejectCauses[cause] += 1;
+    std::lock_guard<std::mutex> lock(request->rejectMutex);
+    request->causes[cause] += 1;
 }
 void MusicPlayList::_addMusic(const std::string &musicPath)
 {
     addMusicInternal(musicPath, false);
 }
 
-MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath, bool userInitiated)
+// 一次探测（ADR 0021 决策 5）：只读文件系统与 ExtractorFactory，产出**自包含**结果。
+// 不碰 m_musicListProperties / m_count / m_nextUid / m_callback——它们没有互斥量，
+// 只能在控制线程写。失败也只回填错误码 / detail / 成因，上报留在插入时做。
+MusicPlayList::ScanProbeOutcome MusicPlayList::probeMusicFile(const std::string &musicPath)
 {
+    ScanProbeOutcome outcome;
+    outcome.path                         = musicPath;
     auto openStart                       = std::chrono::steady_clock::now();
     MusicPropertiesPtr musicProperties   = std::make_shared<MusicProperties>();
-    musicProperties->index               = m_musicListProperties.size();
+    outcome.properties                   = musicProperties;
     FileProperties &fileProperties       = musicProperties->fileProperties;
     SignalProperties &signalProperties   = musicProperties->signalProperties;
     ProcessProperties &processProperties = musicProperties->processProperties;
     fileProperties.fullPath              = musicPath;
     // 身份键的唯一产生点（ADR 0014）：addMusic / addMusicWithNotify / URL 直通三条入口
-    // 都经过 _addMusic，归一化只算这一次，下游（MusicIndex → TrackInfo::id）原样传递。
+    // 都经过这里，归一化只算这一次，下游（MusicIndex → TrackInfo::id）原样传递。
     fileProperties.musicId               = deriveMusicId(musicPath);
     fileProperties.parseFileName();
     LOG_INFO(LOG_TAG, "fileName      : %s", fileProperties.fileName.data());
@@ -642,15 +775,9 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
                 // 伪清单 / 坏清单（#EXTM3U 起始但不满足 VOD 或 LIVE 正面特征集）：
                 // 明确拒绝不回退（规格 §9.1：防止空清单无限重试）。
                 delete urlSource;
-                // 用户显式命令的失败不走批次汇总：一次 onError 已足够，也不留拒绝累计
-                // 去串进下一次目录扫描（契约 §4.1「失败三类」）。
-                if (!userInitiated) {
-                    recordScanRejection(ErrorCode::FileOpenFailed);
-                }
-                reportError(ErrorCode::FileOpenFailed,
-                            "playlist content has neither VOD nor LIVE features",
-                            musicProperties, userInitiated);
-                return nullptr;
+                outcome.code   = ErrorCode::FileOpenFailed;
+                outcome.detail = "playlist content has neither VOD nor LIVE features";
+                return outcome;
             }
         } else {
             delete urlSource;
@@ -669,13 +796,9 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
                     extractorExtension = "m3u8";
                 } else {
                     delete icySource;
-                    if (!userInitiated) {
-                        recordScanRejection(ErrorCode::FileOpenFailed);
-                    }
-                    reportError(ErrorCode::FileOpenFailed,
-                                "icy source native url open failed",
-                                musicProperties, userInitiated);
-                    return nullptr;
+                    outcome.code   = ErrorCode::FileOpenFailed;
+                    outcome.detail = "icy source native url open failed";
+                    return outcome;
                 }
             } else {
                 source.reset(httpSource);
@@ -687,23 +810,18 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
         source.reset(new FileSource(musicPath.c_str()));
     }
     if (source == nullptr) {
-        if (!userInitiated) {
-            recordScanRejection(ErrorCode::FileOpenFailed);
-        }
-        reportError(ErrorCode::FileOpenFailed, "new DataSource failed", musicProperties,
-                    userInitiated);
-        return nullptr;
+        outcome.code   = ErrorCode::FileOpenFailed;
+        outcome.detail = "new DataSource failed";
+        return outcome;
     }
     if (source->initCheck() != OK) {
         // 成因分级（#278）：错误码仍是 FileOpenFailed，detail 区分句柄耗尽 / 权限 / 找不到。
         const status_t openStatus = source->openStatus();
         const char *detail        = openFailureDetailForStatus(openStatus);
-        if (!userInitiated) {
-            recordScanRejection(ErrorCode::FileOpenFailed);
-            recordScanRejectCause(detail);
-        }
-        reportError(ErrorCode::FileOpenFailed, detail, musicProperties, userInitiated);
-        return nullptr;
+        outcome.code              = ErrorCode::FileOpenFailed;
+        outcome.detail            = detail;
+        outcome.cause             = detail;
+        return outcome;
     }
     processProperties.source = source;
     // 规格 5.4 H3：拒绝的唯一出口是 createExtractor 返回空，错误码按「扩展名是否注册」分，
@@ -720,18 +838,15 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
                                                    : "createExtractor returned nullptr";
         // 探测失败也要归还句柄：条目不会入列，宁可这里显式释放。
         processProperties.source->release();
-        if (!userInitiated) {
-            recordScanRejection(code);
-        }
-        reportError(code, detail, musicProperties, userInitiated);
-        return nullptr;
+        outcome.code   = code;
+        outcome.detail = detail;
+        return outcome;
     }
     auto openEnd = std::chrono::steady_clock::now();
-    auto openMs
-        = std::chrono::duration_cast<std::chrono::milliseconds>(openEnd - openStart).count();
-    Metrics::RecordTiming(
-        "open_file_ms", static_cast<uint64_t>(openMs),
-        MetricTags { currentTraceId(), musicPath, static_cast<int>(musicProperties->index) });
+    outcome.openMs
+        = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(openEnd
+                                                                                     - openStart)
+                                    .count());
     processProperties.extractor    = extractor;
     signalProperties.curPositionMs = 0;
     signalProperties.spec          = extractor->getAudioSpec();
@@ -741,6 +856,36 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
     // extractor 与已解析元数据，常驻句柄数不再随条目数增长。播放前由 PlaybackTask 重开。
     processProperties.source->release();
     LOG_INFO(LOG_TAG, "durationMs    : %llu", signalProperties.durationMs);
+    outcome.ok = true;
+    return outcome;
+}
+
+// 把一次探测结果落成列表状态（ADR 0021 决策 5）：index / uid / push_back / 计数 /
+// 首曲登记 / 拒绝记账 / 上报全部在这里，**只在控制线程执行**。
+MusicPropertiesPtr MusicPlayList::insertProbedTrack(const ScanProbeOutcome &outcome,
+                                                    bool userInitiated,
+                                                    const std::shared_ptr<ScanRequest> &request)
+{
+    if (outcome.properties == nullptr) {
+        return nullptr;
+    }
+    // index 在插入时才定：扫描线程只产出条目，位置由控制线程按到达序赋。失败条目也带
+    // 上当时的 size——旧路径在探测前取 size，控制队列串行使两者恒等，日志与回调不变。
+    outcome.properties->index = m_musicListProperties.size();
+    if (!outcome.ok) {
+        if (!userInitiated) {
+            recordScanRejection(request, outcome.code);
+            if (!outcome.cause.empty()) {
+                recordScanRejectCause(request, outcome.cause.c_str());
+            }
+        }
+        reportError(outcome.code, outcome.detail, outcome.properties, userInitiated);
+        return nullptr;
+    }
+    MusicPropertiesPtr musicProperties = outcome.properties;
+    Metrics::RecordTiming(
+        "open_file_ms", outcome.openMs,
+        MetricTags { currentTraceId(), outcome.path, static_cast<int>(musicProperties->index) });
     musicProperties->uid = m_nextUid++;
     m_musicListProperties.push_back(musicProperties);
     // 计数是 size() 的镜像：删除会压缩重排，自增语义在这里必然失效（ADR 0018 §1）。
@@ -753,6 +898,116 @@ MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath,
     }
     LOGI("this music fished, m_count=%d", static_cast<int>(m_count.load()));
     return musicProperties;
+}
+
+MusicPropertiesPtr MusicPlayList::addMusicInternal(const std::string &musicPath, bool userInitiated)
+{
+    return insertProbedTrack(probeMusicFile(musicPath), userInitiated, nullptr);
+}
+
+// 扫描线程主体（ADR 0021 决策 1/3/6）：遍历与逐文件探测顺序执行。只碰 request 与
+// 自由函数；weakSelf 只用于回投，目标析构后 lock 失败即静默返回。
+void MusicPlayList::runScanRequest(const std::weak_ptr<MusicPlayList> &weakSelf,
+                                   const std::shared_ptr<ScanRequest> &request)
+{
+    const std::vector<std::string> paths = recursiveFileSearch(request->rootPath);
+    for (size_t i = 0; i < paths.size(); ++i) {
+        // 取消检查在**每个文件边界**（决策 6）：卡在 _wfopen / read 里的那一次
+        // 不可取消，最多延迟到它返回。
+        if (request->cancelled.load(std::memory_order_acquire)) {
+            return;
+        }
+        ScanProbeOutcome outcome = probeMusicFile(paths[i]);
+        {
+            std::unique_lock<std::mutex> lock(request->mutex);
+            // 背压（决策 3）：控制队列里「已回投未插入」的条数到上限就等，防止千条
+            // 结果一次性涌入把 10 ms 消费节拍挤在后面。
+            request->space.wait(lock, [&request]() {
+                return request->cancelled.load(std::memory_order_acquire)
+                    || request->ready.size() < kScanInsertOutstandingMax;
+            });
+            if (request->cancelled.load(std::memory_order_acquire)) {
+                return;
+            }
+            request->ready.push_back(std::move(outcome));
+            request->pending.fetch_add(1, std::memory_order_release);
+        }
+        postScanResultsReady(weakSelf, request);
+    }
+    {
+        std::lock_guard<std::mutex> lock(request->mutex);
+        request->scanFinished = true;
+    }
+    // 末条结果可能在上一次唤醒里已处理完：补一次唤醒，保证汇总点不被错过。
+    postScanResultsReady(weakSelf, request);
+}
+
+// 把「有结果可取了」投回控制队列（扫描线程调用）。目标存活 ⇒ 其 WorkQueue 也存活
+//（Impl 先 shut down 队列再释放列表）；队列已停时 asyncRunTask 是空操作。
+void MusicPlayList::postScanResultsReady(const std::weak_ptr<MusicPlayList> &weakSelf,
+                                         const std::shared_ptr<ScanRequest> &request)
+{
+    std::shared_ptr<MusicPlayList> self = weakSelf.lock();
+    if (self == nullptr || self->m_workQueue == nullptr) {
+        return;
+    }
+    self->m_workQueue->asyncRunTask([weakSelf, request]() {
+        std::shared_ptr<MusicPlayList> alive = weakSelf.lock();
+        if (alive == nullptr) {
+            return;
+        }
+        alive->onScanResultsReady(request);
+    });
+}
+
+// 控制线程：按到达序取出请求里的就绪结果并插入（ADR 0021 决策 3/5/6）。
+void MusicPlayList::onScanResultsReady(const std::shared_ptr<ScanRequest> &request)
+{
+    for (;;) {
+        ScanProbeOutcome outcome;
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            if (request->ready.empty()) {
+                break;
+            }
+            outcome = std::move(request->ready.front());
+            request->ready.pop_front();
+        }
+        request->space.notify_one();
+        request->pending.fetch_sub(1, std::memory_order_release);
+        // 代际 + 取消双守卫（决策 6）：不是当前请求 / 已取消 ⇒ 丢弃，只递减计数，
+        // 不产生任何回调（含汇总）。
+        if (request->cancelled.load(std::memory_order_acquire) || !isCurrentScan(request)) {
+            continue;
+        }
+        insertProbedTrack(outcome, false, request);
+    }
+    maybeFinishScan(request);
+}
+
+// 控制线程：结果全部落地后发一次汇总 + 列表载荷（ADR 0021 决策 6）。
+void MusicPlayList::maybeFinishScan(const std::shared_ptr<ScanRequest> &request)
+{
+    bool finished = false;
+    {
+        std::lock_guard<std::mutex> lock(request->mutex);
+        finished = request->scanFinished;
+    }
+    if (!finished || request->pending.load(std::memory_order_acquire) != 0) {
+        return;
+    }
+    if (request->cancelled.load(std::memory_order_acquire) || !isCurrentScan(request)) {
+        return;
+    }
+    // 汇总只发一次：drain 与 finish 两个入口都可能看到「遍历结束 + 计数归零」。
+    // 只在控制线程执行，普通 bool 足够。
+    if (request->summaryReported) {
+        return;
+    }
+    request->summaryReported = true;
+    // 被取消的请求走不到这里（上面已返回）：取消是终态命令，零回调。
+    reportScanSummaryFor(request);
+    _updateList();
 }
 
 void MusicPlayList::_addTrack(const std::string &musicPath)
@@ -852,6 +1107,9 @@ void MusicPlayList::_clearPlaylist()
 
 bool MusicPlayList::clearPlaylistSync()
 {
+    // 清空是终态命令：在途扫描一并作废（ADR 0021 决策 6，与 ADR 0020 决策 3 同形）。
+    // 不取消就会在清空之后继续插入——旧路径里探测全部排在清空之前，语义是「清空胜」。
+    cancelScan();
     // 清空是终态命令：在途切换作废（ADR 0020 决策 3）。不经播放器的直接调用
     //（测试）也要保证门闩被清、晚到结果被代际挡住。
     cancelPendingSwitch();

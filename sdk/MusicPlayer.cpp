@@ -1,7 +1,6 @@
 ﻿#include "MusicPlayer.h"
 #include "AudioBuffer.h"
 #include "AudioDevice.h"
-#include "FileSearch.h"
 #include "IAudioDevice.h"
 #include "LogApi.h"
 #include "LogWrapper.h"
@@ -127,7 +126,6 @@ private:
     MusicPropertiesPtr m_curMusicProperties;
     std::mutex m_curMusicMutex;
     std::list<MusicIndex> m_musicListIndex;
-    std::atomic<int> m_pendingAdd;
     std::string m_traceId;
     std::atomic<uint64_t> m_traceSeq;
     std::atomic<bool> m_autoSkipOnError;
@@ -180,7 +178,6 @@ MusicPlayer::Impl::Impl(MusicPlayerListener *lister, std::string &logDir)
     : m_audioDev(nullptr)
     , m_listener(lister)
     , m_state(MusicPlayerState::StoppedState)
-    , m_pendingAdd(0)
     , m_traceSeq(0)
     , m_autoSkipOnError(true)
     , m_volumePercent(100)
@@ -239,24 +236,9 @@ void MusicPlayer::Impl::addMusicDir(const std::string &dir)
     if (isShuttingDown()) {
         return;
     }
-    std::vector<std::string> musicList = recursiveFileSearch(dir);
-    m_pendingAdd.store(static_cast<int>(musicList.size()));
-    if (musicList.empty()) {
-        m_musicList->updateList();
-        return;
-    }
-    for (auto &path : musicList) {
-        m_musicList->addMusicWithNotify(path, [this]() {
-            if (isShuttingDown()) {
-                return;
-            }
-            if (m_pendingAdd.fetch_sub(1) == 1) {
-                // 被拒文件不进播放列表，永远不会成为当前曲目，只能靠这份汇总让它们可见
-                m_musicList->reportScanSummary();
-                m_musicList->updateList();
-            }
-        });
-    }
+    // ADR 0021 决策 1/2：提交扫描请求即返回。遍历与逐文件探测都在扫描线程上，
+    // 结果经控制队列按到达序增量插入；调用线程（生产路径 = UI 线程）零文件系统访问。
+    m_musicList->scanDirectory(dir);
 }
 
 void MusicPlayer::Impl::play()
